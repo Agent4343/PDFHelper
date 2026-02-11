@@ -265,6 +265,24 @@ def _read_and_decrypt(path: Path) -> bytes:
     return path.read_bytes()
 
 
+def _encrypt_text(text: str) -> str:
+    """Encrypt a string for database storage. Returns base64-encoded ciphertext."""
+    if ENCRYPTION_KEY:
+        from encryption import encrypt_bytes
+        import base64
+        return base64.b64encode(encrypt_bytes(text.encode("utf-8"))).decode("ascii")
+    return text
+
+
+def _decrypt_text(stored: str) -> str:
+    """Decrypt a string read from the database."""
+    if ENCRYPTION_KEY:
+        from encryption import decrypt_bytes
+        import base64
+        return decrypt_bytes(base64.b64decode(stored)).decode("utf-8")
+    return stored
+
+
 # ---------------------------------------------------------------------------
 # PDF processing
 # ---------------------------------------------------------------------------
@@ -473,10 +491,10 @@ async def upload_pdfs(
 
         db_doc = DBDocument(
             id=doc_id,
-            filename=clean_name,
+            filename=_encrypt_text(clean_name),
             filepath=str(save_path),
             page_count=len(pages),
-            text_content=json.dumps(pages),
+            text_content=_encrypt_text(json.dumps(pages)),
             uploaded_at=datetime.now(timezone.utc),
         )
         db.add(db_doc)
@@ -518,20 +536,21 @@ async def search_documents(
     all_ai_results = []
 
     for doc in documents:
-        pages = json.loads(doc.text_content)
+        pages = json.loads(_decrypt_text(doc.text_content))
+        decrypted_name = _decrypt_text(doc.filename)
 
         if body.search_terms:
             matches = keyword_search(pages, body.search_terms, body.case_sensitive)
             for m in matches:
                 m["document_id"] = doc.id
-                m["filename"] = doc.filename
+                m["filename"] = decrypted_name
             all_keyword_results.extend(matches)
 
         if body.ai_query:
-            findings = ai_search(pages, body.ai_query, doc.filename)
+            findings = ai_search(pages, body.ai_query, decrypted_name)
             for f in findings:
                 f["document_id"] = doc.id
-                f["filename"] = doc.filename
+                f["filename"] = decrypted_name
             all_ai_results.extend(findings)
 
     search_id = str(uuid.uuid4())
@@ -539,10 +558,10 @@ async def search_documents(
 
     db_result = DBSearchResult(
         id=search_id,
-        search_terms=json.dumps(body.search_terms) if body.search_terms else None,
-        ai_query=body.ai_query,
-        keyword_results=json.dumps(all_keyword_results),
-        ai_results=json.dumps(all_ai_results),
+        search_terms=_encrypt_text(json.dumps(body.search_terms)) if body.search_terms else None,
+        ai_query=_encrypt_text(body.ai_query) if body.ai_query else None,
+        keyword_results=_encrypt_text(json.dumps(all_keyword_results)),
+        ai_results=_encrypt_text(json.dumps(all_ai_results)),
         total_keyword_matches=len(all_keyword_results),
         total_ai_findings=len(all_ai_results),
         flagged_for_review=flagged_count,
@@ -576,7 +595,7 @@ async def list_documents(db=Depends(get_db)):
         "documents": [
             {
                 "id": d.id,
-                "filename": d.filename,
+                "filename": _decrypt_text(d.filename),
                 "pages": d.page_count,
                 "uploaded_at": d.uploaded_at.isoformat(),
             }
@@ -593,7 +612,7 @@ async def get_document(doc_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=404, detail="Document not found")
     return {
         "id": doc.id,
-        "filename": doc.filename,
+        "filename": _decrypt_text(doc.filename),
         "pages": doc.page_count,
         "uploaded_at": doc.uploaded_at.isoformat(),
     }
@@ -610,7 +629,7 @@ async def delete_document(doc_id: str, request: Request, db=Depends(get_db)):
     if filepath.exists():
         filepath.unlink()
 
-    log_delete(_get_client_ip(request), doc_id, doc.filename)
+    log_delete(_get_client_ip(request), doc_id, _decrypt_text(doc.filename))
 
     db.delete(doc)
     db.commit()
@@ -630,8 +649,8 @@ async def search_history(limit: int = Query(default=20, le=100), db=Depends(get_
         "searches": [
             {
                 "id": r.id,
-                "search_terms": json.loads(r.search_terms) if r.search_terms else [],
-                "ai_query": r.ai_query,
+                "search_terms": json.loads(_decrypt_text(r.search_terms)) if r.search_terms else [],
+                "ai_query": _decrypt_text(r.ai_query) if r.ai_query else None,
                 "total_keyword_matches": r.total_keyword_matches,
                 "total_ai_findings": r.total_ai_findings,
                 "flagged_for_review": r.flagged_for_review,
@@ -650,10 +669,10 @@ async def get_search_result(search_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=404, detail="Search result not found")
     return {
         "id": result.id,
-        "search_terms": json.loads(result.search_terms) if result.search_terms else [],
-        "ai_query": result.ai_query,
-        "keyword_results": json.loads(result.keyword_results),
-        "ai_results": json.loads(result.ai_results),
+        "search_terms": json.loads(_decrypt_text(result.search_terms)) if result.search_terms else [],
+        "ai_query": _decrypt_text(result.ai_query) if result.ai_query else None,
+        "keyword_results": json.loads(_decrypt_text(result.keyword_results)),
+        "ai_results": json.loads(_decrypt_text(result.ai_results)),
         "summary": {
             "total_keyword_matches": result.total_keyword_matches,
             "total_ai_findings": result.total_ai_findings,
