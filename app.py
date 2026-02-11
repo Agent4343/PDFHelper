@@ -56,26 +56,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 AUTO_CLEANUP_HOURS = int(os.getenv("AUTO_CLEANUP_HOURS", "72"))
 
 # ---------------------------------------------------------------------------
-# Startup safety checks
-# ---------------------------------------------------------------------------
-
-if IS_PRODUCTION and not API_KEY:
-    raise RuntimeError(
-        "FATAL: PDF_HELPER_API_KEY must be set in production. "
-        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
-    )
-
-if IS_PRODUCTION and not ENCRYPTION_KEY:
-    raise RuntimeError(
-        "FATAL: ENCRYPTION_KEY must be set in production for file encryption. "
-        "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
-    )
-
-# ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
 
-Base.metadata.create_all(bind=engine)
+_startup_errors: list[str] = []
 
 app = FastAPI(
     title="PDFHelper",
@@ -84,6 +68,38 @@ app = FastAPI(
     docs_url="/docs" if not IS_PRODUCTION else None,
     redoc_url=None,
 )
+
+
+@app.on_event("startup")
+async def startup():
+    """Run safety checks and initialize DB — errors are logged, not fatal."""
+    import logging
+    logger = logging.getLogger("pdfhelper")
+
+    if IS_PRODUCTION and not API_KEY:
+        msg = (
+            "WARNING: PDF_HELPER_API_KEY not set in production. "
+            "API endpoints will reject requests until it is configured."
+        )
+        logger.warning(msg)
+        _startup_errors.append(msg)
+
+    if IS_PRODUCTION and not ENCRYPTION_KEY:
+        msg = (
+            "WARNING: ENCRYPTION_KEY not set in production. "
+            "File encryption is disabled until it is configured."
+        )
+        logger.warning(msg)
+        _startup_errors.append(msg)
+
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables initialized successfully.")
+    except Exception as exc:
+        msg = f"WARNING: Database initialization failed: {exc}"
+        logger.warning(msg)
+        _startup_errors.append(msg)
+
 
 # ---------------------------------------------------------------------------
 # Security middleware
@@ -423,6 +439,7 @@ class AnalyzeRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str
+    warnings: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +476,11 @@ def validate_pdf(file: UploadFile, content: bytes) -> str:
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    return {"status": "ok", "version": "1.0.0"}
+    return {
+        "status": "ok" if not _startup_errors else "degraded",
+        "version": "1.0.0",
+        "warnings": _startup_errors,
+    }
 
 
 @app.post("/upload", dependencies=[Depends(verify_api_key)])
