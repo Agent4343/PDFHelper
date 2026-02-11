@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 """
-PDFHelper — Web API for AI-powered PDF search and flagging.
+PDFHelper — Secure web API for AI-powered PDF search and flagging.
 
 Deployed on Railway. Provides endpoints to upload PDFs, search them
 with keywords or AI, and retrieve flagged results.
+
+Security features:
+- API key authentication (required in production)
+- File encryption at rest (AES via Fernet)
+- PDF magic-byte verification
+- Rate limiting, CORS, security headers
+- Audit logging of all sensitive operations
+- Auto-cleanup of old files
 """
 
 import json
 import os
 import re
 import secrets
-import tempfile
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -26,6 +34,41 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from database import SessionLocal, engine, Base, DBDocument, DBSearchResult
+from audit import log_upload, log_search, log_delete, log_auth_failure, log_access
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+IS_PRODUCTION = ENVIRONMENT == "production"
+
+API_KEY = os.getenv("PDF_HELPER_API_KEY")
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+
+MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024
+MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/pdfhelper_uploads"))
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Auto-cleanup: delete uploads older than this many hours (0 = disabled)
+AUTO_CLEANUP_HOURS = int(os.getenv("AUTO_CLEANUP_HOURS", "72"))
+
+# ---------------------------------------------------------------------------
+# Startup safety checks
+# ---------------------------------------------------------------------------
+
+if IS_PRODUCTION and not API_KEY:
+    raise RuntimeError(
+        "FATAL: PDF_HELPER_API_KEY must be set in production. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
+
+if IS_PRODUCTION and not ENCRYPTION_KEY:
+    raise RuntimeError(
+        "FATAL: ENCRYPTION_KEY must be set in production for file encryption. "
+        "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+    )
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -37,7 +80,7 @@ app = FastAPI(
     title="PDFHelper",
     description="AI-powered PDF search and flagging tool",
     version="1.0.0",
-    docs_url="/docs" if os.getenv("ENVIRONMENT") != "production" else None,
+    docs_url="/docs" if not IS_PRODUCTION else None,
     redoc_url=None,
 )
 
@@ -45,25 +88,69 @@ app = FastAPI(
 # Security middleware
 # ---------------------------------------------------------------------------
 
+# -- CORS --
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",")
 ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS if o.strip()]
+if IS_PRODUCTION and not ALLOWED_ORIGINS:
+    ALLOWED_ORIGINS = []  # Block all cross-origin requests by default
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS or ["*"],
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else (["*"] if not IS_PRODUCTION else []),
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "X-API-Key", "Content-Type"],
 )
 
+# -- Trusted hosts --
 ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
 ALLOWED_HOSTS = [h.strip() for h in ALLOWED_HOSTS if h.strip()]
 if ALLOWED_HOSTS:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 
+# -- Security headers --
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to every response."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        if IS_PRODUCTION:
+            response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        # Never reveal server tech
+        response.headers.pop("server", None)
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+# -- HTTPS redirect (production) --
+class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
+    """Redirect HTTP to HTTPS in production using X-Forwarded-Proto."""
+    async def dispatch(self, request: Request, call_next):
+        if IS_PRODUCTION:
+            proto = request.headers.get("x-forwarded-proto", "https")
+            if proto != "https":
+                url = request.url.replace(scheme="https")
+                return JSONResponse(
+                    status_code=301,
+                    headers={"Location": str(url)},
+                    content={"detail": "Use HTTPS"},
+                )
+        return await call_next(request)
+
+
+app.add_middleware(HTTPSRedirectMiddleware)
+
+
+# -- Rate limiting --
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Simple in-memory rate limiter per IP."""
+    """In-memory rate limiter per IP."""
     def __init__(self, app, max_requests: int = 60, window_seconds: int = 60):
         super().__init__(app)
         self.max_requests = max_requests
@@ -71,8 +158,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.requests: dict[str, list[float]] = {}
 
     async def dispatch(self, request: Request, call_next):
-        import time
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = _get_client_ip(request)
         now = time.time()
         window_start = now - self.window
 
@@ -86,29 +172,63 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
         hits.append(now)
         self.requests[client_ip] = hits
-        return await call_next(request)
+
+        response = await call_next(request)
+        log_access(client_ip, request.method, request.url.path, response.status_code)
+        return response
 
 
 app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
 
 
 # ---------------------------------------------------------------------------
-# Auth dependency
+# Helpers
 # ---------------------------------------------------------------------------
 
-API_KEY = os.getenv("PDF_HELPER_API_KEY")
+def _get_client_ip(request: Request) -> str:
+    """Get real client IP, respecting proxy headers."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
+
+def _sanitize_filename(filename: str) -> str:
+    """Strip path traversal and dangerous characters from filenames."""
+    # Take only the basename
+    name = Path(filename).name
+    # Remove anything that isn't alphanumeric, dash, underscore, dot, or space
+    name = re.sub(r"[^\w\-. ]", "_", name)
+    # Prevent hidden files
+    name = name.lstrip(".")
+    return name or "unnamed.pdf"
+
+
+PDF_MAGIC_BYTES = b"%PDF-"
+
+
+def _verify_pdf_content(data: bytes) -> bool:
+    """Check that the file actually starts with the PDF magic bytes."""
+    return data[:5] == PDF_MAGIC_BYTES
+
+
+# ---------------------------------------------------------------------------
+# Auth dependency
+# ---------------------------------------------------------------------------
 
 async def verify_api_key(request: Request):
     """Require a valid API key for all endpoints."""
     if not API_KEY:
-        return  # No key configured = auth disabled (dev mode)
+        # Dev mode only — production enforced at startup
+        return
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:]
     else:
         token = request.headers.get("X-API-Key", "")
-    if not secrets.compare_digest(token, API_KEY):
+
+    if not token or not secrets.compare_digest(token, API_KEY):
+        log_auth_failure(_get_client_ip(request), request.url.path)
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
@@ -125,22 +245,34 @@ def get_db():
 
 
 # ---------------------------------------------------------------------------
-# Config
+# Encryption helpers
 # ---------------------------------------------------------------------------
 
-MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024  # default 20 MB
-MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/pdfhelper_uploads"))
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+def _encrypt_and_save(data: bytes, path: Path) -> None:
+    """Encrypt data and write to path. Falls back to plaintext if no key."""
+    if ENCRYPTION_KEY:
+        from encryption import encrypt_bytes
+        path.write_bytes(encrypt_bytes(data))
+    else:
+        path.write_bytes(data)
+
+
+def _read_and_decrypt(path: Path) -> bytes:
+    """Read file and decrypt. Falls back to plain read if no key."""
+    if ENCRYPTION_KEY:
+        from encryption import decrypt_file
+        return decrypt_file(str(path))
+    return path.read_bytes()
 
 
 # ---------------------------------------------------------------------------
-# PDF processing (reused from pdf_helper.py core logic)
+# PDF processing
 # ---------------------------------------------------------------------------
 
-def extract_text_from_pdf(pdf_path: str) -> list[dict]:
+def extract_text_from_bytes(pdf_bytes: bytes) -> list[dict]:
+    """Extract text from PDF bytes without writing an unencrypted file."""
     pages = []
-    doc = fitz.open(pdf_path)
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     for page_num in range(len(doc)):
         page = doc[page_num]
         text = page.get_text()
@@ -236,6 +368,28 @@ Respond with ONLY valid JSON, no other text."""
 
 
 # ---------------------------------------------------------------------------
+# Auto-cleanup
+# ---------------------------------------------------------------------------
+
+def _run_cleanup(db) -> int:
+    """Delete documents older than AUTO_CLEANUP_HOURS. Returns count deleted."""
+    if not AUTO_CLEANUP_HOURS:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=AUTO_CLEANUP_HOURS)
+    old_docs = db.query(DBDocument).filter(DBDocument.uploaded_at < cutoff).all()
+    count = 0
+    for doc in old_docs:
+        filepath = Path(doc.filepath)
+        if filepath.exists():
+            filepath.unlink()
+        db.delete(doc)
+        count += 1
+    if count:
+        db.commit()
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
 
@@ -251,17 +405,31 @@ class HealthResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Validation
 # ---------------------------------------------------------------------------
 
-def validate_pdf(file: UploadFile) -> None:
+def validate_pdf(file: UploadFile, content: bytes) -> str:
+    """Validate an uploaded PDF file. Returns sanitized filename."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail=f"Only PDF files allowed, got: {file.filename}")
-    if file.content_type and file.content_type != "application/pdf":
+
+    clean_name = _sanitize_filename(file.filename)
+    if not clean_name.lower().endswith(".pdf"):
         raise HTTPException(status_code=400,
-                            detail=f"Invalid content type: {file.content_type}")
+                            detail=f"Only PDF files allowed, got: {clean_name}")
+
+    # Verify actual file content — not just the extension
+    if not _verify_pdf_content(content):
+        raise HTTPException(status_code=400,
+                            detail="File does not appear to be a valid PDF")
+
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{clean_name} exceeds max size of {MAX_FILE_SIZE // (1024*1024)} MB",
+        )
+
+    return clean_name
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +443,7 @@ async def health_check():
 
 @app.post("/upload", dependencies=[Depends(verify_api_key)])
 async def upload_pdfs(
+    request: Request,
     files: list[UploadFile] = File(...),
     db=Depends(get_db),
 ):
@@ -283,28 +452,28 @@ async def upload_pdfs(
         raise HTTPException(status_code=400,
                             detail=f"Max {MAX_FILES_PER_REQUEST} files per request")
 
+    client_ip = _get_client_ip(request)
+
+    # Run cleanup on upload to keep storage in check
+    _run_cleanup(db)
+
     uploaded = []
     for file in files:
-        validate_pdf(file)
-
         content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{file.filename} exceeds max size of "
-                       f"{MAX_FILE_SIZE // (1024*1024)} MB",
-            )
+        clean_name = validate_pdf(file, content)
+
+        # Extract text from raw bytes (never written unencrypted to disk)
+        pages = extract_text_from_bytes(content)
 
         doc_id = str(uuid.uuid4())
-        save_path = UPLOAD_DIR / f"{doc_id}.pdf"
-        save_path.write_bytes(content)
+        save_path = UPLOAD_DIR / f"{doc_id}.pdf.enc"
 
-        # Extract text
-        pages = extract_text_from_pdf(str(save_path))
+        # Encrypt and save
+        _encrypt_and_save(content, save_path)
 
         db_doc = DBDocument(
             id=doc_id,
-            filename=file.filename,
+            filename=clean_name,
             filepath=str(save_path),
             page_count=len(pages),
             text_content=json.dumps(pages),
@@ -313,9 +482,11 @@ async def upload_pdfs(
         db.add(db_doc)
         db.commit()
 
+        log_upload(client_ip, clean_name, doc_id, len(pages))
+
         uploaded.append({
             "id": doc_id,
-            "filename": file.filename,
+            "filename": clean_name,
             "pages": len(pages),
         })
 
@@ -324,16 +495,16 @@ async def upload_pdfs(
 
 @app.post("/search", dependencies=[Depends(verify_api_key)])
 async def search_documents(
-    request: SearchRequest,
+    request: Request,
+    body: SearchRequest,
     doc_ids: list[str] = Query(default=[], description="Document IDs to search (empty = all)"),
     db=Depends(get_db),
 ):
     """Search uploaded PDFs with keywords and/or AI."""
-    if not request.search_terms and not request.ai_query:
+    if not body.search_terms and not body.ai_query:
         raise HTTPException(status_code=400,
                             detail="Provide search_terms and/or ai_query")
 
-    # Get documents
     query = db.query(DBDocument)
     if doc_ids:
         query = query.filter(DBDocument.id.in_(doc_ids))
@@ -342,34 +513,34 @@ async def search_documents(
     if not documents:
         raise HTTPException(status_code=404, detail="No documents found")
 
+    client_ip = _get_client_ip(request)
     all_keyword_results = []
     all_ai_results = []
 
     for doc in documents:
         pages = json.loads(doc.text_content)
 
-        if request.search_terms:
-            matches = keyword_search(pages, request.search_terms, request.case_sensitive)
+        if body.search_terms:
+            matches = keyword_search(pages, body.search_terms, body.case_sensitive)
             for m in matches:
                 m["document_id"] = doc.id
                 m["filename"] = doc.filename
             all_keyword_results.extend(matches)
 
-        if request.ai_query:
-            findings = ai_search(pages, request.ai_query, doc.filename)
+        if body.ai_query:
+            findings = ai_search(pages, body.ai_query, doc.filename)
             for f in findings:
                 f["document_id"] = doc.id
                 f["filename"] = doc.filename
             all_ai_results.extend(findings)
 
-    # Save results to DB
     search_id = str(uuid.uuid4())
     flagged_count = len([r for r in all_ai_results if r.get("needs_review")])
 
     db_result = DBSearchResult(
         id=search_id,
-        search_terms=json.dumps(request.search_terms) if request.search_terms else None,
-        ai_query=request.ai_query,
+        search_terms=json.dumps(body.search_terms) if body.search_terms else None,
+        ai_query=body.ai_query,
         keyword_results=json.dumps(all_keyword_results),
         ai_results=json.dumps(all_ai_results),
         total_keyword_matches=len(all_keyword_results),
@@ -379,6 +550,10 @@ async def search_documents(
     )
     db.add(db_result)
     db.commit()
+
+    log_search(client_ip, search_id, body.search_terms, body.ai_query,
+               len(documents), len(all_keyword_results) + len(all_ai_results),
+               flagged_count)
 
     return {
         "search_id": search_id,
@@ -425,16 +600,17 @@ async def get_document(doc_id: str, db=Depends(get_db)):
 
 
 @app.delete("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
-async def delete_document(doc_id: str, db=Depends(get_db)):
-    """Delete an uploaded document."""
+async def delete_document(doc_id: str, request: Request, db=Depends(get_db)):
+    """Delete an uploaded document and its encrypted file."""
     doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Remove file from disk
     filepath = Path(doc.filepath)
     if filepath.exists():
         filepath.unlink()
+
+    log_delete(_get_client_ip(request), doc_id, doc.filename)
 
     db.delete(doc)
     db.commit()
