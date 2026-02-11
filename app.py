@@ -33,8 +33,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from database import SessionLocal, engine, Base, DBDocument, DBSearchResult
+from database import SessionLocal, engine, Base, DBDocument, DBSearchResult, DBAnalysisReport
 from audit import log_upload, log_search, log_delete, log_auth_failure, log_access
+from ocr import extract_text_with_ocr_fallback
 
 # ---------------------------------------------------------------------------
 # Config
@@ -288,15 +289,8 @@ def _decrypt_text(stored: str) -> str:
 # ---------------------------------------------------------------------------
 
 def extract_text_from_bytes(pdf_bytes: bytes) -> list[dict]:
-    """Extract text from PDF bytes without writing an unencrypted file."""
-    pages = []
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        text = page.get_text()
-        pages.append({"page": page_num + 1, "text": text})
-    doc.close()
-    return pages
+    """Extract text from PDF bytes. Falls back to OCR for scanned PDFs."""
+    return extract_text_with_ocr_fallback(pdf_bytes)
 
 
 def keyword_search(pages: list[dict], search_terms: list[str],
@@ -415,6 +409,15 @@ class SearchRequest(BaseModel):
     search_terms: list[str] = Field(default=[], description="Exact keywords to search")
     ai_query: str | None = Field(default=None, description="AI concept search query")
     case_sensitive: bool = False
+
+
+class AnalyzeRequest(BaseModel):
+    compliance_context: str | None = Field(
+        default=None,
+        description="Optional compliance standard to check against, e.g. 'OSHA 2024', 'HIPAA', 'FDA 21 CFR Part 11'",
+    )
+    search_terms: list[str] = Field(default=[], description="Optional keywords to search for")
+    ai_query: str | None = Field(default=None, description="Optional AI concept search query")
 
 
 class HealthResponse(BaseModel):
@@ -679,4 +682,122 @@ async def get_search_result(search_id: str, db=Depends(get_db)):
             "flagged_for_review": result.flagged_for_review,
         },
         "searched_at": result.searched_at.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Full Analysis Pipeline (multi-agent)
+# ---------------------------------------------------------------------------
+
+@app.post("/analyze", dependencies=[Depends(verify_api_key)])
+async def analyze_documents(
+    request: Request,
+    body: AnalyzeRequest,
+    doc_ids: list[str] = Query(default=[], description="Document IDs to analyze (empty = all)"),
+    db=Depends(get_db),
+):
+    """Run the full multi-agent analysis pipeline on uploaded documents.
+
+    This runs 4 specialized AI agents:
+    1. Document Analyzer — deep analysis of each document
+    2. Cross-Reference Checker — finds conflicts between documents
+    3. Compliance Checker — flags regulatory/policy issues
+    4. Summary Report Generator — produces an actionable executive report
+
+    Optionally also runs keyword and AI search.
+    """
+    query = db.query(DBDocument)
+    if doc_ids:
+        query = query.filter(DBDocument.id.in_(doc_ids))
+    documents = query.all()
+
+    if not documents:
+        raise HTTPException(status_code=404, detail="No documents found")
+
+    client_ip = _get_client_ip(request)
+
+    # Build documents dict for the agent pipeline
+    docs_for_agents: dict[str, list[dict]] = {}
+    for doc in documents:
+        decrypted_name = _decrypt_text(doc.filename)
+        pages = json.loads(_decrypt_text(doc.text_content))
+        docs_for_agents[decrypted_name] = pages
+
+    # Run the full pipeline
+    from agents import run_full_analysis
+    analysis = run_full_analysis(
+        documents=docs_for_agents,
+        compliance_context=body.compliance_context,
+        search_terms=body.search_terms if body.search_terms else None,
+        ai_query=body.ai_query,
+    )
+
+    # Save to DB
+    report_id = str(uuid.uuid4())
+    db_report = DBAnalysisReport(
+        id=report_id,
+        doc_ids=json.dumps([d.id for d in documents]),
+        compliance_context=_encrypt_text(body.compliance_context) if body.compliance_context else None,
+        report_data=_encrypt_text(json.dumps(analysis)),
+        documents_analyzed=len(documents),
+        total_issues=analysis.get("report", {}).get("total_issues_found", 0),
+        critical_issues=analysis.get("report", {}).get("critical_issues", 0),
+        risk_level=analysis.get("report", {}).get("overall_risk_level", "unknown"),
+        analyzed_at=datetime.now(timezone.utc),
+    )
+    db.add(db_report)
+    db.commit()
+
+    log_search(client_ip, report_id, body.search_terms, body.ai_query,
+               len(documents), db_report.total_issues, db_report.critical_issues)
+
+    return {
+        "report_id": report_id,
+        "report": analysis.get("report"),
+        "document_analyses": analysis.get("document_analyses"),
+        "cross_reference_findings": analysis.get("cross_reference_findings"),
+        "compliance_findings": analysis.get("compliance_findings"),
+        "search_results": analysis.get("search_results"),
+    }
+
+
+@app.get("/reports", dependencies=[Depends(verify_api_key)])
+async def list_reports(limit: int = Query(default=20, le=100), db=Depends(get_db)):
+    """List past analysis reports."""
+    reports = (
+        db.query(DBAnalysisReport)
+        .order_by(DBAnalysisReport.analyzed_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "reports": [
+            {
+                "id": r.id,
+                "documents_analyzed": r.documents_analyzed,
+                "total_issues": r.total_issues,
+                "critical_issues": r.critical_issues,
+                "risk_level": r.risk_level,
+                "analyzed_at": r.analyzed_at.isoformat(),
+            }
+            for r in reports
+        ]
+    }
+
+
+@app.get("/reports/{report_id}", dependencies=[Depends(verify_api_key)])
+async def get_report(report_id: str, db=Depends(get_db)):
+    """Get full details of a past analysis report."""
+    report = db.query(DBAnalysisReport).filter(DBAnalysisReport.id == report_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    full_data = json.loads(_decrypt_text(report.report_data))
+    return {
+        "id": report.id,
+        "documents_analyzed": report.documents_analyzed,
+        "total_issues": report.total_issues,
+        "critical_issues": report.critical_issues,
+        "risk_level": report.risk_level,
+        "analyzed_at": report.analyzed_at.isoformat(),
+        **full_data,
     }

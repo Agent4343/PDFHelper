@@ -48,3 +48,17 @@ class DBSearchResult(Base):
     total_ai_findings = Column(Integer, default=0)
     flagged_for_review = Column(Integer, default=0)
     searched_at = Column(DateTime, nullable=False)
+
+
+class DBAnalysisReport(Base):
+    __tablename__ = "analysis_reports"
+
+    id = Column(String, primary_key=True)
+    doc_ids = Column(Text, nullable=False)            # JSON list of document IDs
+    compliance_context = Column(Text, nullable=True)   # encrypted
+    report_data = Column(Text, nullable=False)         # encrypted JSON of full analysis
+    documents_analyzed = Column(Integer, default=0)
+    total_issues = Column(Integer, default=0)
+    critical_issues = Column(Integer, default=0)
+    risk_level = Column(String, nullable=True)
+    analyzed_at = Column(DateTime, nullable=False)

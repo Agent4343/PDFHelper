@@ -2,9 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps for PyMuPDF
+# System deps for PyMuPDF and Tesseract OCR
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libmupdf-dev && \
+    apt-get install -y --no-install-recommends \
+        libmupdf-dev \
+        tesseract-ocr \
+        tesseract-ocr-eng && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
