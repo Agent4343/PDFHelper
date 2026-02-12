@@ -585,6 +585,7 @@ max-width:90%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
 /* Connection status */
 .api-status{font-size:0.8rem;margin-top:0.3rem;font-weight:600}
 .api-status.connected{color:var(--green)}.api-status.disconnected{color:var(--red)}
+.api-status.warning{color:var(--orange)}
 .api-status.unchecked{color:var(--muted)}
 /* Inline error */
 .inline-error{background:#ef444422;border:1px solid #ef444455;border-radius:8px;
@@ -771,20 +772,26 @@ async function testConnection(){
   if(!key){ setApiStatus('Enter your API key above','disconnected'); return; }
   setApiStatus('Connecting...','unchecked');
   try{
-    const r=await fetch(API+'/documents',{headers:{'X-API-Key':key}});
+    const r=await fetch(API+'/verify-key',{headers:{'X-API-Key':key}});
     if(r.ok){
+      const d=await r.json().catch(()=>({}));
       apiConnected=true; saveKey();
-      setApiStatus('Connected','connected');
-      toast('Connected successfully');
+      if(d.db_ok===false){
+        setApiStatus('API key valid — but database is unavailable (uploads will fail until DB is fixed)','warning');
+        toast('API key accepted, but database is down — uploads will not work yet','error');
+      } else {
+        setApiStatus('Connected','connected');
+        toast('Connected successfully');
+      }
     } else {
       const d=await r.json().catch(()=>({}));
       apiConnected=false;
-      setApiStatus('Connection failed: '+(d.detail||r.status),'disconnected');
-      toast(d.detail||'Connection failed — check your API key','error');
+      setApiStatus('Invalid API key: '+(d.detail||r.status),'disconnected');
+      toast(d.detail||'Invalid API key','error');
     }
   }catch(e){
     apiConnected=false;
-    setApiStatus('Connection failed: '+e.message,'disconnected');
+    setApiStatus('Cannot reach server: '+e.message,'disconnected');
     toast('Cannot reach server: '+e.message,'error');
   }
 }
@@ -846,7 +853,9 @@ async function uploadFiles(){
   try{
     const r=await fetch(API+'/upload',{method:'POST',headers:{'X-API-Key':getKey()},body:fd});
     let d;
-    try{ d=await r.json(); }catch(jsonErr){ throw new Error('Server returned invalid response (status '+r.status+'). The database may be down.'); }
+    try{ d=await r.json(); }catch(jsonErr){ throw new Error('Server returned invalid response (status '+r.status+'). The database may be down — check DATABASE_URL in your Railway variables.'); }
+    if(r.status===401) throw new Error('Invalid API key. Enter your key above and click Connect first.');
+    if(r.status===503) throw new Error('Database is unavailable. Check that DATABASE_URL is set in your Railway service variables.');
     if(!r.ok) throw new Error(d.detail||'Upload failed (status '+r.status+')');
     res.innerHTML='<div class="card"><h3>Uploaded '+d.count+' file(s)</h3>'+
       d.uploaded.map(u=>'<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+
@@ -1182,6 +1191,20 @@ async def health_check():
         "version": "1.0.0",
         "warnings": _startup_errors,
     }
+
+
+@app.get("/verify-key", dependencies=[Depends(verify_api_key)])
+async def verify_key():
+    """Lightweight API key check — no database required."""
+    db_ok = True
+    try:
+        from sqlalchemy import text
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+    except Exception:
+        db_ok = False
+    return {"valid": True, "db_ok": db_ok}
 
 
 @app.get("/", response_class=HTMLResponse)
