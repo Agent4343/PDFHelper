@@ -9,7 +9,7 @@ import os
 from sqlalchemy import Column, String, Integer, Text, DateTime, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////tmp/pdfhelper.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip() or "sqlite:////tmp/pdfhelper.db"
 
 # Railway PostgreSQL provides postgres:// but SQLAlchemy needs postgresql://
 if DATABASE_URL.startswith("postgres://"):
