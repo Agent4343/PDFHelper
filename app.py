@@ -76,9 +76,24 @@ app = FastAPI(
 )
 
 
+async def _retry_db_init(logger):
+    """Retry database table creation in the background."""
+    import asyncio
+    for attempt in range(2, 6):  # attempts 2–5
+        await asyncio.sleep(2 ** attempt)  # 4, 8, 16, 32 seconds
+        try:
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database tables initialized successfully (attempt %d).", attempt)
+            return
+        except Exception as exc:
+            logger.warning("Database init attempt %d/5 failed: %s", attempt, exc)
+    _startup_errors.append("WARNING: Database initialization failed after 5 attempts.")
+
+
 @app.on_event("startup")
 async def startup():
     """Run safety checks and initialize DB — errors are logged, not fatal."""
+    import asyncio
     import logging
     logger = logging.getLogger("pdfhelper")
 
@@ -98,26 +113,13 @@ async def startup():
         logger.warning(msg)
         _startup_errors.append(msg)
 
-    # Retry database init — Railway Postgres may not be ready immediately
-    max_retries = 5
-    for attempt in range(1, max_retries + 1):
-        try:
-            Base.metadata.create_all(bind=engine)
-            logger.info("Database tables initialized successfully.")
-            break
-        except Exception as exc:
-            if attempt < max_retries:
-                wait = 2 ** attempt  # 2, 4, 8, 16, 32 seconds
-                logger.warning(
-                    "Database init attempt %d/%d failed: %s — retrying in %ds",
-                    attempt, max_retries, exc, wait,
-                )
-                import asyncio
-                await asyncio.sleep(wait)
-            else:
-                msg = f"WARNING: Database initialization failed after {max_retries} attempts: {exc}"
-                logger.warning(msg)
-                _startup_errors.append(msg)
+    # Try once synchronously, then retry in background if needed
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables initialized successfully.")
+    except Exception as exc:
+        logger.warning("Database init failed on first attempt: %s — retrying in background", exc)
+        asyncio.create_task(_retry_db_init(logger))
 
 
 # ---------------------------------------------------------------------------
