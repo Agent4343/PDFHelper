@@ -577,10 +577,18 @@ border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infin
 .loading-overlay{display:flex;flex-direction:column;align-items:center;gap:0.75rem;
 padding:2rem;color:var(--muted)}
 /* Toast */
-.toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:0.75rem 1.25rem;border-radius:8px;
-font-size:0.85rem;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast{position:fixed;top:1.5rem;left:50%;transform:translateX(-50%);padding:0.85rem 1.5rem;border-radius:8px;
+font-size:0.9rem;font-weight:600;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none;
+max-width:90%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
 .toast.show{opacity:1}.toast.success{background:#16a34a;color:#fff}
 .toast.error{background:var(--red);color:#fff}
+/* Connection status */
+.api-status{font-size:0.8rem;margin-top:0.3rem;font-weight:600}
+.api-status.connected{color:var(--green)}.api-status.disconnected{color:var(--red)}
+.api-status.unchecked{color:var(--muted)}
+/* Inline error */
+.inline-error{background:#ef444422;border:1px solid #ef444455;border-radius:8px;
+padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-weight:500}
 /* Hide all pages, show active */
 .page{display:none}.page.active{display:block}
 /* Responsive */
@@ -627,8 +635,10 @@ font-size:0.85rem;z-index:999;opacity:0;transition:opacity .3s;pointer-events:no
       <div class="field">
         <label for="apikey">API Key</label>
         <input type="password" id="apikey" placeholder="Enter your PDF_HELPER_API_KEY" autocomplete="off">
+        <div class="api-status unchecked" id="api-status">Not connected — enter your API key and click Connect</div>
       </div>
-      <button class="btn btn-secondary" onclick="toggleKeyVisibility()">Show</button>
+      <button class="btn btn-secondary" onclick="toggleKeyVisibility(event)">Show</button>
+      <button class="btn btn-primary" onclick="testConnection()">Connect</button>
     </div>
 
     <!-- Upload page -->
@@ -730,7 +740,14 @@ font-size:0.85rem;z-index:999;opacity:0;transition:opacity .3s;pointer-events:no
 
 <script>
 const API = window.location.origin;
+let apiConnected = false;
+
 function getKey(){ return document.getElementById('apikey').value.trim(); }
+function saveKey(){ const k=getKey(); if(k) localStorage.setItem('pdfhelper_apikey',k); }
+function loadKey(){
+  const k=localStorage.getItem('pdfhelper_apikey');
+  if(k){ document.getElementById('apikey').value=k; testConnection(); }
+}
 function headers(json){
   const h = {'X-API-Key': getKey()};
   if(json) h['Content-Type']='application/json';
@@ -739,7 +756,46 @@ function headers(json){
 function toast(msg,type='success'){
   const t=document.getElementById('toast');
   t.textContent=msg; t.className='toast '+type+' show';
-  setTimeout(()=>t.classList.remove('show'),3500);
+  setTimeout(()=>t.classList.remove('show'),4000);
+}
+function setApiStatus(msg, cls){
+  const el=document.getElementById('api-status');
+  el.textContent=msg; el.className='api-status '+cls;
+}
+function showInlineError(containerId, msg){
+  const el=document.getElementById(containerId);
+  el.innerHTML='<div class="inline-error">'+esc(msg)+'</div>';
+}
+async function testConnection(){
+  const key=getKey();
+  if(!key){ setApiStatus('Enter your API key above','disconnected'); return; }
+  setApiStatus('Connecting...','unchecked');
+  try{
+    const r=await fetch(API+'/documents',{headers:{'X-API-Key':key}});
+    if(r.ok){
+      apiConnected=true; saveKey();
+      setApiStatus('Connected','connected');
+      toast('Connected successfully');
+    } else {
+      const d=await r.json().catch(()=>({}));
+      apiConnected=false;
+      setApiStatus('Connection failed: '+(d.detail||r.status),'disconnected');
+      toast(d.detail||'Connection failed — check your API key','error');
+    }
+  }catch(e){
+    apiConnected=false;
+    setApiStatus('Connection failed: '+e.message,'disconnected');
+    toast('Cannot reach server: '+e.message,'error');
+  }
+}
+function requireKey(errorContainerId){
+  if(!getKey()){
+    toast('Enter your API key and click Connect first','error');
+    setApiStatus('API key required','disconnected');
+    if(errorContainerId) showInlineError(errorContainerId,'Enter your API key at the top and click Connect before continuing.');
+    return false;
+  }
+  return true;
 }
 function showPage(name){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -749,9 +805,9 @@ function showPage(name){
   if(name==='documents') loadDocuments();
   if(name==='history') loadHistory();
 }
-function toggleKeyVisibility(){
+function toggleKeyVisibility(e){
   const inp=document.getElementById('apikey');
-  const btn=event.target;
+  const btn=e?e.target:document.querySelector('.api-bar .btn-secondary');
   if(inp.type==='password'){inp.type='text';btn.textContent='Hide';}
   else{inp.type='password';btn.textContent='Show';}
 }
@@ -775,30 +831,39 @@ function showFileNames(){
   el.textContent=selectedFiles.map(f=>f.name).join(', ');
 }
 async function uploadFiles(){
-  if(!getKey()){toast('Enter your API key first','error');return;}
-  if(!selectedFiles.length){toast('Select PDF files first','error');return;}
+  const res=document.getElementById('upload-result');
+  if(!requireKey('upload-result')) return;
+  if(!selectedFiles.length){
+    toast('Select PDF files first','error');
+    showInlineError('upload-result','Click the drop zone above to select PDF files first.');
+    return;
+  }
+  res.innerHTML='';
   const btn=document.getElementById('upload-btn');
   btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Uploading...';
   const fd=new FormData();
   selectedFiles.forEach(f=>fd.append('files',f));
   try{
     const r=await fetch(API+'/upload',{method:'POST',headers:{'X-API-Key':getKey()},body:fd});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Upload failed');
-    const res=document.getElementById('upload-result');
+    let d;
+    try{ d=await r.json(); }catch(jsonErr){ throw new Error('Server returned invalid response (status '+r.status+'). The database may be down.'); }
+    if(!r.ok) throw new Error(d.detail||'Upload failed (status '+r.status+')');
     res.innerHTML='<div class="card"><h3>Uploaded '+d.count+' file(s)</h3>'+
       d.uploaded.map(u=>'<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+
       esc(u.filename)+'</div><div class="meta">'+u.pages+' pages &middot; ID: '+u.id.slice(0,8)+'...</div></div></div>').join('')+'</div>';
     toast('Uploaded '+d.count+' file(s)');
     selectedFiles=[];fi.value='';document.getElementById('file-list').textContent='';
-  }catch(e){toast(e.message,'error');}
+  }catch(e){
+    toast(e.message,'error');
+    showInlineError('upload-result', e.message);
+  }
   btn.disabled=false;btn.textContent='Upload';
 }
 
 /* ---- Documents ---- */
 let allDocs=[];
 async function loadDocuments(){
-  if(!getKey()){toast('Enter your API key first','error');return;}
+  if(!requireKey('doc-list')) return;
   const el=document.getElementById('doc-list');
   loading(el);
   try{
@@ -838,7 +903,7 @@ async function deleteDoc(id){
 
 /* ---- Search ---- */
 async function runSearch(){
-  if(!getKey()){toast('Enter your API key first','error');return;}
+  if(!requireKey('search-result')) return;
   const terms=document.getElementById('search-terms').value.split(',').map(s=>s.trim()).filter(Boolean);
   const aiQ=document.getElementById('ai-query').value.trim();
   if(!terms.length&&!aiQ){toast('Enter keywords or an AI query','error');return;}
@@ -895,7 +960,7 @@ function renderSearchResults(d,el){
 
 /* ---- Analyze ---- */
 async function runAnalysis(){
-  if(!getKey()){toast('Enter your API key first','error');return;}
+  if(!requireKey('analyze-result')) return;
   const btn=document.getElementById('analyze-btn');
   btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Analyzing (this may take a minute)...';
   const res=document.getElementById('analyze-result');
@@ -972,7 +1037,7 @@ function showHistoryTab(tab,btn){
   if(tab==='reports') loadReports();
 }
 async function loadHistory(){
-  if(!getKey()){toast('Enter your API key first','error');return;}
+  if(!requireKey('history-list')) return;
   const el=document.getElementById('history-list');loading(el);
   try{
     const r=await fetch(API+'/history?limit=50',{headers:headers()});
@@ -1009,7 +1074,7 @@ async function viewSearch(id){
   }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
 }
 async function loadReports(){
-  if(!getKey()){toast('Enter your API key first','error');return;}
+  if(!requireKey('reports-list')) return;
   const el=document.getElementById('reports-list');loading(el);
   try{
     const r=await fetch(API+'/reports?limit=50',{headers:headers()});
@@ -1057,9 +1122,40 @@ async function checkHealth(){
 checkHealth();setInterval(checkHealth,30000);
 
 function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+
+/* ---- Load saved API key on startup ---- */
+loadKey();
 </script>
 </body>
 </html>"""
+
+# ---------------------------------------------------------------------------
+# Global error handler for DB failures
+# ---------------------------------------------------------------------------
+
+from sqlalchemy.exc import OperationalError as SAOperationalError
+
+@app.exception_handler(SAOperationalError)
+async def db_error_handler(request: Request, exc: SAOperationalError):
+    """Return a clear error message when the database is unreachable."""
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Database is unavailable. Check that DATABASE_URL is set correctly "
+                      "(use the public URL, not the internal .railway.internal hostname)."
+        },
+    )
+
+@app.exception_handler(Exception)
+async def general_error_handler(request: Request, exc: Exception):
+    """Catch-all so errors always return JSON, never HTML."""
+    import traceback, logging
+    logging.getLogger("pdfhelper").error(f"Unhandled error on {request.url.path}: {exc}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}: {str(exc)}"},
+    )
+
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -1067,8 +1163,22 @@ function esc(s){if(!s)return'';const d=document.createElement('div');d.textConte
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
+    """Health check — also tests current DB connectivity."""
+    db_ok = True
+    try:
+        from sqlalchemy import text
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+    except Exception as e:
+        db_ok = False
+        db_err = f"Database connection failed: {e}"
+        if db_err not in _startup_errors:
+            _startup_errors.append(db_err)
+
+    status = "ok" if (not _startup_errors and db_ok) else "degraded"
     return {
-        "status": "ok" if not _startup_errors else "degraded",
+        "status": status,
         "version": "1.0.0",
         "warnings": _startup_errors,
     }
