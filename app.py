@@ -1348,8 +1348,53 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--text-dim)}
 
+/* ---- Mobile ---- */
 @media(max-width:768px){
-  .sidebar{width:260px;min-width:260px}
+  .app{position:relative}
+
+  /* Sidebar becomes a full-height overlay drawer */
+  .sidebar{position:absolute;top:0;left:0;z-index:100;width:280px;min-width:280px;
+    height:100vh;box-shadow:4px 0 24px rgba(0,0,0,0.5);
+    transform:translateX(0);transition:transform .25s ease}
+  .sidebar.collapsed{transform:translateX(-100%);box-shadow:none}
+
+  /* Backdrop overlay when sidebar is open */
+  .sidebar-backdrop{display:none;position:fixed;inset:0;z-index:99;
+    background:rgba(0,0,0,0.5);-webkit-tap-highlight-color:transparent}
+  .sidebar-backdrop.visible{display:block}
+
+  /* Main area takes full width */
+  .main{width:100vw}
+
+  /* Topbar compact */
+  .topbar{padding:10px 14px;gap:10px}
+  .topbar .bot-info .title{font-size:14px}
+
+  /* Messages */
+  .messages{padding:16px 12px}
+  .bubble{max-width:88%}
+
+  /* Empty state */
+  .empty-state{padding:20px 16px}
+  .empty-state p{font-size:12px;max-width:300px}
+  .suggestions{flex-direction:column;align-items:center}
+  .suggestion{width:100%;max-width:260px;text-align:center}
+
+  /* Input area compact */
+  .input-area{padding:10px 12px}
+  .input-row{border-radius:12px;padding:4px 4px 4px 12px}
+  .input-row textarea{font-size:16px} /* prevents iOS zoom on focus */
+  .send-btn{width:36px;height:36px;border-radius:8px}
+
+  /* Sidebar doc items: bigger touch targets */
+  .doc-item{padding:14px 12px}
+  .doc-actions{padding:10px 12px}
+  .doc-actions button{padding:10px;font-size:12px}
+  .back-link{padding:10px 12px}
+}
+
+@media(max-width:380px){
+  .sidebar{width:100vw;min-width:100vw}
 }
 </style>
 </head>
@@ -1391,6 +1436,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
       <a href="/">&larr; Back to PDFHelper</a>
     </div>
   </div>
+  <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
 
   <!-- Main chat -->
   <div class="main">
@@ -1492,6 +1538,12 @@ function hdrs(json){
   return h;
 }
 
+/* Start sidebar collapsed on mobile */
+if(isMobile()){
+  document.getElementById('sidebar').classList.add('collapsed');
+  document.getElementById('toggle-icon').innerHTML='&#9776;';
+}
+
 /* Auto-load: check if API key is needed */
 (function(){
   fetch(API+'/health').then(r=>r.json()).then(d=>{
@@ -1581,12 +1633,30 @@ function updateStatus(){
 }
 
 /* ---- Sidebar toggle ---- */
+function isMobile(){ return window.innerWidth<=768; }
+
 function toggleSidebar(){
-  const sb=document.getElementById('sidebar');
-  const ic=document.getElementById('toggle-icon');
+  var sb=document.getElementById('sidebar');
+  var ic=document.getElementById('toggle-icon');
+  var bd=document.getElementById('sidebar-backdrop');
   sb.classList.toggle('collapsed');
-  ic.innerHTML=sb.classList.contains('collapsed')?'&#9655;':'&#9665;';
+  var closed=sb.classList.contains('collapsed');
+  ic.innerHTML=closed?'&#9776;':'&#9665;';
+  if(isMobile()) bd.className='sidebar-backdrop'+(closed?'':' visible');
 }
+
+function closeSidebar(){
+  var sb=document.getElementById('sidebar');
+  if(!sb.classList.contains('collapsed')){
+    sb.classList.add('collapsed');
+    document.getElementById('toggle-icon').innerHTML='&#9776;';
+    document.getElementById('sidebar-backdrop').className='sidebar-backdrop';
+  }
+}
+
+/* Close sidebar when a doc is tapped on mobile */
+var _origToggleDoc=toggleDoc;
+toggleDoc=function(id){ _origToggleDoc(id); };
 
 /* ---- Chat ---- */
 function clearChat(){
