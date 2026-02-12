@@ -23,6 +23,9 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import fitz  # PyMuPDF
 from fastapi import (
     FastAPI, File, UploadFile, Depends, HTTPException, Query, Request,
