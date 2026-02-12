@@ -20,7 +20,8 @@ _is_sqlite = "sqlite" in DATABASE_URL
 engine = create_engine(
     DATABASE_URL,
     # SQLite needs check_same_thread=False for FastAPI
-    connect_args={"check_same_thread": False} if _is_sqlite else {},
+    # PostgreSQL gets a 5s connect timeout so startup doesn't hang
+    connect_args={"check_same_thread": False} if _is_sqlite else {"connect_timeout": 5},
     # Auto-reconnect stale PostgreSQL connections
     pool_pre_ping=not _is_sqlite,
 )
