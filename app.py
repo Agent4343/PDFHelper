@@ -23,8 +23,11 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed; env vars must be set directly
 
 import fitz  # PyMuPDF
 from fastapi import (
@@ -47,7 +50,7 @@ from ocr import extract_text_with_ocr_fallback
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 IS_PRODUCTION = ENVIRONMENT == "production"
 
-API_KEY = os.getenv("PDF_HELPER_API_KEY")
+API_KEY = (os.getenv("PDF_HELPER_API_KEY") or "").strip() or None
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024
@@ -1199,12 +1202,19 @@ async def health_check():
 @app.get("/verify-key", dependencies=[Depends(verify_api_key)])
 async def verify_key():
     """Lightweight API key check — no database required."""
+    import asyncio
+    from sqlalchemy import text
+
+    def _check_db():
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+        finally:
+            db.close()
+
     db_ok = True
     try:
-        from sqlalchemy import text
-        db = SessionLocal()
-        db.execute(text("SELECT 1"))
-        db.close()
+        await asyncio.wait_for(asyncio.to_thread(_check_db), timeout=3)
     except Exception:
         db_ok = False
     return {"valid": True, "db_ok": db_ok}
