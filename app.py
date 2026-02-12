@@ -29,7 +29,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -482,6 +482,291 @@ async def health_check():
         "version": "1.0.0",
         "warnings": _startup_errors,
     }
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """API documentation and operating interface."""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDFHelper API</title>
+<style>
+  :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0;
+          --muted: #94a3b8; --accent: #3b82f6; --green: #22c55e; --red: #ef4444;
+          --orange: #f59e0b; --code-bg: #0d1117; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+         background: var(--bg); color: var(--text); line-height: 1.6; padding: 2rem; }
+  .container { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+  .subtitle { color: var(--muted); margin-bottom: 2rem; font-size: 0.95rem; }
+  .version { display: inline-block; background: var(--accent); color: #fff;
+             font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; vertical-align: middle; }
+  .section { margin-bottom: 2rem; }
+  .section h2 { font-size: 1.15rem; color: var(--accent); margin-bottom: 0.75rem;
+                border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+  .endpoint { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+              padding: 1rem 1.25rem; margin-bottom: 0.75rem; }
+  .endpoint summary { cursor: pointer; list-style: none; display: flex; align-items: center;
+                      gap: 0.75rem; font-size: 0.95rem; }
+  .endpoint summary::-webkit-details-summary-icon { display: none; }
+  .method { font-weight: 700; font-size: 0.8rem; padding: 3px 10px; border-radius: 4px;
+            min-width: 60px; text-align: center; display: inline-block; }
+  .get { background: #16a34a22; color: var(--green); border: 1px solid #16a34a55; }
+  .post { background: #3b82f622; color: var(--accent); border: 1px solid #3b82f655; }
+  .delete { background: #ef444422; color: var(--red); border: 1px solid #ef444455; }
+  .path { font-family: monospace; font-weight: 600; }
+  .desc { color: var(--muted); margin-left: auto; font-size: 0.85rem; }
+  .auth { font-size: 0.7rem; background: #f59e0b22; color: var(--orange);
+          padding: 2px 6px; border-radius: 3px; border: 1px solid #f59e0b44; }
+  .detail { padding: 1rem 0 0.25rem 0; color: var(--muted); font-size: 0.88rem; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+        padding: 0.75rem 1rem; overflow-x: auto; font-size: 0.82rem; margin: 0.5rem 0; }
+  code { font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; }
+  .note { background: #3b82f612; border-left: 3px solid var(--accent); padding: 0.75rem 1rem;
+          border-radius: 0 6px 6px 0; margin: 0.75rem 0; font-size: 0.88rem; color: var(--muted); }
+  .status-ok { color: var(--green); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.5rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>PDFHelper <span class="version">v1.0.0</span></h1>
+  <p class="subtitle">AI-powered PDF search, flagging, and multi-agent compliance analysis</p>
+
+  <div class="section">
+    <h2>Authentication</h2>
+    <div class="endpoint">
+      <p style="font-size:0.9rem; color:var(--muted);">All endpoints except <code>/health</code> and <code>/</code> require an API key. Send it in one of two ways:</p>
+      <pre><code>Authorization: Bearer YOUR_API_KEY
+<span style="color:var(--muted);"># or</span>
+X-API-Key: YOUR_API_KEY</code></pre>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>System</h2>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method get">GET</span>
+        <span class="path">/health</span>
+        <span class="desc">Service health &amp; status</span>
+      </summary>
+      <div class="detail">
+        <p>Returns service status, version, and any startup warnings. No authentication required.</p>
+        <pre><code>curl YOUR_URL/health</code></pre>
+        <p>Response:</p>
+        <pre><code>{ "status": "ok", "version": "1.0.0", "warnings": [] }</code></pre>
+      </div>
+    </details>
+  </div>
+
+  <div class="section">
+    <h2>Document Management</h2>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method post">POST</span>
+        <span class="path">/upload</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">Upload PDF files</span>
+      </summary>
+      <div class="detail">
+        <p>Upload one or more PDFs (max 20 files, max 20 MB each). Files are encrypted at rest.</p>
+        <pre><code>curl -X POST YOUR_URL/upload \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -F "files=@document.pdf" \\
+  -F "files=@another.pdf"</code></pre>
+        <p>Response:</p>
+        <pre><code>{
+  "uploaded": [
+    { "id": "uuid", "filename": "document.pdf", "pages": 12 }
+  ],
+  "count": 1
+}</code></pre>
+      </div>
+    </details>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method get">GET</span>
+        <span class="path">/documents</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">List all documents</span>
+      </summary>
+      <div class="detail">
+        <p>Returns a list of all uploaded documents with metadata.</p>
+        <pre><code>curl YOUR_URL/documents -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
+      </div>
+    </details>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method get">GET</span>
+        <span class="path">/documents/{doc_id}</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">Get document details</span>
+      </summary>
+      <div class="detail">
+        <p>Returns details for a specific document by ID.</p>
+        <pre><code>curl YOUR_URL/documents/DOC_ID -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
+      </div>
+    </details>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method delete">DELETE</span>
+        <span class="path">/documents/{doc_id}</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">Delete a document</span>
+      </summary>
+      <div class="detail">
+        <p>Permanently deletes a document and its encrypted file from storage.</p>
+        <pre><code>curl -X DELETE YOUR_URL/documents/DOC_ID -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
+      </div>
+    </details>
+  </div>
+
+  <div class="section">
+    <h2>Search</h2>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method post">POST</span>
+        <span class="path">/search</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">Search documents with keywords &amp; AI</span>
+      </summary>
+      <div class="detail">
+        <p>Search uploaded PDFs using exact keyword matching, AI-powered semantic search, or both.
+           Optionally filter by document IDs with <code>?doc_ids=id1&amp;doc_ids=id2</code>.</p>
+        <pre><code>curl -X POST YOUR_URL/search -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "search_terms": ["safety", "hazard"],
+    "ai_query": "references to outdated regulations",
+    "case_sensitive": false
+  }'</code></pre>
+        <p>Response includes:</p>
+        <table>
+          <tr><th>Field</th><th>Description</th></tr>
+          <tr><td><code>search_id</code></td><td>UUID for retrieving this search later</td></tr>
+          <tr><td><code>summary</code></td><td>Counts: documents searched, keyword matches, AI findings, flagged items</td></tr>
+          <tr><td><code>keyword_results</code></td><td>Exact keyword matches with page, context, and matched text</td></tr>
+          <tr><td><code>ai_results</code></td><td>AI findings with page, reason, needs_review flag, and suggestions</td></tr>
+        </table>
+      </div>
+    </details>
+  </div>
+
+  <div class="section">
+    <h2>Multi-Agent Analysis</h2>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method post">POST</span>
+        <span class="path">/analyze</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">Full AI analysis pipeline</span>
+      </summary>
+      <div class="detail">
+        <p>Runs 4 specialized AI agents on your documents:</p>
+        <table>
+          <tr><th>Agent</th><th>Purpose</th></tr>
+          <tr><td>Document Analyzer</td><td>Deep analysis of each document (topics, dates, references)</td></tr>
+          <tr><td>Cross-Reference Checker</td><td>Finds conflicts and inconsistencies between documents</td></tr>
+          <tr><td>Compliance Checker</td><td>Flags regulatory/policy issues (OSHA, HIPAA, FDA, etc.)</td></tr>
+          <tr><td>Summary Report Generator</td><td>Produces an executive report with action items</td></tr>
+        </table>
+        <pre><code>curl -X POST YOUR_URL/analyze -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "compliance_context": "OSHA 2024 standards",
+    "search_terms": ["PPE", "training"],
+    "ai_query": "outdated safety procedures"
+  }'</code></pre>
+        <p>Response includes: <code>report</code> (executive summary, risk level, action items),
+           <code>document_analyses</code>, <code>cross_reference_findings</code>,
+           <code>compliance_findings</code>, and optional <code>search_results</code>.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="section">
+    <h2>History &amp; Reports</h2>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method get">GET</span>
+        <span class="path">/history</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">Past search results</span>
+      </summary>
+      <div class="detail">
+        <p>Lists past searches. Optional <code>?limit=N</code> (max 100, default 20).</p>
+        <pre><code>curl YOUR_URL/history?limit=10 -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
+      </div>
+    </details>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method get">GET</span>
+        <span class="path">/history/{search_id}</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">Full search detail</span>
+      </summary>
+      <div class="detail">
+        <p>Returns the complete results for a specific past search.</p>
+      </div>
+    </details>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method get">GET</span>
+        <span class="path">/reports</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">Past analysis reports</span>
+      </summary>
+      <div class="detail">
+        <p>Lists past multi-agent analysis reports. Optional <code>?limit=N</code> (max 100).</p>
+        <pre><code>curl YOUR_URL/reports -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
+      </div>
+    </details>
+
+    <details class="endpoint">
+      <summary>
+        <span class="method get">GET</span>
+        <span class="path">/reports/{report_id}</span>
+        <span class="auth">AUTH</span>
+        <span class="desc">Full analysis report</span>
+      </summary>
+      <div class="detail">
+        <p>Returns the complete multi-agent analysis with all findings and recommendations.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="section">
+    <h2>Quick Start</h2>
+    <div class="note">
+      <strong>1.</strong> Upload a PDF &rarr;
+      <strong>2.</strong> Search with keywords or AI &rarr;
+      <strong>3.</strong> Run full analysis for compliance review<br><br>
+      All files are encrypted at rest. Documents auto-delete after 72 hours by default.
+    </div>
+  </div>
+
+</div>
+</body>
+</html>"""
 
 
 @app.post("/upload", dependencies=[Depends(verify_api_key)])
