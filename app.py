@@ -1202,7 +1202,7 @@ _BOT_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>PDFHelper — Procedure Bot</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -1216,9 +1216,10 @@ _BOT_HTML = """<!DOCTYPE html>
   --white:#ffffff;--danger:#ef4444;
 }
 body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
-  background:var(--bg);color:var(--text);overflow:hidden;height:100vh}
+  background:var(--bg);color:var(--text);overflow:hidden;
+  height:100vh;height:100dvh}
 
-.app{display:flex;height:100vh;width:100vw}
+.app{display:flex;height:100vh;height:100dvh;width:100vw}
 
 /* ---- Sidebar ---- */
 .sidebar{width:320px;min-width:320px;background:var(--surface);
@@ -1354,9 +1355,9 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
   /* Sidebar becomes a full-height overlay drawer */
   .sidebar{position:absolute;top:0;left:0;z-index:100;width:280px;min-width:280px;
-    height:100vh;box-shadow:4px 0 24px rgba(0,0,0,0.5);
+    height:100dvh;height:100vh;box-shadow:4px 0 24px rgba(0,0,0,0.5);
     transform:translateX(0);transition:transform .25s ease}
-  .sidebar.collapsed{transform:translateX(-100%);box-shadow:none}
+  .sidebar.collapsed{width:280px;min-width:280px;transform:translateX(-100%);box-shadow:none}
 
   /* Backdrop overlay when sidebar is open */
   .sidebar-backdrop{display:none;position:fixed;inset:0;z-index:99;
@@ -1380,8 +1381,8 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
   .suggestions{flex-direction:column;align-items:center}
   .suggestion{width:100%;max-width:260px;text-align:center}
 
-  /* Input area compact */
-  .input-area{padding:10px 12px}
+  /* Input area - safe area for notched phones */
+  .input-area{padding:10px 12px;padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
   .input-row{border-radius:12px;padding:4px 4px 4px 12px}
   .input-row textarea{font-size:16px} /* prevents iOS zoom on focus */
   .send-btn{width:36px;height:36px;border-radius:8px}
@@ -1395,6 +1396,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
 @media(max-width:380px){
   .sidebar{width:100vw;min-width:100vw}
+  .sidebar.collapsed{width:100vw;min-width:100vw}
 }
 </style>
 </head>
@@ -1502,6 +1504,8 @@ let selectedIds = new Set();
 let messages = [];
 let sending = false;
 
+function isMobile(){ return window.innerWidth<=768; }
+
 /* ---- API Key ---- */
 function getKey(){ return document.getElementById('apikey').value.trim(); }
 
@@ -1536,12 +1540,6 @@ function hdrs(json){
   if(k) h['X-API-Key']=k;
   if(json) h['Content-Type']='application/json';
   return h;
-}
-
-/* Start sidebar collapsed on mobile */
-if(isMobile()){
-  document.getElementById('sidebar').classList.add('collapsed');
-  document.getElementById('toggle-icon').innerHTML='&#9776;';
 }
 
 /* Auto-load: check if API key is needed */
@@ -1633,8 +1631,6 @@ function updateStatus(){
 }
 
 /* ---- Sidebar toggle ---- */
-function isMobile(){ return window.innerWidth<=768; }
-
 function toggleSidebar(){
   var sb=document.getElementById('sidebar');
   var ic=document.getElementById('toggle-icon');
@@ -1654,9 +1650,11 @@ function closeSidebar(){
   }
 }
 
-/* Close sidebar when a doc is tapped on mobile */
-var _origToggleDoc=toggleDoc;
-toggleDoc=function(id){ _origToggleDoc(id); };
+/* Start sidebar collapsed on mobile */
+if(isMobile()){
+  document.getElementById('sidebar').classList.add('collapsed');
+  document.getElementById('toggle-icon').innerHTML='&#9776;';
+}
 
 /* ---- Chat ---- */
 function clearChat(){
@@ -1796,6 +1794,23 @@ function formatContent(text){
 }
 
 function esc(s){if(!s)return '';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+
+/* ---- Mobile keyboard handling ---- */
+if(isMobile()){
+  /* When input is focused, scroll chat to bottom after keyboard opens */
+  document.getElementById('chat-input').addEventListener('focus',function(){
+    setTimeout(function(){
+      var end=document.getElementById('chat-end');
+      if(end) end.scrollIntoView({behavior:'smooth'});
+    },350);
+  });
+  /* Use visualViewport to adjust layout when keyboard opens */
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize',function(){
+      document.documentElement.style.height=window.visualViewport.height+'px';
+    });
+  }
+}
 </script>
 </body>
 </html>"""
