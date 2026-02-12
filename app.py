@@ -472,6 +472,596 @@ def validate_pdf(file: UploadFile, content: bytes) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Root UI (interactive single-page interface)
+# ---------------------------------------------------------------------------
+
+_ROOT_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDFHelper</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;
+--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--orange:#f59e0b;--code:#0d1117}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+background:var(--bg);color:var(--text);line-height:1.6}
+.app{display:flex;height:100vh}
+/* Sidebar */
+.sidebar{width:220px;background:var(--card);border-right:1px solid var(--border);
+display:flex;flex-direction:column;flex-shrink:0}
+.sidebar .logo{padding:1.25rem 1rem;font-weight:700;font-size:1.1rem;
+border-bottom:1px solid var(--border)}
+.sidebar .logo span{color:var(--accent)}
+.sidebar nav{flex:1;padding:0.5rem 0}
+.sidebar nav button{display:flex;align-items:center;gap:0.6rem;width:100%;
+padding:0.6rem 1rem;background:none;border:none;color:var(--muted);cursor:pointer;
+font-size:0.88rem;text-align:left;transition:all .15s}
+.sidebar nav button:hover{background:#ffffff08;color:var(--text)}
+.sidebar nav button.active{background:#3b82f618;color:var(--accent);
+border-right:2px solid var(--accent)}
+.sidebar .status{padding:1rem;border-top:1px solid var(--border);font-size:0.78rem}
+.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px}
+.status-dot.ok{background:var(--green)}.status-dot.bad{background:var(--red)}
+/* Main */
+.main{flex:1;overflow-y:auto;padding:2rem 2.5rem}
+.main h2{font-size:1.4rem;margin-bottom:1.25rem}
+/* Cards */
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;
+padding:1.25rem 1.5rem;margin-bottom:1rem}
+.card h3{font-size:0.95rem;margin-bottom:0.75rem;color:var(--accent)}
+/* Forms */
+label{display:block;font-size:0.82rem;color:var(--muted);margin-bottom:0.3rem;font-weight:500}
+input[type=text],input[type=password],textarea{width:100%;padding:0.55rem 0.75rem;
+background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);
+font-size:0.88rem;font-family:inherit;outline:none;transition:border .15s}
+input:focus,textarea:focus{border-color:var(--accent)}
+textarea{resize:vertical;min-height:60px}
+.btn{display:inline-flex;align-items:center;gap:0.4rem;padding:0.5rem 1.1rem;
+border-radius:6px;border:none;cursor:pointer;font-size:0.85rem;font-weight:600;
+transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:#2563eb}
+.btn-danger{background:var(--red);color:#fff}
+.btn-danger:hover{background:#dc2626}
+.btn-secondary{background:var(--border);color:var(--text)}
+.btn-secondary:hover{background:#475569}
+.btn:disabled{opacity:0.5;cursor:not-allowed}
+/* File upload zone */
+.drop-zone{border:2px dashed var(--border);border-radius:10px;padding:2rem;
+text-align:center;cursor:pointer;transition:all .2s;margin-bottom:0.75rem}
+.drop-zone:hover,.drop-zone.dragover{border-color:var(--accent);background:#3b82f608}
+.drop-zone input{display:none}
+.drop-zone .icon{font-size:2rem;margin-bottom:0.5rem}
+.drop-zone p{color:var(--muted);font-size:0.88rem}
+.drop-zone .selected{color:var(--green);font-size:0.85rem;margin-top:0.5rem}
+/* API key bar */
+.api-bar{display:flex;gap:0.75rem;align-items:end;margin-bottom:1.5rem}
+.api-bar .field{flex:1}
+.api-bar .btn{margin-bottom:1px}
+/* Document list */
+.doc-row{display:flex;align-items:center;gap:1rem;padding:0.65rem 0;
+border-bottom:1px solid var(--border);font-size:0.88rem}
+.doc-row:last-child{border-bottom:none}
+.doc-icon{font-size:1.3rem}
+.doc-info{flex:1}
+.doc-info .name{font-weight:600}
+.doc-info .meta{font-size:0.78rem;color:var(--muted)}
+.doc-check{width:16px;height:16px;accent-color:var(--accent)}
+/* Results */
+.result-card{background:var(--code);border:1px solid var(--border);border-radius:8px;
+padding:0.85rem 1rem;margin-bottom:0.6rem;font-size:0.85rem}
+.result-card .label{font-size:0.75rem;color:var(--muted);text-transform:uppercase;
+letter-spacing:0.5px;margin-bottom:0.25rem}
+.result-card .text{color:var(--text)}
+.flag{display:inline-block;font-size:0.72rem;padding:2px 7px;border-radius:3px;font-weight:600}
+.flag-review{background:#f59e0b22;color:var(--orange);border:1px solid #f59e0b44}
+.flag-ok{background:#22c55e22;color:var(--green);border:1px solid #22c55e44}
+.flag-critical{background:#ef444422;color:var(--red);border:1px solid #ef444455}
+/* Summary stats */
+.stats{display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}
+.stat{background:var(--code);border:1px solid var(--border);border-radius:8px;
+padding:0.75rem 1rem;flex:1;min-width:120px;text-align:center}
+.stat .num{font-size:1.5rem;font-weight:700}
+.stat .lbl{font-size:0.75rem;color:var(--muted)}
+/* Tabs */
+.tabs{display:flex;gap:0;margin-bottom:1rem;border-bottom:1px solid var(--border)}
+.tab{padding:0.5rem 1rem;background:none;border:none;color:var(--muted);cursor:pointer;
+font-size:0.85rem;border-bottom:2px solid transparent;transition:all .15s}
+.tab:hover{color:var(--text)}.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+/* Loading */
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);
+border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-overlay{display:flex;flex-direction:column;align-items:center;gap:0.75rem;
+padding:2rem;color:var(--muted)}
+/* Toast */
+.toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:0.75rem 1.25rem;border-radius:8px;
+font-size:0.85rem;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}.toast.success{background:#16a34a;color:#fff}
+.toast.error{background:var(--red);color:#fff}
+/* Hide all pages, show active */
+.page{display:none}.page.active{display:block}
+/* Responsive */
+@media(max-width:768px){.sidebar{width:56px}.sidebar .logo span,.sidebar nav button span,
+.sidebar .status span{display:none}.sidebar nav button{justify-content:center;padding:0.75rem}
+.main{padding:1.25rem}}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo"><span>PDF</span>Helper</div>
+    <nav>
+      <button class="active" onclick="showPage('upload')" id="nav-upload">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>Upload</span>
+      </button>
+      <button onclick="showPage('documents')" id="nav-documents">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span>Documents</span>
+      </button>
+      <button onclick="showPage('search')" id="nav-search">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <span>Search</span>
+      </button>
+      <button onclick="showPage('analyze')" id="nav-analyze">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+        <span>Analyze</span>
+      </button>
+      <button onclick="showPage('history')" id="nav-history">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>History</span>
+      </button>
+    </nav>
+    <div class="status" id="health-status"></div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main">
+
+    <!-- API Key bar (persistent) -->
+    <div class="api-bar">
+      <div class="field">
+        <label for="apikey">API Key</label>
+        <input type="password" id="apikey" placeholder="Enter your PDF_HELPER_API_KEY" autocomplete="off">
+      </div>
+      <button class="btn btn-secondary" onclick="toggleKeyVisibility()">Show</button>
+    </div>
+
+    <!-- Upload page -->
+    <div class="page active" id="page-upload">
+      <h2>Upload PDFs</h2>
+      <div class="card">
+        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+          <input type="file" id="file-input" accept=".pdf" multiple>
+          <div class="icon">&#128196;</div>
+          <p>Click or drag PDF files here</p>
+          <p style="font-size:0.78rem;color:var(--muted)">Max 20 files, 20 MB each</p>
+          <div class="selected" id="file-list"></div>
+        </div>
+        <button class="btn btn-primary" id="upload-btn" onclick="uploadFiles()">Upload</button>
+      </div>
+      <div id="upload-result"></div>
+    </div>
+
+    <!-- Documents page -->
+    <div class="page" id="page-documents">
+      <h2>Documents</h2>
+      <div class="card">
+        <button class="btn btn-secondary" onclick="loadDocuments()" style="margin-bottom:0.75rem">Refresh</button>
+        <div id="doc-list"><p style="color:var(--muted);font-size:0.88rem">Click Refresh to load documents.</p></div>
+      </div>
+    </div>
+
+    <!-- Search page -->
+    <div class="page" id="page-search">
+      <h2>Search Documents</h2>
+      <div class="card">
+        <h3>Keyword Search</h3>
+        <label for="search-terms">Keywords (comma-separated)</label>
+        <input type="text" id="search-terms" placeholder='e.g. safety, hazard, compliance'>
+        <div style="margin-top:0.75rem">
+          <label for="ai-query">AI Semantic Search</label>
+          <textarea id="ai-query" placeholder="Describe what you're looking for in plain language, e.g. 'references to outdated regulations' or 'sections about employee training requirements'"></textarea>
+        </div>
+        <div style="margin-top:0.75rem">
+          <label>Filter by documents (optional)</label>
+          <div id="search-doc-select" style="font-size:0.85rem;color:var(--muted)">Load documents first from the Documents tab</div>
+        </div>
+        <div style="margin-top:1rem">
+          <button class="btn btn-primary" id="search-btn" onclick="runSearch()">Search</button>
+        </div>
+      </div>
+      <div id="search-result"></div>
+    </div>
+
+    <!-- Analyze page -->
+    <div class="page" id="page-analyze">
+      <h2>Multi-Agent Analysis</h2>
+      <div class="card">
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem">
+          Runs 4 AI agents: Document Analyzer, Cross-Reference Checker, Compliance Checker, and Summary Report Generator.
+        </p>
+        <label for="compliance-ctx">Compliance Standard (optional)</label>
+        <input type="text" id="compliance-ctx" placeholder="e.g. OSHA 2024, HIPAA, FDA 21 CFR Part 11">
+        <div style="margin-top:0.75rem">
+          <label for="analyze-terms">Keywords (optional, comma-separated)</label>
+          <input type="text" id="analyze-terms" placeholder="e.g. PPE, training">
+        </div>
+        <div style="margin-top:0.75rem">
+          <label for="analyze-query">AI Query (optional)</label>
+          <textarea id="analyze-query" placeholder="e.g. outdated safety procedures"></textarea>
+        </div>
+        <div style="margin-top:0.75rem">
+          <label>Filter by documents (optional)</label>
+          <div id="analyze-doc-select" style="font-size:0.85rem;color:var(--muted)">Load documents first from the Documents tab</div>
+        </div>
+        <div style="margin-top:1rem">
+          <button class="btn btn-primary" id="analyze-btn" onclick="runAnalysis()">Run Analysis</button>
+        </div>
+      </div>
+      <div id="analyze-result"></div>
+    </div>
+
+    <!-- History page -->
+    <div class="page" id="page-history">
+      <h2>History &amp; Reports</h2>
+      <div class="tabs">
+        <button class="tab active" onclick="showHistoryTab('searches',this)">Searches</button>
+        <button class="tab" onclick="showHistoryTab('reports',this)">Analysis Reports</button>
+      </div>
+      <div id="history-searches">
+        <button class="btn btn-secondary" onclick="loadHistory()" style="margin-bottom:0.75rem">Load Searches</button>
+        <div id="history-list"></div>
+      </div>
+      <div id="history-reports" style="display:none">
+        <button class="btn btn-secondary" onclick="loadReports()" style="margin-bottom:0.75rem">Load Reports</button>
+        <div id="reports-list"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = window.location.origin;
+function getKey(){ return document.getElementById('apikey').value.trim(); }
+function headers(json){
+  const h = {'X-API-Key': getKey()};
+  if(json) h['Content-Type']='application/json';
+  return h;
+}
+function toast(msg,type='success'){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast '+type+' show';
+  setTimeout(()=>t.classList.remove('show'),3500);
+}
+function showPage(name){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  document.querySelectorAll('.sidebar nav button').forEach(b=>b.classList.remove('active'));
+  document.getElementById('nav-'+name).classList.add('active');
+  if(name==='documents') loadDocuments();
+  if(name==='history') loadHistory();
+}
+function toggleKeyVisibility(){
+  const inp=document.getElementById('apikey');
+  const btn=event.target;
+  if(inp.type==='password'){inp.type='text';btn.textContent='Hide';}
+  else{inp.type='password';btn.textContent='Show';}
+}
+function loading(el){el.innerHTML='<div class="loading-overlay"><div class="spinner"></div><span>Working...</span></div>';}
+
+/* ---- File upload ---- */
+const dz=document.getElementById('drop-zone');
+const fi=document.getElementById('file-input');
+let selectedFiles=[];
+fi.addEventListener('change',()=>{selectedFiles=[...fi.files];showFileNames();});
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
+dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
+dz.addEventListener('drop',e=>{
+  e.preventDefault();dz.classList.remove('dragover');
+  selectedFiles=[...e.dataTransfer.files].filter(f=>f.name.toLowerCase().endsWith('.pdf'));
+  showFileNames();
+});
+function showFileNames(){
+  const el=document.getElementById('file-list');
+  if(!selectedFiles.length){el.textContent='';return;}
+  el.textContent=selectedFiles.map(f=>f.name).join(', ');
+}
+async function uploadFiles(){
+  if(!getKey()){toast('Enter your API key first','error');return;}
+  if(!selectedFiles.length){toast('Select PDF files first','error');return;}
+  const btn=document.getElementById('upload-btn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Uploading...';
+  const fd=new FormData();
+  selectedFiles.forEach(f=>fd.append('files',f));
+  try{
+    const r=await fetch(API+'/upload',{method:'POST',headers:{'X-API-Key':getKey()},body:fd});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Upload failed');
+    const res=document.getElementById('upload-result');
+    res.innerHTML='<div class="card"><h3>Uploaded '+d.count+' file(s)</h3>'+
+      d.uploaded.map(u=>'<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+
+      esc(u.filename)+'</div><div class="meta">'+u.pages+' pages &middot; ID: '+u.id.slice(0,8)+'...</div></div></div>').join('')+'</div>';
+    toast('Uploaded '+d.count+' file(s)');
+    selectedFiles=[];fi.value='';document.getElementById('file-list').textContent='';
+  }catch(e){toast(e.message,'error');}
+  btn.disabled=false;btn.textContent='Upload';
+}
+
+/* ---- Documents ---- */
+let allDocs=[];
+async function loadDocuments(){
+  if(!getKey()){toast('Enter your API key first','error');return;}
+  const el=document.getElementById('doc-list');
+  loading(el);
+  try{
+    const r=await fetch(API+'/documents',{headers:headers()});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Failed');
+    allDocs=d.documents||[];
+    if(!allDocs.length){el.innerHTML='<p style="color:var(--muted)">No documents uploaded yet.</p>';updateDocSelectors();return;}
+    el.innerHTML=allDocs.map(doc=>
+      '<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+esc(doc.filename)+
+      '</div><div class="meta">'+doc.pages+' pages &middot; '+new Date(doc.uploaded_at).toLocaleString()+
+      ' &middot; <code style="font-size:0.75rem">'+doc.id.slice(0,8)+'...</code></div></div>'+
+      '<button class="btn btn-danger" style="font-size:0.75rem;padding:0.3rem 0.6rem" onclick="deleteDoc(\''+doc.id+'\')">Delete</button></div>'
+    ).join('');
+    updateDocSelectors();
+  }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
+}
+function updateDocSelectors(){
+  ['search-doc-select','analyze-doc-select'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!allDocs.length){el.innerHTML='<span style="color:var(--muted)">No documents available</span>';return;}
+    el.innerHTML=allDocs.map(d=>
+      '<label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem;cursor:pointer;font-size:0.85rem">'+
+      '<input type="checkbox" class="doc-check" value="'+d.id+'"> '+esc(d.filename)+
+      ' <span style="color:var(--muted);font-size:0.75rem">('+d.pages+' pg)</span></label>'
+    ).join('');
+  });
+}
+async function deleteDoc(id){
+  if(!confirm('Delete this document permanently?'))return;
+  try{
+    const r=await fetch(API+'/documents/'+id,{method:'DELETE',headers:headers()});
+    if(!r.ok){const d=await r.json();throw new Error(d.detail||'Failed');}
+    toast('Document deleted');loadDocuments();
+  }catch(e){toast(e.message,'error');}
+}
+
+/* ---- Search ---- */
+async function runSearch(){
+  if(!getKey()){toast('Enter your API key first','error');return;}
+  const terms=document.getElementById('search-terms').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const aiQ=document.getElementById('ai-query').value.trim();
+  if(!terms.length&&!aiQ){toast('Enter keywords or an AI query','error');return;}
+  const selDocs=[...document.querySelectorAll('#search-doc-select .doc-check:checked')].map(c=>c.value);
+  const btn=document.getElementById('search-btn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Searching...';
+  const res=document.getElementById('search-result');
+  loading(res);
+  try{
+    let url=API+'/search';
+    if(selDocs.length) url+='?'+selDocs.map(id=>'doc_ids='+id).join('&');
+    const body={};
+    if(terms.length) body.search_terms=terms;
+    if(aiQ) body.ai_query=aiQ;
+    const r=await fetch(url,{method:'POST',headers:headers(true),body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Search failed');
+    renderSearchResults(d,res);
+    toast('Search complete');
+  }catch(e){res.innerHTML='<div class="card" style="color:var(--red)">'+esc(e.message)+'</div>';}
+  btn.disabled=false;btn.textContent='Search';
+}
+function renderSearchResults(d,el){
+  const s=d.summary||{};
+  let html='<div class="stats">';
+  html+='<div class="stat"><div class="num">'+s.documents_searched+'</div><div class="lbl">Docs Searched</div></div>';
+  html+='<div class="stat"><div class="num">'+s.total_keyword_matches+'</div><div class="lbl">Keyword Matches</div></div>';
+  html+='<div class="stat"><div class="num">'+s.total_ai_findings+'</div><div class="lbl">AI Findings</div></div>';
+  html+='<div class="stat"><div class="num" style="color:var(--orange)">'+s.flagged_for_review+'</div><div class="lbl">Flagged for Review</div></div>';
+  html+='</div>';
+  if(d.keyword_results&&d.keyword_results.length){
+    html+='<div class="card"><h3>Keyword Matches</h3>';
+    d.keyword_results.forEach(r=>{
+      html+='<div class="result-card"><div class="label">'+esc(r.filename)+' &middot; Page '+r.page+' &middot; Term: <strong>'+esc(r.term)+'</strong></div>';
+      html+='<div class="text">'+esc(r.context)+'</div></div>';
+    });
+    html+='</div>';
+  }
+  if(d.ai_results&&d.ai_results.length){
+    html+='<div class="card"><h3>AI Findings</h3>';
+    d.ai_results.forEach(r=>{
+      const flag=r.needs_review?'<span class="flag flag-review">Needs Review</span>':'<span class="flag flag-ok">OK</span>';
+      html+='<div class="result-card"><div class="label">'+esc(r.filename)+' &middot; Page '+r.page+' '+flag+'</div>';
+      html+='<div class="text"><strong>Found:</strong> '+esc(r.matched_text)+'</div>';
+      html+='<div class="text" style="margin-top:0.25rem"><strong>Reason:</strong> '+esc(r.reason)+'</div>';
+      if(r.suggestion) html+='<div class="text" style="margin-top:0.25rem;color:var(--orange)"><strong>Suggestion:</strong> '+esc(r.suggestion)+'</div>';
+      html+='</div>';
+    });
+    html+='</div>';
+  }
+  if(!d.keyword_results?.length&&!d.ai_results?.length) html+='<div class="card"><p style="color:var(--muted)">No results found.</p></div>';
+  el.innerHTML=html;
+}
+
+/* ---- Analyze ---- */
+async function runAnalysis(){
+  if(!getKey()){toast('Enter your API key first','error');return;}
+  const btn=document.getElementById('analyze-btn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Analyzing (this may take a minute)...';
+  const res=document.getElementById('analyze-result');
+  loading(res);
+  const selDocs=[...document.querySelectorAll('#analyze-doc-select .doc-check:checked')].map(c=>c.value);
+  const body={};
+  const ctx=document.getElementById('compliance-ctx').value.trim();
+  if(ctx) body.compliance_context=ctx;
+  const terms=document.getElementById('analyze-terms').value.split(',').map(s=>s.trim()).filter(Boolean);
+  if(terms.length) body.search_terms=terms;
+  const q=document.getElementById('analyze-query').value.trim();
+  if(q) body.ai_query=q;
+  try{
+    let url=API+'/analyze';
+    if(selDocs.length) url+='?'+selDocs.map(id=>'doc_ids='+id).join('&');
+    const r=await fetch(url,{method:'POST',headers:headers(true),body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Analysis failed');
+    renderAnalysis(d,res);
+    toast('Analysis complete');
+  }catch(e){res.innerHTML='<div class="card" style="color:var(--red)">'+esc(e.message)+'</div>';}
+  btn.disabled=false;btn.textContent='Run Analysis';
+}
+function renderAnalysis(d,el){
+  const rpt=d.report||{};
+  const risk=rpt.overall_risk_level||'unknown';
+  const riskColor=risk==='high'?'var(--red)':risk==='medium'?'var(--orange)':'var(--green)';
+  let html='<div class="stats">';
+  html+='<div class="stat"><div class="num">'+rpt.documents_reviewed+'</div><div class="lbl">Docs Reviewed</div></div>';
+  html+='<div class="stat"><div class="num">'+rpt.total_issues_found+'</div><div class="lbl">Issues Found</div></div>';
+  html+='<div class="stat"><div class="num" style="color:var(--red)">'+rpt.critical_issues+'</div><div class="lbl">Critical</div></div>';
+  html+='<div class="stat"><div class="num" style="color:'+riskColor+'">'+risk.toUpperCase()+'</div><div class="lbl">Risk Level</div></div>';
+  html+='</div>';
+  if(rpt.executive_summary) html+='<div class="card"><h3>Executive Summary</h3><p style="font-size:0.88rem">'+esc(rpt.executive_summary)+'</p></div>';
+  if(rpt.recommendation) html+='<div class="card"><h3>Recommendation</h3><p style="font-size:0.88rem">'+esc(rpt.recommendation)+'</p></div>';
+  if(rpt.action_items&&rpt.action_items.length){
+    html+='<div class="card"><h3>Action Items</h3>';
+    rpt.action_items.forEach((a,i)=>{
+      const txt=typeof a==='string'?a:(a.description||a.action||JSON.stringify(a));
+      const prio=typeof a==='object'&&a.priority?' <span class="flag '+(a.priority==='critical'?'flag-critical':'flag-review')+'">'+a.priority+'</span>':'';
+      html+='<div class="result-card"><div class="text">'+(i+1)+'. '+esc(txt)+prio+'</div></div>';
+    });
+    html+='</div>';
+  }
+  if(d.cross_reference_findings&&d.cross_reference_findings.length){
+    html+='<div class="card"><h3>Cross-Reference Findings</h3>';
+    d.cross_reference_findings.forEach(f=>{
+      const txt=typeof f==='string'?f:(f.description||f.issue||JSON.stringify(f));
+      html+='<div class="result-card"><div class="text">'+esc(txt)+'</div></div>';
+    });
+    html+='</div>';
+  }
+  if(d.compliance_findings){
+    const cf=d.compliance_findings;
+    const items=Array.isArray(cf)?cf:Object.values(cf).flat();
+    if(items.length){
+      html+='<div class="card"><h3>Compliance Findings</h3>';
+      items.forEach(f=>{
+        const txt=typeof f==='string'?f:(f.finding||f.description||f.issue||JSON.stringify(f));
+        html+='<div class="result-card"><div class="text">'+esc(txt)+'</div></div>';
+      });
+      html+='</div>';
+    }
+  }
+  el.innerHTML=html;
+}
+
+/* ---- History ---- */
+function showHistoryTab(tab,btn){
+  document.getElementById('history-searches').style.display=tab==='searches'?'':'none';
+  document.getElementById('history-reports').style.display=tab==='reports'?'':'none';
+  document.querySelectorAll('#page-history .tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  if(tab==='reports') loadReports();
+}
+async function loadHistory(){
+  if(!getKey()){toast('Enter your API key first','error');return;}
+  const el=document.getElementById('history-list');loading(el);
+  try{
+    const r=await fetch(API+'/history?limit=50',{headers:headers()});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Failed');
+    const items=d.searches||[];
+    if(!items.length){el.innerHTML='<p style="color:var(--muted)">No search history.</p>';return;}
+    el.innerHTML=items.map(s=>
+      '<div class="result-card" style="cursor:pointer" onclick="viewSearch(\''+s.id+'\')">'+
+      '<div class="label">'+new Date(s.searched_at).toLocaleString()+'</div>'+
+      '<div class="text">'+
+        (s.search_terms?.length?'Keywords: <strong>'+s.search_terms.map(esc).join(', ')+'</strong> &middot; ':'')+
+        (s.ai_query?'AI: <em>'+esc(s.ai_query)+'</em> &middot; ':'')+
+        s.total_keyword_matches+' keyword / '+s.total_ai_findings+' AI findings'+
+        (s.flagged_for_review?' &middot; <span class="flag flag-review">'+s.flagged_for_review+' flagged</span>':'')+
+      '</div></div>'
+    ).join('');
+  }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
+}
+async function viewSearch(id){
+  if(!getKey()) return;
+  const el=document.getElementById('history-list');loading(el);
+  try{
+    const r=await fetch(API+'/history/'+id,{headers:headers()});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Failed');
+    let html='<button class="btn btn-secondary" onclick="loadHistory()" style="margin-bottom:0.75rem">&larr; Back</button>';
+    const wrap=document.createElement('div');wrap.id='history-list';
+    el.parentNode.replaceChild(wrap,el);
+    wrap.innerHTML=html;
+    const resDiv=document.createElement('div');
+    wrap.appendChild(resDiv);
+    renderSearchResults(d,resDiv);
+  }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
+}
+async function loadReports(){
+  if(!getKey()){toast('Enter your API key first','error');return;}
+  const el=document.getElementById('reports-list');loading(el);
+  try{
+    const r=await fetch(API+'/reports?limit=50',{headers:headers()});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Failed');
+    const items=d.reports||[];
+    if(!items.length){el.innerHTML='<p style="color:var(--muted)">No reports yet.</p>';return;}
+    el.innerHTML=items.map(rp=>{
+      const rc=rp.risk_level==='high'?'var(--red)':rp.risk_level==='medium'?'var(--orange)':'var(--green)';
+      return '<div class="result-card" style="cursor:pointer" onclick="viewReport(\''+rp.id+'\')">'+
+        '<div class="label">'+new Date(rp.analyzed_at).toLocaleString()+'</div>'+
+        '<div class="text">'+rp.documents_analyzed+' docs &middot; '+rp.total_issues+' issues &middot; '+
+        rp.critical_issues+' critical &middot; <span style="color:'+rc+';font-weight:700">'+rp.risk_level.toUpperCase()+' RISK</span></div></div>';
+    }).join('');
+  }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
+}
+async function viewReport(id){
+  if(!getKey()) return;
+  const el=document.getElementById('reports-list');loading(el);
+  try{
+    const r=await fetch(API+'/reports/'+id,{headers:headers()});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Failed');
+    let html='<button class="btn btn-secondary" onclick="loadReports()" style="margin-bottom:0.75rem">&larr; Back</button>';
+    const wrap=document.createElement('div');wrap.id='reports-list';
+    el.parentNode.replaceChild(wrap,el);
+    wrap.innerHTML=html;
+    const resDiv=document.createElement('div');
+    wrap.appendChild(resDiv);
+    renderAnalysis(d,resDiv);
+  }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
+}
+
+/* ---- Health check ---- */
+async function checkHealth(){
+  try{
+    const r=await fetch(API+'/health');const d=await r.json();
+    const ok=d.status==='ok';
+    document.getElementById('health-status').innerHTML=
+      '<span class="status-dot '+(ok?'ok':'bad')+'"></span><span>'+d.version+' &middot; '+(ok?'Healthy':'Degraded')+'</span>';
+  }catch(e){
+    document.getElementById('health-status').innerHTML='<span class="status-dot bad"></span><span>Offline</span>';
+  }
+}
+checkHealth();setInterval(checkHealth,30000);
+
+function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+</script>
+</body>
+</html>"""
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -486,287 +1076,8 @@ async def health_check():
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    """API documentation and operating interface."""
-    return """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PDFHelper API</title>
-<style>
-  :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0;
-          --muted: #94a3b8; --accent: #3b82f6; --green: #22c55e; --red: #ef4444;
-          --orange: #f59e0b; --code-bg: #0d1117; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
-         background: var(--bg); color: var(--text); line-height: 1.6; padding: 2rem; }
-  .container { max-width: 960px; margin: 0 auto; }
-  h1 { font-size: 2rem; margin-bottom: 0.25rem; }
-  .subtitle { color: var(--muted); margin-bottom: 2rem; font-size: 0.95rem; }
-  .version { display: inline-block; background: var(--accent); color: #fff;
-             font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; vertical-align: middle; }
-  .section { margin-bottom: 2rem; }
-  .section h2 { font-size: 1.15rem; color: var(--accent); margin-bottom: 0.75rem;
-                border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
-  .endpoint { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-              padding: 1rem 1.25rem; margin-bottom: 0.75rem; }
-  .endpoint summary { cursor: pointer; list-style: none; display: flex; align-items: center;
-                      gap: 0.75rem; font-size: 0.95rem; }
-  .endpoint summary::-webkit-details-summary-icon { display: none; }
-  .method { font-weight: 700; font-size: 0.8rem; padding: 3px 10px; border-radius: 4px;
-            min-width: 60px; text-align: center; display: inline-block; }
-  .get { background: #16a34a22; color: var(--green); border: 1px solid #16a34a55; }
-  .post { background: #3b82f622; color: var(--accent); border: 1px solid #3b82f655; }
-  .delete { background: #ef444422; color: var(--red); border: 1px solid #ef444455; }
-  .path { font-family: monospace; font-weight: 600; }
-  .desc { color: var(--muted); margin-left: auto; font-size: 0.85rem; }
-  .auth { font-size: 0.7rem; background: #f59e0b22; color: var(--orange);
-          padding: 2px 6px; border-radius: 3px; border: 1px solid #f59e0b44; }
-  .detail { padding: 1rem 0 0.25rem 0; color: var(--muted); font-size: 0.88rem; }
-  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
-        padding: 0.75rem 1rem; overflow-x: auto; font-size: 0.82rem; margin: 0.5rem 0; }
-  code { font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; }
-  .note { background: #3b82f612; border-left: 3px solid var(--accent); padding: 0.75rem 1rem;
-          border-radius: 0 6px 6px 0; margin: 0.75rem 0; font-size: 0.88rem; color: var(--muted); }
-  .status-ok { color: var(--green); }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.5rem 0; }
-  th, td { text-align: left; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 600; }
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>PDFHelper <span class="version">v1.0.0</span></h1>
-  <p class="subtitle">AI-powered PDF search, flagging, and multi-agent compliance analysis</p>
-
-  <div class="section">
-    <h2>Authentication</h2>
-    <div class="endpoint">
-      <p style="font-size:0.9rem; color:var(--muted);">All endpoints except <code>/health</code> and <code>/</code> require an API key. Send it in one of two ways:</p>
-      <pre><code>Authorization: Bearer YOUR_API_KEY
-<span style="color:var(--muted);"># or</span>
-X-API-Key: YOUR_API_KEY</code></pre>
-    </div>
-  </div>
-
-  <div class="section">
-    <h2>System</h2>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method get">GET</span>
-        <span class="path">/health</span>
-        <span class="desc">Service health &amp; status</span>
-      </summary>
-      <div class="detail">
-        <p>Returns service status, version, and any startup warnings. No authentication required.</p>
-        <pre><code>curl YOUR_URL/health</code></pre>
-        <p>Response:</p>
-        <pre><code>{ "status": "ok", "version": "1.0.0", "warnings": [] }</code></pre>
-      </div>
-    </details>
-  </div>
-
-  <div class="section">
-    <h2>Document Management</h2>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method post">POST</span>
-        <span class="path">/upload</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">Upload PDF files</span>
-      </summary>
-      <div class="detail">
-        <p>Upload one or more PDFs (max 20 files, max 20 MB each). Files are encrypted at rest.</p>
-        <pre><code>curl -X POST YOUR_URL/upload \\
-  -H "Authorization: Bearer YOUR_API_KEY" \\
-  -F "files=@document.pdf" \\
-  -F "files=@another.pdf"</code></pre>
-        <p>Response:</p>
-        <pre><code>{
-  "uploaded": [
-    { "id": "uuid", "filename": "document.pdf", "pages": 12 }
-  ],
-  "count": 1
-}</code></pre>
-      </div>
-    </details>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method get">GET</span>
-        <span class="path">/documents</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">List all documents</span>
-      </summary>
-      <div class="detail">
-        <p>Returns a list of all uploaded documents with metadata.</p>
-        <pre><code>curl YOUR_URL/documents -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
-      </div>
-    </details>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method get">GET</span>
-        <span class="path">/documents/{doc_id}</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">Get document details</span>
-      </summary>
-      <div class="detail">
-        <p>Returns details for a specific document by ID.</p>
-        <pre><code>curl YOUR_URL/documents/DOC_ID -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
-      </div>
-    </details>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method delete">DELETE</span>
-        <span class="path">/documents/{doc_id}</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">Delete a document</span>
-      </summary>
-      <div class="detail">
-        <p>Permanently deletes a document and its encrypted file from storage.</p>
-        <pre><code>curl -X DELETE YOUR_URL/documents/DOC_ID -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
-      </div>
-    </details>
-  </div>
-
-  <div class="section">
-    <h2>Search</h2>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method post">POST</span>
-        <span class="path">/search</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">Search documents with keywords &amp; AI</span>
-      </summary>
-      <div class="detail">
-        <p>Search uploaded PDFs using exact keyword matching, AI-powered semantic search, or both.
-           Optionally filter by document IDs with <code>?doc_ids=id1&amp;doc_ids=id2</code>.</p>
-        <pre><code>curl -X POST YOUR_URL/search -H "Authorization: Bearer YOUR_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "search_terms": ["safety", "hazard"],
-    "ai_query": "references to outdated regulations",
-    "case_sensitive": false
-  }'</code></pre>
-        <p>Response includes:</p>
-        <table>
-          <tr><th>Field</th><th>Description</th></tr>
-          <tr><td><code>search_id</code></td><td>UUID for retrieving this search later</td></tr>
-          <tr><td><code>summary</code></td><td>Counts: documents searched, keyword matches, AI findings, flagged items</td></tr>
-          <tr><td><code>keyword_results</code></td><td>Exact keyword matches with page, context, and matched text</td></tr>
-          <tr><td><code>ai_results</code></td><td>AI findings with page, reason, needs_review flag, and suggestions</td></tr>
-        </table>
-      </div>
-    </details>
-  </div>
-
-  <div class="section">
-    <h2>Multi-Agent Analysis</h2>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method post">POST</span>
-        <span class="path">/analyze</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">Full AI analysis pipeline</span>
-      </summary>
-      <div class="detail">
-        <p>Runs 4 specialized AI agents on your documents:</p>
-        <table>
-          <tr><th>Agent</th><th>Purpose</th></tr>
-          <tr><td>Document Analyzer</td><td>Deep analysis of each document (topics, dates, references)</td></tr>
-          <tr><td>Cross-Reference Checker</td><td>Finds conflicts and inconsistencies between documents</td></tr>
-          <tr><td>Compliance Checker</td><td>Flags regulatory/policy issues (OSHA, HIPAA, FDA, etc.)</td></tr>
-          <tr><td>Summary Report Generator</td><td>Produces an executive report with action items</td></tr>
-        </table>
-        <pre><code>curl -X POST YOUR_URL/analyze -H "Authorization: Bearer YOUR_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "compliance_context": "OSHA 2024 standards",
-    "search_terms": ["PPE", "training"],
-    "ai_query": "outdated safety procedures"
-  }'</code></pre>
-        <p>Response includes: <code>report</code> (executive summary, risk level, action items),
-           <code>document_analyses</code>, <code>cross_reference_findings</code>,
-           <code>compliance_findings</code>, and optional <code>search_results</code>.</p>
-      </div>
-    </details>
-  </div>
-
-  <div class="section">
-    <h2>History &amp; Reports</h2>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method get">GET</span>
-        <span class="path">/history</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">Past search results</span>
-      </summary>
-      <div class="detail">
-        <p>Lists past searches. Optional <code>?limit=N</code> (max 100, default 20).</p>
-        <pre><code>curl YOUR_URL/history?limit=10 -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
-      </div>
-    </details>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method get">GET</span>
-        <span class="path">/history/{search_id}</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">Full search detail</span>
-      </summary>
-      <div class="detail">
-        <p>Returns the complete results for a specific past search.</p>
-      </div>
-    </details>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method get">GET</span>
-        <span class="path">/reports</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">Past analysis reports</span>
-      </summary>
-      <div class="detail">
-        <p>Lists past multi-agent analysis reports. Optional <code>?limit=N</code> (max 100).</p>
-        <pre><code>curl YOUR_URL/reports -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
-      </div>
-    </details>
-
-    <details class="endpoint">
-      <summary>
-        <span class="method get">GET</span>
-        <span class="path">/reports/{report_id}</span>
-        <span class="auth">AUTH</span>
-        <span class="desc">Full analysis report</span>
-      </summary>
-      <div class="detail">
-        <p>Returns the complete multi-agent analysis with all findings and recommendations.</p>
-      </div>
-    </details>
-  </div>
-
-  <div class="section">
-    <h2>Quick Start</h2>
-    <div class="note">
-      <strong>1.</strong> Upload a PDF &rarr;
-      <strong>2.</strong> Search with keywords or AI &rarr;
-      <strong>3.</strong> Run full analysis for compliance review<br><br>
-      All files are encrypted at rest. Documents auto-delete after 72 hours by default.
-    </div>
-  </div>
-
-</div>
-</body>
-</html>"""
+    """Interactive operating interface for PDFHelper."""
+    return _ROOT_HTML
 
 
 @app.post("/upload", dependencies=[Depends(verify_api_key)])
