@@ -828,6 +828,9 @@ function requireKey(errorContainerId){
     toast('Enter your API key and click Connect first','error');
     setApiStatus('API key required','disconnected');
     if(errorContainerId) showInlineError(errorContainerId,'Enter your API key at the top and click Connect before continuing.');
+  } else {
+    toast('Click Connect to verify your API key first','error');
+    setApiStatus('Not connected — click Connect','disconnected');
   }
   return false;
 }
@@ -878,7 +881,7 @@ async function uploadFiles(){
   const fd=new FormData();
   selectedFiles.forEach(f=>fd.append('files',f));
   try{
-    const r=await fetch(API+'/upload',{method:'POST',headers:{'X-API-Key':getKey()},body:fd});
+    const r=await fetch(API+'/upload',{method:'POST',headers:headers(false),body:fd});
     let d;
     try{ d=await r.json(); }catch(jsonErr){ throw new Error('Server returned invalid response (status '+r.status+'). The database may be down — check DATABASE_URL in your Railway variables.'); }
     if(r.status===401) throw new Error('Invalid API key. Enter your key above and click Connect first.');
