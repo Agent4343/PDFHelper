@@ -1561,7 +1561,7 @@ function updateStatus(){
   const sel=selectedIds.size;
 
   dot.className='dot'+(sel>0?' active':'');
-  stats.textContent=allDocs.length+' loaded \\u00b7 '+sel+' active';
+  stats.textContent=allDocs.length+' loaded '+String.fromCharCode(183)+' '+sel+' active';
   subtitle.textContent=sel>0?'Answering from '+sel+' procedure'+(sel>1?'s':''):'No documents selected';
   input.placeholder=sel>0?'Ask a question about your procedures...':'Select procedures from the sidebar first...';
 }
@@ -1606,6 +1606,15 @@ function sendMessage(){
   const input=document.getElementById('chat-input');
   const text=input.value.trim();
   if(!text||sending) return;
+
+  if(!connected){
+    messages.push({role:'user',content:text});
+    messages.push({role:'assistant',content:'Please connect your API key first using the sidebar.'});
+    input.value='';
+    autoResize(input);
+    renderMessages();
+    return;
+  }
 
   if(selectedIds.size===0){
     messages.push({role:'user',content:text});
@@ -1687,12 +1696,20 @@ function createEmptyState(){
 }
 
 function formatContent(text){
+  var safe=esc(text);
   // Bold **text**
-  let out=esc(text).replace(/\\*\\*(.+?)\\*\\*/g,'<strong style="color:var(--white)">$1</strong>');
-  // Line breaks
-  out=out.replace(/\\n\\n/g,'</p><p style="margin:0 0 8px 0">');
-  out=out.replace(/\\n/g,'<br>');
-  return '<p style="margin:0 0 8px 0">'+out+'</p>';
+  safe=safe.replace(/[*][*](.+?)[*][*]/g,'<strong style="color:var(--white)">$1</strong>');
+  // Bullet lists
+  safe=safe.replace(/^[-] (.+)/gm,'<li style="margin-left:16px;list-style:disc">$1</li>');
+  // Numbered lists
+  safe=safe.replace(/^(\\d+)[.] (.+)/gm,'<li style="margin-left:16px;list-style:decimal">$2</li>');
+  // Paragraphs (split on double newline)
+  var nl=String.fromCharCode(10);
+  var parts=safe.split(nl+nl);
+  if(parts.length>1){
+    return parts.map(function(p){return '<p style="margin:0 0 8px 0">'+p.split(nl).join('<br>')+'</p>';}).join('');
+  }
+  return '<p style="margin:0 0 8px 0">'+safe.split(nl).join('<br>')+'</p>';
 }
 
 function esc(s){if(!s)return '';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
