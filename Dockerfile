@@ -2,12 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps for PyMuPDF and Tesseract OCR
+# System deps for PyMuPDF, Tesseract OCR, and PostgreSQL client
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libmupdf-dev \
         tesseract-ocr \
-        tesseract-ocr-eng && \
+        tesseract-ocr-eng \
+        libpq5 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

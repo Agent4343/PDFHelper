@@ -98,13 +98,26 @@ async def startup():
         logger.warning(msg)
         _startup_errors.append(msg)
 
-    try:
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables initialized successfully.")
-    except Exception as exc:
-        msg = f"WARNING: Database initialization failed: {exc}"
-        logger.warning(msg)
-        _startup_errors.append(msg)
+    # Retry database init — Railway Postgres may not be ready immediately
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database tables initialized successfully.")
+            break
+        except Exception as exc:
+            if attempt < max_retries:
+                wait = 2 ** attempt  # 2, 4, 8, 16, 32 seconds
+                logger.warning(
+                    "Database init attempt %d/%d failed: %s — retrying in %ds",
+                    attempt, max_retries, exc, wait,
+                )
+                import asyncio
+                await asyncio.sleep(wait)
+            else:
+                msg = f"WARNING: Database initialization failed after {max_retries} attempts: {exc}"
+                logger.warning(msg)
+                _startup_errors.append(msg)
 
 
 # ---------------------------------------------------------------------------
