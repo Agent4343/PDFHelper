@@ -1365,8 +1365,8 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
       <div class="meta" id="doc-stats">0 loaded &middot; 0 active</div>
     </div>
 
-    <!-- API Key -->
-    <div class="api-section">
+    <!-- API Key (hidden by default, shown only if server requires it) -->
+    <div class="api-section" id="api-section" style="display:none">
       <label>API Key</label>
       <div class="key-row">
         <input type="password" id="apikey" placeholder="PDF_HELPER_API_KEY" autocomplete="off">
@@ -1377,7 +1377,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
     <!-- Document list -->
     <div class="doc-list" id="doc-list">
-      <div class="doc-empty" id="doc-empty">Connect your API key to load documents.</div>
+      <div class="doc-empty" id="doc-empty">Loading documents...</div>
     </div>
 
     <!-- Select all / none -->
@@ -1492,39 +1492,53 @@ function hdrs(json){
   return h;
 }
 
-/* Auto-load saved key */
+/* Auto-load: check if API key is needed */
 (function(){
-  // Check if API key is even required
   fetch(API+'/health').then(r=>r.json()).then(d=>{
     if(!d.api_key_required){
+      // No key needed — connect directly
       connected=true;
-      document.querySelector('.api-section').style.display='none';
-      setKeyStatus('No key required','ok');
       loadDocs();
       return;
     }
-    const k=localStorage.getItem('pdfhelper_apikey');
+    // Key IS required — show the API key section
+    document.getElementById('api-section').style.display='';
+    var k=localStorage.getItem('pdfhelper_apikey');
     if(k){document.getElementById('apikey').value=k;connectKey();}
-  }).catch(()=>{});
+    else{
+      document.getElementById('doc-list').innerHTML=
+        '<div class="doc-empty">Enter your API key above to load documents.</div>';
+    }
+  }).catch(function(){
+    // Can't reach server — show key section as fallback
+    document.getElementById('api-section').style.display='';
+    document.getElementById('doc-list').innerHTML=
+      '<div class="doc-empty">Cannot reach server. Check your connection.</div>';
+  });
 })();
 
 /* ---- Documents ---- */
 function loadDocs(){
   if(!connected) return;
+  document.getElementById('doc-list').innerHTML='<div class="doc-empty">Loading documents...</div>';
   fetch(API+'/documents',{headers:hdrs()})
-    .then(r=>r.json())
-    .then(d=>{
+    .then(function(r){
+      if(!r.ok) throw new Error('Failed to load ('+r.status+')');
+      return r.json();
+    })
+    .then(function(d){
       allDocs=d.documents||[];
-      // Select all by default
-      selectedIds=new Set(allDocs.map(doc=>doc.id));
+      selectedIds=new Set(allDocs.map(function(doc){return doc.id;}));
       renderDocs();
     })
-    .catch(()=>{});
+    .catch(function(e){
+      document.getElementById('doc-list').innerHTML=
+        '<div class="doc-empty">Failed to load documents: '+esc(e.message)+'</div>';
+    });
 }
 
 function renderDocs(){
   const el=document.getElementById('doc-list');
-  const empty=document.getElementById('doc-empty');
   const actions=document.getElementById('doc-actions');
 
   if(!allDocs.length){
@@ -1656,7 +1670,6 @@ function sendMessage(){
 
 function renderMessages(){
   const el=document.getElementById('messages');
-  const empty=document.getElementById('empty-state');
   const clearBtn=document.getElementById('clear-btn');
 
   if(!messages.length){
