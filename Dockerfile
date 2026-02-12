@@ -19,5 +19,8 @@ COPY . .
 # Create upload directory
 RUN mkdir -p /tmp/pdfhelper_uploads
 
-# Railway sets PORT automatically
-CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}
+# Flush Python output immediately so Railway deploy logs show errors
+ENV PYTHONUNBUFFERED=1
+
+# Railway sets PORT automatically; exec replaces shell for proper signal handling
+CMD exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}
