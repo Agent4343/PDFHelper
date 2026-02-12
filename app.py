@@ -446,6 +446,7 @@ class AnalyzeRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str
+    api_key_required: bool = False
     warnings: list[str] = []
 
 
@@ -751,12 +752,27 @@ let apiConnected = false;
 
 function getKey(){ return document.getElementById('apikey').value.trim(); }
 function saveKey(){ const k=getKey(); if(k) localStorage.setItem('pdfhelper_apikey',k); }
-function loadKey(){
+async function loadKey(){
+  // Check if the server even requires an API key
+  try{
+    const r=await fetch(API+'/health');
+    if(r.ok){
+      const h=await r.json();
+      if(!h.api_key_required){
+        apiConnected=true;
+        document.querySelector('.api-bar').style.display='none';
+        setApiStatus('Connected (no API key required)','connected');
+        return;
+      }
+    }
+  }catch(e){}
   const k=localStorage.getItem('pdfhelper_apikey');
   if(k){ document.getElementById('apikey').value=k; testConnection(); }
 }
 function headers(json){
-  const h = {'X-API-Key': getKey()};
+  const h = {};
+  const k = getKey();
+  if(k) h['X-API-Key']=k;
   if(json) h['Content-Type']='application/json';
   return h;
 }
@@ -790,10 +806,15 @@ async function testConnection(){
         toast('Connected successfully');
       }
     } else {
-      const d=await r.json().catch(()=>({}));
       apiConnected=false;
-      setApiStatus('Invalid API key: '+(d.detail||r.status),'disconnected');
-      toast(d.detail||'Invalid API key','error');
+      if(r.status===401){
+        setApiStatus('Key does not match the server\\'s PDF_HELPER_API_KEY','disconnected');
+        toast('Key mismatch — enter the exact PDF_HELPER_API_KEY value from your Railway environment variables','error');
+      } else {
+        const d=await r.json().catch(()=>({}));
+        setApiStatus('Connection failed: '+(d.detail||r.status),'disconnected');
+        toast(d.detail||'Connection failed','error');
+      }
     }
   }catch(e){
     apiConnected=false;
@@ -802,13 +823,13 @@ async function testConnection(){
   }
 }
 function requireKey(errorContainerId){
+  if(apiConnected) return true;
   if(!getKey()){
     toast('Enter your API key and click Connect first','error');
     setApiStatus('API key required','disconnected');
     if(errorContainerId) showInlineError(errorContainerId,'Enter your API key at the top and click Connect before continuing.');
-    return false;
   }
-  return true;
+  return false;
 }
 function showPage(name){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -1195,6 +1216,7 @@ async def health_check():
     return {
         "status": status,
         "version": "1.0.0",
+        "api_key_required": bool(API_KEY),
         "warnings": _startup_errors,
     }
 
