@@ -458,6 +458,17 @@ class AnalyzeRequest(BaseModel):
     ai_query: str | None = Field(default=None, description="Optional AI concept search query")
 
 
+class ChatMessage(BaseModel):
+    role: str = Field(description="'user' or 'assistant'")
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(description="The user's message")
+    doc_ids: list[str] = Field(default=[], description="Document IDs to use as context (empty = all)")
+    conversation_history: list[ChatMessage] = Field(default=[], description="Previous messages for context")
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str
@@ -645,6 +656,10 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
       <button onclick="showPage('history')" id="nav-history">
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <span>History</span>
+      </button>
+      <button onclick="window.location.href='/bot'" id="nav-bot" style="margin-top:auto;border-top:1px solid var(--border)">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+        <span>Bot</span>
       </button>
     </nav>
     <div class="status" id="health-status"></div>
@@ -1183,6 +1198,509 @@ loadKey();
 </body>
 </html>"""
 
+_BOT_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDFHelper — Procedure Bot</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0e17;--surface:#111827;--surface-light:#1a2236;
+  --border:#1e293b;--border-active:#3b82f6;
+  --primary:#3b82f6;--primary-dark:#2563eb;--primary-glow:rgba(59,130,246,0.15);
+  --accent:#10b981;--accent-glow:rgba(16,185,129,0.15);
+  --warning:#f59e0b;--text:#e2e8f0;--text-muted:#94a3b8;--text-dim:#64748b;
+  --white:#ffffff;--danger:#ef4444;
+}
+body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
+  background:var(--bg);color:var(--text);overflow:hidden;height:100vh}
+
+.app{display:flex;height:100vh;width:100vw}
+
+/* ---- Sidebar ---- */
+.sidebar{width:320px;min-width:320px;background:var(--surface);
+  border-right:1px solid var(--border);display:flex;flex-direction:column;
+  transition:all .3s ease;overflow:hidden}
+.sidebar.collapsed{width:0;min-width:0}
+
+.sidebar-header{padding:20px;border-bottom:1px solid var(--border)}
+.sidebar-header .label{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.sidebar-header .dot{width:8px;height:8px;border-radius:50%;background:var(--text-dim);transition:all .3s}
+.sidebar-header .dot.active{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.sidebar-header .title{font-size:13px;font-weight:600;text-transform:uppercase;
+  letter-spacing:0.08em;color:var(--text-muted)}
+.sidebar-header .meta{font-size:12px;color:var(--text-dim);margin-top:6px;
+  font-family:'IBM Plex Mono',monospace}
+
+/* API Key Section */
+.api-section{padding:12px 20px;border-bottom:1px solid var(--border)}
+.api-section label{font-size:11px;color:var(--text-dim);margin-bottom:4px;display:block}
+.api-section .key-row{display:flex;gap:6px}
+.api-section input{flex:1;padding:6px 10px;background:var(--bg);border:1px solid var(--border);
+  border-radius:6px;color:var(--text);font-size:12px;outline:none;font-family:inherit}
+.api-section input:focus{border-color:var(--primary)}
+.api-section .connect-btn{padding:6px 12px;background:var(--primary);color:var(--white);
+  border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer}
+.api-section .connect-btn:hover{background:var(--primary-dark)}
+.api-section .status{font-size:11px;margin-top:4px}
+.api-section .status.ok{color:var(--accent)}
+.api-section .status.bad{color:var(--danger)}
+.api-section .status.muted{color:var(--text-dim)}
+
+/* Doc List */
+.doc-list{flex:1;overflow-y:auto;padding:0 12px 12px}
+.doc-empty{text-align:center;padding:30px 20px;color:var(--text-dim);font-size:13px}
+.doc-item{display:flex;align-items:flex-start;gap:10px;padding:12px;margin-bottom:4px;
+  border-radius:8px;cursor:pointer;transition:all .2s;
+  border:1px solid transparent}
+.doc-item.selected{background:var(--primary-glow);border-color:rgba(59,130,246,0.25)}
+.doc-item .checkbox{width:18px;height:18px;border-radius:4px;
+  border:2px solid var(--text-dim);display:flex;align-items:center;
+  justify-content:center;flex-shrink:0;margin-top:1px;transition:all .15s}
+.doc-item.selected .checkbox{border-color:var(--primary);background:var(--primary)}
+.doc-item .info{flex:1;min-width:0}
+.doc-item .name{font-size:13px;font-weight:500;color:var(--text-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-item.selected .name{color:var(--white)}
+.doc-item .pages{font-size:11px;color:var(--text-dim);margin-top:2px;
+  font-family:'IBM Plex Mono',monospace}
+.doc-actions{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px}
+.doc-actions button{flex:1;padding:6px;font-size:11px;font-weight:500;
+  background:transparent;border:1px solid var(--border);color:var(--text-muted);
+  border-radius:6px;cursor:pointer}
+.doc-actions button:hover{border-color:var(--primary);color:var(--white)}
+
+/* Back link */
+.back-link{padding:12px 20px;border-top:1px solid var(--border)}
+.back-link a{font-size:12px;color:var(--text-dim);text-decoration:none;
+  display:flex;align-items:center;gap:6px}
+.back-link a:hover{color:var(--primary)}
+
+/* ---- Main chat ---- */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+
+.topbar{padding:14px 24px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:14px;background:var(--surface)}
+.toggle-btn{background:none;border:1px solid var(--border);color:var(--text-muted);
+  cursor:pointer;padding:6px 10px;border-radius:6px;font-size:16px;line-height:1;
+  display:flex;align-items:center}
+.topbar .bot-info .title{font-size:15px;font-weight:600;color:var(--white)}
+.topbar .bot-info .subtitle{font-size:11px;color:var(--text-dim)}
+.clear-btn{margin-left:auto;background:none;border:1px solid var(--border);
+  color:var(--text-dim);cursor:pointer;padding:6px 12px;border-radius:6px;font-size:12px}
+.clear-btn:hover{border-color:var(--primary);color:var(--white)}
+
+/* Messages */
+.messages{flex:1;overflow-y:auto;padding:24px}
+.empty-state{display:flex;flex-direction:column;align-items:center;
+  justify-content:center;height:100%;gap:16px;opacity:0.7}
+.empty-state .icon-box{width:64px;height:64px;border-radius:16px;
+  background:var(--primary-glow);display:flex;align-items:center;justify-content:center}
+.empty-state h3{font-size:18px;font-weight:600;color:var(--white);margin-bottom:6px}
+.empty-state p{font-size:13px;color:var(--text-dim);max-width:400px;line-height:1.6;text-align:center}
+.suggestions{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;justify-content:center}
+.suggestion{background:var(--surface-light);border:1px solid var(--border);
+  color:var(--text-muted);padding:8px 14px;border-radius:20px;font-size:12px;
+  cursor:pointer;transition:all .15s}
+.suggestion:hover{border-color:var(--primary);color:var(--white)}
+
+.message{display:flex;margin-bottom:16px}
+.message.user{justify-content:flex-end}
+.message.assistant{justify-content:flex-start}
+.bubble{max-width:75%;padding:12px 16px;font-size:14px;line-height:1.6}
+.message.user .bubble{background:var(--primary);color:var(--white);
+  border-radius:16px 16px 4px 16px}
+.message.assistant .bubble{background:var(--surface-light);color:var(--text);
+  border:1px solid var(--border);border-radius:16px 16px 16px 4px}
+.bubble strong{color:var(--white)}
+
+.typing{display:flex;justify-content:flex-start;margin-bottom:16px}
+.typing-bubble{padding:12px 20px;border-radius:16px 16px 16px 4px;
+  background:var(--surface-light);border:1px solid var(--border);
+  display:flex;gap:6px;align-items:center}
+.typing-dot{width:8px;height:8px;border-radius:50%;background:var(--primary);
+  animation:pulse 1.2s ease-in-out infinite}
+.typing-dot:nth-child(2){animation-delay:0.2s}
+.typing-dot:nth-child(3){animation-delay:0.4s}
+@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+
+/* Input */
+.input-area{padding:16px 24px;border-top:1px solid var(--border);background:var(--surface)}
+.input-row{display:flex;gap:10px;align-items:flex-end;background:var(--surface-light);
+  border-radius:14px;padding:6px 6px 6px 16px;border:1px solid var(--border)}
+.input-row textarea{flex:1;background:none;border:none;color:var(--text);font-size:14px;
+  font-family:inherit;resize:none;outline:none;padding:8px 0;line-height:1.5;
+  max-height:120px;overflow-y:auto}
+.input-row textarea::placeholder{color:var(--text-dim)}
+.send-btn{width:40px;height:40px;border-radius:10px;border:none;
+  color:var(--white);cursor:pointer;display:flex;align-items:center;
+  justify-content:center;flex-shrink:0;transition:all .15s}
+.send-btn.active{background:var(--primary)}
+.send-btn.inactive{background:var(--border);cursor:default}
+.input-footer{font-size:11px;color:var(--text-dim);margin-top:8px;text-align:center}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text-dim)}
+
+@media(max-width:768px){
+  .sidebar{width:260px;min-width:260px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="label">
+        <div class="dot" id="status-dot"></div>
+        <span class="title">Procedure Library</span>
+      </div>
+      <div class="meta" id="doc-stats">0 loaded &middot; 0 active</div>
+    </div>
+
+    <!-- API Key -->
+    <div class="api-section">
+      <label>API Key</label>
+      <div class="key-row">
+        <input type="password" id="apikey" placeholder="PDF_HELPER_API_KEY" autocomplete="off">
+        <button class="connect-btn" onclick="connectKey()">Connect</button>
+      </div>
+      <div class="status muted" id="key-status">Enter key to connect</div>
+    </div>
+
+    <!-- Document list -->
+    <div class="doc-list" id="doc-list">
+      <div class="doc-empty" id="doc-empty">Connect your API key to load documents.</div>
+    </div>
+
+    <!-- Select all / none -->
+    <div class="doc-actions" id="doc-actions" style="display:none">
+      <button onclick="selectAll()">Select All</button>
+      <button onclick="deselectAll()">Deselect All</button>
+    </div>
+
+    <!-- Back link -->
+    <div class="back-link">
+      <a href="/">&larr; Back to PDFHelper</a>
+    </div>
+  </div>
+
+  <!-- Main chat -->
+  <div class="main">
+    <div class="topbar">
+      <button class="toggle-btn" onclick="toggleSidebar()">
+        <span id="toggle-icon">&#9665;</span>
+      </button>
+      <div style="display:flex;align-items:center;gap:10px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/>
+          <path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/>
+        </svg>
+        <div class="bot-info">
+          <div class="title">Procedure Assistant</div>
+          <div class="subtitle" id="bot-subtitle">No documents selected</div>
+        </div>
+      </div>
+      <button class="clear-btn" id="clear-btn" style="display:none" onclick="clearChat()">Clear Chat</button>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="empty-state" id="empty-state">
+        <div class="icon-box">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/>
+            <path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/>
+          </svg>
+        </div>
+        <div>
+          <h3>Procedure Knowledge Bot</h3>
+          <p>Upload your procedure documents via the main app, select which ones to include, then ask questions. Answers come strictly from your data with source citations.</p>
+        </div>
+        <div class="suggestions">
+          <button class="suggestion" onclick="useSuggestion(this)">What are the lockout steps?</button>
+          <button class="suggestion" onclick="useSuggestion(this)">Who approves SIMOPS?</button>
+          <button class="suggestion" onclick="useSuggestion(this)">What PPE is required?</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-row">
+        <textarea id="chat-input" rows="1"
+          placeholder="Upload and select procedures first..."
+          onkeydown="handleKey(event)"
+          oninput="autoResize(this);updateSendBtn()"></textarea>
+        <button class="send-btn inactive" id="send-btn" onclick="sendMessage()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+      <div class="input-footer">Answers sourced strictly from your selected procedures &middot; AI may occasionally misinterpret content</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+let connected = false;
+let allDocs = [];
+let selectedIds = new Set();
+let messages = [];
+let sending = false;
+
+/* ---- API Key ---- */
+function getKey(){ return document.getElementById('apikey').value.trim(); }
+
+function connectKey(){
+  const key = getKey();
+  if(!key){ setKeyStatus('Enter your API key','bad'); return; }
+  setKeyStatus('Connecting...','muted');
+  fetch(API+'/verify-key',{headers:{'X-API-Key':key}})
+    .then(async r=>{
+      if(r.ok){
+        connected=true;
+        localStorage.setItem('pdfhelper_apikey',key);
+        setKeyStatus('Connected','ok');
+        loadDocs();
+      } else if(r.status===401){
+        setKeyStatus('Invalid API key','bad');
+      } else {
+        setKeyStatus('Connection failed','bad');
+      }
+    })
+    .catch(e=>setKeyStatus('Cannot reach server','bad'));
+}
+
+function setKeyStatus(msg,cls){
+  const el=document.getElementById('key-status');
+  el.textContent=msg; el.className='status '+cls;
+}
+
+function hdrs(json){
+  const h={};
+  const k=getKey();
+  if(k) h['X-API-Key']=k;
+  if(json) h['Content-Type']='application/json';
+  return h;
+}
+
+/* Auto-load saved key */
+(function(){
+  // Check if API key is even required
+  fetch(API+'/health').then(r=>r.json()).then(d=>{
+    if(!d.api_key_required){
+      connected=true;
+      document.querySelector('.api-section').style.display='none';
+      setKeyStatus('No key required','ok');
+      loadDocs();
+      return;
+    }
+    const k=localStorage.getItem('pdfhelper_apikey');
+    if(k){document.getElementById('apikey').value=k;connectKey();}
+  }).catch(()=>{});
+})();
+
+/* ---- Documents ---- */
+function loadDocs(){
+  if(!connected) return;
+  fetch(API+'/documents',{headers:hdrs()})
+    .then(r=>r.json())
+    .then(d=>{
+      allDocs=d.documents||[];
+      // Select all by default
+      selectedIds=new Set(allDocs.map(doc=>doc.id));
+      renderDocs();
+    })
+    .catch(()=>{});
+}
+
+function renderDocs(){
+  const el=document.getElementById('doc-list');
+  const empty=document.getElementById('doc-empty');
+  const actions=document.getElementById('doc-actions');
+
+  if(!allDocs.length){
+    el.innerHTML='<div class="doc-empty">No documents uploaded yet.<br>Upload via the <a href="/" style="color:var(--primary)">main app</a> first.</div>';
+    actions.style.display='none';
+    updateStatus();
+    return;
+  }
+
+  actions.style.display=allDocs.length>1?'flex':'none';
+  el.innerHTML=allDocs.map(doc=>{
+    const sel=selectedIds.has(doc.id);
+    return '<div class="doc-item'+(sel?' selected':'')+'" onclick="toggleDoc(\''+doc.id+'\')">'+
+      '<div class="checkbox">'+(sel?'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>':'')+'</div>'+
+      '<div class="info"><div class="name">'+esc(doc.filename)+'</div>'+
+      '<div class="pages">'+doc.pages+' pages</div></div></div>';
+  }).join('');
+  updateStatus();
+}
+
+function toggleDoc(id){
+  if(selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  renderDocs();
+}
+function selectAll(){ selectedIds=new Set(allDocs.map(d=>d.id)); renderDocs(); }
+function deselectAll(){ selectedIds.clear(); renderDocs(); }
+
+function updateStatus(){
+  const dot=document.getElementById('status-dot');
+  const stats=document.getElementById('doc-stats');
+  const subtitle=document.getElementById('bot-subtitle');
+  const input=document.getElementById('chat-input');
+  const sel=selectedIds.size;
+
+  dot.className='dot'+(sel>0?' active':'');
+  stats.textContent=allDocs.length+' loaded \\u00b7 '+sel+' active';
+  subtitle.textContent=sel>0?'Answering from '+sel+' procedure'+(sel>1?'s':''):'No documents selected';
+  input.placeholder=sel>0?'Ask a question about your procedures...':'Select procedures from the sidebar first...';
+}
+
+/* ---- Sidebar toggle ---- */
+function toggleSidebar(){
+  const sb=document.getElementById('sidebar');
+  const ic=document.getElementById('toggle-icon');
+  sb.classList.toggle('collapsed');
+  ic.innerHTML=sb.classList.contains('collapsed')?'&#9655;':'&#9665;';
+}
+
+/* ---- Chat ---- */
+function clearChat(){
+  messages=[];
+  renderMessages();
+}
+
+function useSuggestion(btn){
+  document.getElementById('chat-input').value=btn.textContent;
+  autoResize(document.getElementById('chat-input'));
+  updateSendBtn();
+  document.getElementById('chat-input').focus();
+}
+
+function handleKey(e){
+  if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMessage(); }
+}
+
+function autoResize(el){
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,120)+'px';
+}
+
+function updateSendBtn(){
+  const btn=document.getElementById('send-btn');
+  const val=document.getElementById('chat-input').value.trim();
+  btn.className='send-btn '+(val&&!sending?'active':'inactive');
+}
+
+function sendMessage(){
+  const input=document.getElementById('chat-input');
+  const text=input.value.trim();
+  if(!text||sending) return;
+
+  if(selectedIds.size===0){
+    messages.push({role:'user',content:text});
+    messages.push({role:'assistant',content:'No procedures are selected. Please select at least one procedure document from the sidebar before asking questions.'});
+    input.value='';
+    autoResize(input);
+    renderMessages();
+    return;
+  }
+
+  messages.push({role:'user',content:text});
+  input.value='';
+  autoResize(input);
+  sending=true;
+  updateSendBtn();
+  renderMessages();
+
+  const body={
+    message:text,
+    doc_ids:[...selectedIds],
+    conversation_history:messages.slice(0,-1).slice(-10)
+  };
+
+  fetch(API+'/chat',{method:'POST',headers:hdrs(true),body:JSON.stringify(body)})
+    .then(async r=>{
+      const d=await r.json();
+      if(!r.ok) throw new Error(d.detail||'Request failed');
+      messages.push({role:'assistant',content:d.reply});
+    })
+    .catch(e=>{
+      messages.push({role:'assistant',content:'Error: '+e.message});
+    })
+    .finally(()=>{
+      sending=false;
+      updateSendBtn();
+      renderMessages();
+    });
+}
+
+function renderMessages(){
+  const el=document.getElementById('messages');
+  const empty=document.getElementById('empty-state');
+  const clearBtn=document.getElementById('clear-btn');
+
+  if(!messages.length){
+    el.innerHTML='';
+    el.appendChild(createEmptyState());
+    clearBtn.style.display='none';
+    return;
+  }
+
+  clearBtn.style.display='';
+  let html='';
+  messages.forEach(m=>{
+    html+='<div class="message '+m.role+'"><div class="bubble">'+formatContent(m.content)+'</div></div>';
+  });
+  if(sending){
+    html+='<div class="typing"><div class="typing-bubble">'+
+      '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>'+
+      '</div></div>';
+  }
+  html+='<div id="chat-end"></div>';
+  el.innerHTML=html;
+  document.getElementById('chat-end')?.scrollIntoView({behavior:'smooth'});
+}
+
+function createEmptyState(){
+  const div=document.createElement('div');
+  div.className='empty-state';
+  div.id='empty-state';
+  div.innerHTML=
+    '<div class="icon-box"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></div>'+
+    '<div><h3>Procedure Knowledge Bot</h3><p>Upload your procedure documents via the main app, select which ones to include, then ask questions. Answers come strictly from your data with source citations.</p></div>'+
+    '<div class="suggestions">'+
+    '<button class="suggestion" onclick="useSuggestion(this)">What are the lockout steps?</button>'+
+    '<button class="suggestion" onclick="useSuggestion(this)">Who approves SIMOPS?</button>'+
+    '<button class="suggestion" onclick="useSuggestion(this)">What PPE is required?</button></div>';
+  return div;
+}
+
+function formatContent(text){
+  // Bold **text**
+  let out=esc(text).replace(/\\*\\*(.+?)\\*\\*/g,'<strong style="color:var(--white)">$1</strong>');
+  // Line breaks
+  out=out.replace(/\\n\\n/g,'</p><p style="margin:0 0 8px 0">');
+  out=out.replace(/\\n/g,'<br>');
+  return '<p style="margin:0 0 8px 0">'+out+'</p>';
+}
+
+function esc(s){if(!s)return '';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+</script>
+</body>
+</html>"""
+
+
 # ---------------------------------------------------------------------------
 # Global error handler for DB failures
 # ---------------------------------------------------------------------------
@@ -1264,6 +1782,12 @@ async def verify_key():
 async def root():
     """Interactive operating interface for PDFHelper."""
     return _ROOT_HTML
+
+
+@app.get("/bot", response_class=HTMLResponse)
+async def bot_page():
+    """Procedure Knowledge Bot — chat with your uploaded documents."""
+    return _BOT_HTML
 
 
 @app.post("/upload", dependencies=[Depends(verify_api_key)])
@@ -1486,6 +2010,93 @@ async def get_search_result(search_id: str, db=Depends(get_db)):
             "flagged_for_review": result.flagged_for_review,
         },
         "searched_at": result.searched_at.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Procedure Chatbot
+# ---------------------------------------------------------------------------
+
+@app.post("/chat", dependencies=[Depends(verify_api_key)])
+async def chat_with_documents(
+    request: Request,
+    body: ChatRequest,
+    db=Depends(get_db),
+):
+    """Chat with your uploaded documents using AI.
+
+    Sends the user's message along with selected document content to Claude
+    and returns a context-aware response with procedure citations.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    query = db.query(DBDocument)
+    if body.doc_ids:
+        query = query.filter(DBDocument.id.in_(body.doc_ids))
+    documents = query.all()
+
+    if not documents:
+        raise HTTPException(status_code=404, detail="No documents found. Upload documents first.")
+
+    # Build procedure context from selected documents
+    procedure_parts = []
+    for doc in documents:
+        decrypted_name = _decrypt_text(doc.filename)
+        pages = json.loads(_decrypt_text(doc.text_content))
+        full_text = "\n".join(p["text"] for p in pages if p.get("text"))
+        # Truncate very long documents to stay within context limits
+        if len(full_text) > 80000:
+            full_text = full_text[:80000] + "\n\n[... content truncated for context window ...]"
+        procedure_parts.append(
+            f'--- PROCEDURE: "{decrypted_name}" ---\n{full_text}\n--- END OF "{decrypted_name}" ---'
+        )
+
+    procedure_context = "\n\n".join(procedure_parts)
+
+    system_prompt = f"""You are a Procedure Knowledge Assistant. You ONLY answer questions based on the procedure documents provided below.
+
+RULES:
+1. ONLY use information from the provided procedure documents to answer questions.
+2. ALWAYS cite which procedure document your answer comes from by name and section if possible.
+3. If the answer cannot be found in the provided procedures, say "I couldn't find information about that in the selected procedures." and suggest which type of document might contain the answer.
+4. Be precise and direct. Quote relevant sections when helpful.
+5. If a question spans multiple procedures, reference all relevant ones.
+6. Format your answers clearly with procedure references in bold.
+
+LOADED PROCEDURES:
+{procedure_context}"""
+
+    # Build conversation messages (last 10 for context)
+    conversation = [
+        {"role": m.role, "content": m.content}
+        for m in body.conversation_history[-10:]
+    ]
+    conversation.append({"role": "user", "content": body.message})
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1500,
+            system=system_prompt,
+            messages=conversation,
+        )
+        reply = "\n".join(
+            block.text for block in response.content if block.type == "text"
+        ) or "Sorry, I couldn't generate a response."
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI request failed: {str(e)}")
+
+    return {
+        "reply": reply,
+        "documents_used": [
+            {"id": d.id, "filename": _decrypt_text(d.filename)}
+            for d in documents
+        ],
     }
 
 
