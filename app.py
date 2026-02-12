@@ -915,7 +915,7 @@ async function loadDocuments(){
       '<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+esc(doc.filename)+
       '</div><div class="meta">'+doc.pages+' pages &middot; '+new Date(doc.uploaded_at).toLocaleString()+
       ' &middot; <code style="font-size:0.75rem">'+doc.id.slice(0,8)+'...</code></div></div>'+
-      '<button class="btn btn-danger" style="font-size:0.75rem;padding:0.3rem 0.6rem" onclick="deleteDoc(\''+doc.id+'\')">Delete</button></div>'
+      '<button class="btn btn-danger" style="font-size:0.75rem;padding:0.3rem 0.6rem" onclick="deleteDoc(&apos;'+doc.id+'&apos;)">Delete</button></div>'
     ).join('');
     updateDocSelectors();
   }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
@@ -1085,7 +1085,7 @@ async function loadHistory(){
     const items=d.searches||[];
     if(!items.length){el.innerHTML='<p style="color:var(--muted)">No search history.</p>';return;}
     el.innerHTML=items.map(s=>
-      '<div class="result-card" style="cursor:pointer" onclick="viewSearch(\''+s.id+'\')">'+
+      '<div class="result-card" style="cursor:pointer" onclick="viewSearch(&apos;'+s.id+'&apos;)">'+
       '<div class="label">'+new Date(s.searched_at).toLocaleString()+'</div>'+
       '<div class="text">'+
         (s.search_terms?.length?'Keywords: <strong>'+s.search_terms.map(esc).join(', ')+'</strong> &middot; ':'')+
@@ -1123,7 +1123,7 @@ async function loadReports(){
     if(!items.length){el.innerHTML='<p style="color:var(--muted)">No reports yet.</p>';return;}
     el.innerHTML=items.map(rp=>{
       const rc=rp.risk_level==='high'?'var(--red)':rp.risk_level==='medium'?'var(--orange)':'var(--green)';
-      return '<div class="result-card" style="cursor:pointer" onclick="viewReport(\''+rp.id+'\')">'+
+      return '<div class="result-card" style="cursor:pointer" onclick="viewReport(&apos;'+rp.id+'&apos;)">'+
         '<div class="label">'+new Date(rp.analyzed_at).toLocaleString()+'</div>'+
         '<div class="text">'+rp.documents_analyzed+' docs &middot; '+rp.total_issues+' issues &middot; '+
         rp.critical_issues+' critical &middot; <span style="color:'+rc+';font-weight:700">'+rp.risk_level.toUpperCase()+' RISK</span></div></div>';

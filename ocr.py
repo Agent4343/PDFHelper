@@ -46,7 +46,12 @@ def ocr_pdf_bytes(pdf_bytes: bytes) -> list[dict]:
         pix = page.get_pixmap(dpi=300)
         img_bytes = pix.tobytes("png")
         image = Image.open(io.BytesIO(img_bytes))
-        page_text = pytesseract.image_to_string(image)
+        try:
+            page_text = pytesseract.image_to_string(image)
+        except Exception:
+            # Tesseract binary not installed or other OCR failure
+            doc.close()
+            return []
 
         pages.append({"page": page_num + 1, "text": page_text})
 
