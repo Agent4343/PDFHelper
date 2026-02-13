@@ -928,7 +928,6 @@ function showFileNames(){
 }
 async function uploadFiles(){
   const res=document.getElementById('upload-result');
-  if(!requireKey('upload-result')) return;
   if(!selectedFiles.length){
     toast('Select PDF files first','error');
     showInlineError('upload-result','Click the drop zone above to select PDF files first.');
@@ -946,6 +945,7 @@ async function uploadFiles(){
     if(r.status===401) throw new Error('Invalid API key. Enter your key above and click Connect first.');
     if(r.status===503) throw new Error('Database is unavailable. Check that DATABASE_URL is set in your Railway service variables.');
     if(!r.ok) throw new Error(d.detail||'Upload failed (status '+r.status+')');
+    apiConnected=true; /* upload succeeded so server is reachable */
     res.innerHTML='<div class="card"><h3>Uploaded '+d.count+' file(s)</h3>'+
       d.uploaded.map(u=>'<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+
       esc(u.filename)+'</div><div class="meta">'+u.pages+' pages &middot; ID: '+u.id.slice(0,8)+'...</div></div></div>').join('')+'</div>';
@@ -961,13 +961,14 @@ async function uploadFiles(){
 /* ---- Documents ---- */
 let allDocs=[];
 async function loadDocuments(){
-  if(!requireKey('doc-list')) return;
   const el=document.getElementById('doc-list');
   loading(el);
   try{
     const r=await fetch(API+'/documents',{headers:headers()});
+    if(r.status===401){ el.innerHTML='<p style="color:var(--red)">API key required. Enter your key above and click Connect.</p>'; return; }
     const d=await r.json();
     if(!r.ok) throw new Error(d.detail||'Failed');
+    apiConnected=true;
     allDocs=d.documents||[];
     if(!allDocs.length){el.innerHTML='<p style="color:var(--muted)">No documents uploaded yet.</p>';updateDocSelectors();return;}
     el.innerHTML=allDocs.map(doc=>
@@ -1001,7 +1002,6 @@ async function deleteDoc(id){
 
 /* ---- Search ---- */
 async function runSearch(){
-  if(!requireKey('search-result')) return;
   const terms=document.getElementById('search-terms').value.split(',').map(s=>s.trim()).filter(Boolean);
   const aiQ=document.getElementById('ai-query').value.trim();
   if(!terms.length&&!aiQ){toast('Enter keywords or an AI query','error');return;}
@@ -1058,7 +1058,6 @@ function renderSearchResults(d,el){
 
 /* ---- Analyze ---- */
 async function runAnalysis(){
-  if(!requireKey('analyze-result')) return;
   const btn=document.getElementById('analyze-btn');
   btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Analyzing (this may take a minute)...';
   const res=document.getElementById('analyze-result');
@@ -1135,7 +1134,6 @@ function showHistoryTab(tab,btn){
   if(tab==='reports') loadReports();
 }
 async function loadHistory(){
-  if(!requireKey('history-list')) return;
   const el=document.getElementById('history-list');loading(el);
   try{
     const r=await fetch(API+'/history?limit=50',{headers:headers()});
@@ -1172,7 +1170,6 @@ async function viewSearch(id){
   }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
 }
 async function loadReports(){
-  if(!requireKey('reports-list')) return;
   const el=document.getElementById('reports-list');loading(el);
   try{
     const r=await fetch(API+'/reports?limit=50',{headers:headers()});
@@ -1680,6 +1677,7 @@ function renderDocs(){
     el.innerHTML='<div class="doc-empty">No documents uploaded yet.<br>Upload via the <a href="/" style="color:var(--primary)">main app</a> first.</div>';
     actions.style.display='none';
     updateStatus();
+    if(messages.length===0) renderMessages();
     return;
   }
 
