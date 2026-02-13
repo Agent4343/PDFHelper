@@ -8,15 +8,23 @@ The orchestrator coordinates them and merges their results into a single report.
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from anthropic import Anthropic
 
 
+_client: Anthropic | None = None
+
+
 def _get_client() -> Anthropic:
-    key = os.getenv("ANTHROPIC_API_KEY")
-    if not key:
-        raise RuntimeError("ANTHROPIC_API_KEY not configured")
-    return Anthropic(api_key=key)
+    """Return a shared Anthropic client instance (created once, reused)."""
+    global _client
+    if _client is None:
+        key = os.getenv("ANTHROPIC_API_KEY")
+        if not key:
+            raise RuntimeError("ANTHROPIC_API_KEY not configured")
+        _client = Anthropic(api_key=key)
+    return _client
 
 
 MODEL = "claude-sonnet-4-5-20250929"
@@ -24,8 +32,7 @@ MODEL = "claude-sonnet-4-5-20250929"
 
 def _call_ai(system_prompt: str, user_prompt: str, max_tokens: int = 4096) -> str:
     """Make a single AI call with a system prompt and user prompt."""
-    client = _get_client()
-    response = client.messages.create(
+    response = _get_client().messages.create(
         model=MODEL,
         max_tokens=max_tokens,
         system=system_prompt,
@@ -261,24 +268,41 @@ def run_full_analysis(
 
     Returns the complete analysis with all agent outputs merged.
     """
-    # Step 1: Analyze each document individually
+    # Steps 1 & 3: Run document analysis and compliance checks in parallel
+    # (each document is independent, so all calls can run concurrently)
     doc_analyses = []
-    for filename, pages in documents.items():
-        analysis = document_analysis_agent(filename, pages)
-        analysis["filename"] = filename
-        doc_analyses.append(analysis)
+    compliance_findings = {}
 
-    # Step 2: Cross-reference check (only if multiple documents)
+    with ThreadPoolExecutor(max_workers=min(4, len(documents) * 2)) as pool:
+        # Submit all document analysis tasks
+        analysis_futures = {
+            pool.submit(document_analysis_agent, filename, pages): filename
+            for filename, pages in documents.items()
+        }
+        # Submit all compliance tasks at the same time
+        compliance_futures = {
+            pool.submit(compliance_agent, filename, pages, compliance_context): filename
+            for filename, pages in documents.items()
+        }
+
+        # Collect document analysis results
+        for future in as_completed(analysis_futures):
+            filename = analysis_futures[future]
+            analysis = future.result()
+            analysis["filename"] = filename
+            doc_analyses.append(analysis)
+
+        # Collect compliance results
+        for future in as_completed(compliance_futures):
+            filename = compliance_futures[future]
+            findings = future.result()
+            if findings:
+                compliance_findings[filename] = findings
+
+    # Step 2: Cross-reference check (needs doc_analyses from step 1)
     cross_ref_findings = []
     if len(documents) > 1:
         cross_ref_findings = cross_reference_agent(doc_analyses)
-
-    # Step 3: Compliance check on each document
-    compliance_findings = {}
-    for filename, pages in documents.items():
-        findings = compliance_agent(filename, pages, compliance_context)
-        if findings:
-            compliance_findings[filename] = findings
 
     # Step 4: Run keyword/AI search if requested
     search_results = None

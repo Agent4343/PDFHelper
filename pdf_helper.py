@@ -74,125 +74,52 @@ def load_pdfs(paths: list[str]) -> dict[str, list[dict]]:
 
 
 # ---------------------------------------------------------------------------
-# Keyword search (exact / regex)
+# Search functions — delegate to the shared search module
 # ---------------------------------------------------------------------------
 
+from search import keyword_search as _kw_search, ai_search as _ai_search
+
+
 def keyword_search(docs: dict, search_terms: list[str], case_sensitive: bool = False) -> list[dict]:
-    """Search all loaded PDFs for exact keyword/phrase matches.
-
-    Returns a list of match dicts with file, page, term, and context.
-    """
+    """Search all loaded PDFs for exact keyword/phrase matches."""
     results = []
-    flags = 0 if case_sensitive else re.IGNORECASE
-
     for filepath, pages in docs.items():
         filename = Path(filepath).name
-        for page_info in pages:
-            text = page_info["text"]
-            for term in search_terms:
-                pattern = re.compile(re.escape(term), flags)
-                for match in pattern.finditer(text):
-                    start = max(0, match.start() - 80)
-                    end = min(len(text), match.end() + 80)
-                    context = text[start:end].replace("\n", " ").strip()
-                    results.append({
-                        "file": filename,
-                        "filepath": filepath,
-                        "page": page_info["page"],
-                        "term": term,
-                        "matched_text": match.group(),
-                        "context": f"...{context}...",
-                    })
+        matches = _kw_search(pages, search_terms, case_sensitive)
+        for m in matches:
+            m["file"] = filename
+            m["filepath"] = filepath
+        results.extend(matches)
     return results
 
 
-# ---------------------------------------------------------------------------
-# AI-powered semantic search
-# ---------------------------------------------------------------------------
-
 def ai_search(docs: dict, query: str, api_key: str | None = None) -> list[dict]:
-    """Use Claude AI to semantically search PDFs for concepts and ideas.
-
-    This goes beyond keyword matching — it understands meaning, synonyms,
-    and related concepts.
-    """
-    try:
-        from anthropic import Anthropic
-    except ImportError:
-        console.print("[red]Error: anthropic package required for AI search. "
-                       "Install with: pip install anthropic[/red]")
-        return []
-
+    """Use Claude AI to semantically search PDFs for concepts and ideas."""
     key = api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         console.print("[red]Error: ANTHROPIC_API_KEY environment variable not set. "
                        "Set it or pass --api-key to use AI search.[/red]")
         return []
+    # Temporarily set the key so search.ai_search can find it
+    old_key = os.environ.get("ANTHROPIC_API_KEY")
+    os.environ["ANTHROPIC_API_KEY"] = key
 
-    client = Anthropic(api_key=key)
     results = []
-
-    for filepath, pages in docs.items():
-        filename = Path(filepath).name
-        # Process pages in batches to stay within context limits
-        batch_size = 5
-        for i in range(0, len(pages), batch_size):
-            batch = pages[i:i + batch_size]
-            page_texts = ""
-            for p in batch:
-                page_texts += f"\n--- PAGE {p['page']} ---\n{p['text']}\n"
-
-            if not page_texts.strip():
-                continue
-
-            prompt = f"""You are a document reviewer. Analyze the following PDF pages from "{filename}" and search for content related to this query:
-
-QUERY: {query}
-
-DOCUMENT CONTENT:
-{page_texts}
-
-Instructions:
-- Find any text that is relevant to the query — not just exact matches, but related concepts, synonyms, and ideas.
-- For each finding, determine if it might need to be reviewed or changed.
-- Respond ONLY with a JSON array of findings. Each finding should have:
-  - "page": the page number
-  - "matched_text": the specific text that matched (quote directly)
-  - "reason": why this is relevant to the query
-  - "needs_review": true/false — whether this likely needs changes
-  - "suggestion": if needs_review is true, what change might be needed
-
-If nothing relevant is found, respond with an empty array: []
-Respond with ONLY valid JSON, no other text."""
-
-            try:
-                response = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=4096,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                response_text = response.content[0].text.strip()
-                # Extract JSON from response (handle markdown code blocks)
-                if response_text.startswith("```"):
-                    response_text = re.sub(r"^```(?:json)?\n?", "", response_text)
-                    response_text = re.sub(r"\n?```$", "", response_text)
-
-                findings = json.loads(response_text)
-                for finding in findings:
-                    results.append({
-                        "file": filename,
-                        "filepath": filepath,
-                        "page": finding.get("page", "?"),
-                        "matched_text": finding.get("matched_text", ""),
-                        "reason": finding.get("reason", ""),
-                        "needs_review": finding.get("needs_review", False),
-                        "suggestion": finding.get("suggestion", ""),
-                    })
-            except json.JSONDecodeError:
-                console.print(f"[yellow]Warning: Could not parse AI response for "
-                              f"{filename} pages {i+1}-{i+len(batch)}[/yellow]")
-            except Exception as e:
-                console.print(f"[red]AI search error on {filename}: {e}[/red]")
+    try:
+        for filepath, pages in docs.items():
+            filename = Path(filepath).name
+            findings = _ai_search(pages, query, filename)
+            for f in findings:
+                f["file"] = filename
+                f["filepath"] = filepath
+            results.extend(findings)
+    except Exception as e:
+        console.print(f"[red]AI search error: {e}[/red]")
+    finally:
+        if old_key is not None:
+            os.environ["ANTHROPIC_API_KEY"] = old_key
+        elif "ANTHROPIC_API_KEY" in os.environ:
+            del os.environ["ANTHROPIC_API_KEY"]
 
     return results
 

@@ -22,6 +22,7 @@ import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Literal
 
 try:
     from dotenv import load_dotenv
@@ -29,9 +30,8 @@ try:
 except ImportError:
     pass  # python-dotenv not installed; env vars must be set directly
 
-import fitz  # PyMuPDF
 from fastapi import (
-    FastAPI, File, UploadFile, Depends, HTTPException, Query, Request,
+    BackgroundTasks, FastAPI, File, UploadFile, Depends, HTTPException, Query, Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -308,14 +308,6 @@ def _encrypt_and_save(data: bytes, path: Path) -> None:
         path.write_bytes(data)
 
 
-def _read_and_decrypt(path: Path) -> bytes:
-    """Read file and decrypt. Falls back to plain read if no key."""
-    if ENCRYPTION_KEY:
-        from encryption import decrypt_file
-        return decrypt_file(str(path))
-    return path.read_bytes()
-
-
 def _encrypt_text(text: str) -> str:
     """Encrypt a string for database storage. Returns base64-encoded ciphertext."""
     if ENCRYPTION_KEY:
@@ -369,6 +361,15 @@ def _run_cleanup(db) -> int:
     return count
 
 
+def _run_cleanup_background():
+    """Run cleanup with its own DB session (safe for background tasks)."""
+    db = SessionLocal()
+    try:
+        _run_cleanup(db)
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
@@ -389,7 +390,7 @@ class AnalyzeRequest(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: str = Field(description="'user' or 'assistant'")
+    role: Literal["user", "assistant"] = Field(description="'user' or 'assistant'")
     content: str
 
 
@@ -439,11 +440,18 @@ def validate_pdf(file: UploadFile, content: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
+_cached_html: str | None = None
 
 
 def _load_root_html() -> str:
-    """Load the frontend HTML template from disk."""
-    return (_TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
+    """Load the frontend HTML template. Cached in production to avoid disk reads."""
+    global _cached_html
+    if IS_PRODUCTION and _cached_html is not None:
+        return _cached_html
+    html = (_TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
+    if IS_PRODUCTION:
+        _cached_html = html
+    return html
 
 
 
@@ -548,6 +556,7 @@ async def bot_page():
 async def upload_pdfs(
     request: Request,
     files: list[UploadFile] = File(...),
+    background_tasks: BackgroundTasks = None,
     db=Depends(get_db),
 ):
     """Upload one or more PDFs for later searching."""
@@ -557,8 +566,9 @@ async def upload_pdfs(
 
     client_ip = _get_client_ip(request)
 
-    # Run cleanup on upload to keep storage in check
-    _run_cleanup(db)
+    # Run cleanup after the response is sent so it doesn't slow down uploads
+    if background_tasks:
+        background_tasks.add_task(_run_cleanup_background)
 
     uploaded = []
     for file in files:
@@ -845,7 +855,10 @@ LOADED PROCEDURES:
             block.text for block in response.content if block.type == "text"
         ) or "Sorry, I couldn't generate a response."
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI request failed: {str(e)}")
+        import logging
+        logging.getLogger("pdfhelper").error(f"Chat AI request failed: {e}")
+        detail = "AI request failed" if IS_PRODUCTION else f"AI request failed: {str(e)}"
+        raise HTTPException(status_code=500, detail=detail)
 
     return {
         "reply": reply,
