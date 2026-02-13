@@ -283,7 +283,7 @@ def run_full_analysis(
     # Step 4: Run keyword/AI search if requested
     search_results = None
     if search_terms or ai_query:
-        from app import keyword_search, ai_search
+        from search import keyword_search, ai_search
         search_results = {"keyword_results": [], "ai_results": []}
         for filename, pages in documents.items():
             if search_terms:

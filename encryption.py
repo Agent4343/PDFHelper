@@ -9,11 +9,17 @@ import os
 import base64
 import hashlib
 
+from functools import lru_cache
+
 from cryptography.fernet import Fernet
 
 
+@lru_cache(maxsize=1)
 def _get_fernet() -> Fernet:
-    """Build a Fernet instance from the ENCRYPTION_KEY env var."""
+    """Build and cache a Fernet instance from the ENCRYPTION_KEY env var.
+
+    Cached so we don't re-derive the key on every encrypt/decrypt call.
+    """
     key = os.getenv("ENCRYPTION_KEY")
     if not key:
         raise RuntimeError(
