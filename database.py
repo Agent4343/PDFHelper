@@ -6,8 +6,8 @@ Uses SQLite locally, PostgreSQL on Railway (auto-detected via DATABASE_URL).
 
 import os
 
-from sqlalchemy import Column, String, Integer, Text, DateTime, create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip() or "sqlite:////tmp/pdfhelper.db"
 
@@ -67,3 +67,29 @@ class DBAnalysisReport(Base):
     critical_issues = Column(Integer, default=0)
     risk_level = Column(String, nullable=True)
     analyzed_at = Column(DateTime, nullable=False)
+
+
+class DBChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(String, primary_key=True)
+    title = Column(String, nullable=True)              # auto-generated from first message
+    doc_ids = Column(Text, nullable=False)              # JSON list of document IDs
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+    messages = relationship("DBChatMessage", back_populates="session",
+                            order_by="DBChatMessage.created_at",
+                            cascade="all, delete-orphan")
+
+
+class DBChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(String, primary_key=True)
+    session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
+    role = Column(String, nullable=False)               # "user" or "assistant"
+    content = Column(Text, nullable=False)              # encrypted
+    created_at = Column(DateTime, nullable=False)
+
+    session = relationship("DBChatSession", back_populates="messages")

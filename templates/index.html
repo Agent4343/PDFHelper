@@ -161,6 +161,27 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .chat-sug{background:#1a2236;border:1px solid var(--border);color:var(--muted);
   padding:8px 14px;border-radius:20px;font-size:12px;cursor:pointer;transition:all .15s}
 .chat-sug:hover{border-color:var(--accent);color:var(--text)}
+/* Chat session sidebar */
+.chat-layout{display:flex;width:100%;height:100%}
+.chat-sessions{width:220px;border-right:1px solid var(--border);display:flex;flex-direction:column;
+  flex-shrink:0;background:#0d1220;overflow:hidden}
+.chat-sessions .sess-header{padding:10px 12px;display:flex;justify-content:space-between;align-items:center;
+  border-bottom:1px solid var(--border)}
+.chat-sessions .sess-header span{font-size:12px;font-weight:600;color:var(--muted)}
+.chat-sessions .new-chat-btn{font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;
+  background:var(--accent);color:#fff;border:none;font-weight:600;transition:opacity .15s}
+.chat-sessions .new-chat-btn:hover{opacity:0.8}
+.sess-list{flex:1;overflow-y:auto;padding:6px}
+.sess-item{padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12px;line-height:1.4;
+  color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:all .12s;
+  margin-bottom:2px;border:1px solid transparent}
+.sess-item:hover{background:#ffffff08;color:var(--text)}
+.sess-item.active{background:#3b82f618;border-color:#3b82f650;color:var(--accent)}
+.sess-item .sess-date{font-size:10px;color:var(--muted);display:block;margin-top:2px}
+.sess-item .sess-del{float:right;background:none;border:none;color:var(--muted);cursor:pointer;
+  font-size:14px;line-height:1;padding:0 2px;opacity:0;transition:opacity .12s}
+.sess-item:hover .sess-del{opacity:1}
+.sess-item .sess-del:hover{color:var(--red)}
 /* Top nav tabs */
 .top-nav{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:1.25rem;
   flex-wrap:wrap;flex-shrink:0}
@@ -190,6 +211,7 @@ input[type=text],input[type=password],textarea{font-size:16px}
 .chat-bbl{max-width:90%}
 .chat-sugs{flex-direction:column;align-items:center}
 .chat-sug{width:100%;max-width:260px;text-align:center}
+.chat-sessions{display:none}
 }
 </style>
 </head>
@@ -345,17 +367,26 @@ input[type=text],input[type=password],textarea{font-size:16px}
 
     <!-- AI Chat page -->
     <div class="page" id="page-bot">
-      <div class="chat-page">
-        <div class="chat-doc-bar">
-          <span class="chat-doc-label">Documents:</span>
-          <div id="chat-doc-chips" style="display:inline;"></div>
+      <div class="chat-layout">
+        <div class="chat-sessions">
+          <div class="sess-header">
+            <span>Chat History</span>
+            <button class="new-chat-btn" onclick="startNewChat()">+ New</button>
+          </div>
+          <div class="sess-list" id="sess-list"></div>
         </div>
-        <div class="chat-msgs" id="chat-msgs"></div>
-        <div class="chat-input-bar">
-          <textarea id="chat-input" rows="1" placeholder="Ask about your procedures..."
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();botSend()}"
-            oninput="chatAutoResize(this)"></textarea>
-          <button class="chat-send" id="chat-send-btn" onclick="botSend()">Send</button>
+        <div class="chat-page">
+          <div class="chat-doc-bar">
+            <span class="chat-doc-label">Documents:</span>
+            <div id="chat-doc-chips" style="display:inline;"></div>
+          </div>
+          <div class="chat-msgs" id="chat-msgs"></div>
+          <div class="chat-input-bar">
+            <textarea id="chat-input" rows="1" placeholder="Ask about your procedures..."
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();botSend()}"
+              oninput="chatAutoResize(this)"></textarea>
+            <button class="chat-send" id="chat-send-btn" onclick="botSend()">Send</button>
+          </div>
         </div>
       </div>
     </div>
@@ -826,6 +857,8 @@ var botMessages=[];
 var botSending=false;
 var botSelectedIds=new Set();
 var botInited=false;
+var currentSessionId=null;
+var chatSessions=[];
 
 async function initBot(){
   /* If main app already loaded docs, reuse them */
@@ -842,6 +875,8 @@ async function initBot(){
   }
   botSelectedIds=new Set(allDocs.map(d=>d.id));
   renderBotDocChips();
+  /* Load saved sessions */
+  await loadChatSessions();
   /* Greet on first visit when docs exist */
   if(!botInited && allDocs.length>0 && botMessages.length===0){
     botInited=true;
@@ -851,6 +886,84 @@ async function initBot(){
     botMessages.push({role:'assistant',content:g});
   }
   renderBotMessages();
+}
+
+async function loadChatSessions(){
+  try{
+    var r=await fetch(API+'/chat/sessions',{headers:headers()});
+    if(r.ok){
+      var d=await r.json();
+      chatSessions=d.sessions||[];
+      renderSessionList();
+    }
+  }catch(e){}
+}
+
+function renderSessionList(){
+  var el=document.getElementById('sess-list');
+  if(!el) return;
+  if(!chatSessions.length){
+    el.innerHTML='<div style="padding:12px;font-size:11px;color:var(--muted);text-align:center">No conversations yet</div>';
+    return;
+  }
+  el.innerHTML=chatSessions.map(function(s){
+    var active=s.id===currentSessionId?' active':'';
+    var date=new Date(s.updated_at).toLocaleDateString(undefined,{month:'short',day:'numeric'});
+    return '<div class="sess-item'+active+'" onclick="loadChatSession(\''+s.id+'\')" title="'+esc(s.title||'Untitled')+'">'+
+      '<button class="sess-del" onclick="event.stopPropagation();deleteChatSession(\''+s.id+'\')" title="Delete">&times;</button>'+
+      esc((s.title||'Untitled').substring(0,40))+(s.title&&s.title.length>40?'...':'')+
+      '<span class="sess-date">'+date+' &middot; '+s.message_count+' msg'+(s.message_count!==1?'s':'')+'</span>'+
+      '</div>';
+  }).join('');
+}
+
+async function loadChatSession(sessionId){
+  try{
+    var r=await fetch(API+'/chat/sessions/'+sessionId,{headers:headers()});
+    if(!r.ok) return;
+    var d=await r.json();
+    currentSessionId=d.id;
+    botMessages=d.messages.map(function(m){return {role:m.role,content:m.content};});
+    /* Restore doc selection from session */
+    if(d.doc_ids&&d.doc_ids.length){
+      botSelectedIds=new Set(d.doc_ids);
+    }
+    renderBotDocChips();
+    renderBotMessages();
+    renderSessionList();
+  }catch(e){
+    toast('Failed to load session','error');
+  }
+}
+
+function startNewChat(){
+  currentSessionId=null;
+  botMessages=[];
+  botInited=false;
+  botSelectedIds=new Set(allDocs.map(function(d){return d.id;}));
+  renderBotDocChips();
+  /* Show greeting */
+  if(allDocs.length>0){
+    botInited=true;
+    var g='I found **'+allDocs.length+' procedure'+(allDocs.length>1?'s':'')+'** ready to go:\\n\\n';
+    allDocs.forEach(function(d,i){ g+=(i+1)+'. '+d.filename+'\\n'; });
+    g+='\\nAll procedures are selected. Ask me anything!';
+    botMessages.push({role:'assistant',content:g});
+  }
+  renderBotMessages();
+  renderSessionList();
+}
+
+async function deleteChatSession(sessionId){
+  if(!confirm('Delete this conversation?')) return;
+  try{
+    var r=await fetch(API+'/chat/sessions/'+sessionId,{method:'DELETE',headers:headers()});
+    if(r.ok){
+      if(currentSessionId===sessionId) startNewChat();
+      chatSessions=chatSessions.filter(function(s){return s.id!==sessionId;});
+      renderSessionList();
+    }
+  }catch(e){}
 }
 
 function renderBotDocChips(){
@@ -941,10 +1054,15 @@ async function botSend(){
   renderBotMessages();
   try{
     var body={message:text,doc_ids:[...botSelectedIds],conversation_history:botMessages.slice(0,-1).slice(-10)};
+    if(currentSessionId) body.session_id=currentSessionId;
     var r=await fetch(API+'/chat',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     var d=await r.json();
     if(!r.ok) throw new Error(d.detail||'Request failed');
     botMessages.push({role:'assistant',content:d.reply});
+    /* Track session from server */
+    if(d.session_id) currentSessionId=d.session_id;
+    /* Refresh session list in background */
+    loadChatSessions();
   }catch(e){
     botMessages.push({role:'assistant',content:'Error: '+e.message});
   }

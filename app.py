@@ -39,7 +39,10 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from database import SessionLocal, engine, Base, DBDocument, DBSearchResult, DBAnalysisReport
+from database import (
+    SessionLocal, engine, Base, DBDocument, DBSearchResult, DBAnalysisReport,
+    DBChatSession, DBChatMessage,
+)
 from audit import log_upload, log_search, log_delete, log_auth_failure, log_access
 from ocr import extract_text_with_ocr_fallback
 from search import keyword_search, ai_search
@@ -398,6 +401,7 @@ class ChatRequest(BaseModel):
     message: str = Field(description="The user's message")
     doc_ids: list[str] = Field(default=[], description="Document IDs to use as context (empty = all)")
     conversation_history: list[ChatMessage] = Field(default=[], description="Previous messages for context")
+    session_id: str | None = Field(default=None, description="Chat session ID to continue (omit to create new)")
 
 
 class HealthResponse(BaseModel):
@@ -791,6 +795,9 @@ async def chat_with_documents(
 
     Sends the user's message along with selected document content to Claude
     and returns a context-aware response with procedure citations.
+
+    If session_id is provided, continues that session (loading history from DB).
+    Otherwise creates a new session. All messages are persisted.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -804,13 +811,29 @@ async def chat_with_documents(
     if not documents:
         raise HTTPException(status_code=404, detail="No documents found. Upload documents first.")
 
+    # Resolve or create chat session
+    now = datetime.now(timezone.utc)
+    session = None
+    if body.session_id:
+        session = db.query(DBChatSession).filter(DBChatSession.id == body.session_id).first()
+
+    if session is None:
+        session = DBChatSession(
+            id=str(uuid.uuid4()),
+            title=body.message[:100],
+            doc_ids=json.dumps(body.doc_ids),
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(session)
+        db.flush()
+
     # Build procedure context from selected documents
     procedure_parts = []
     for doc in documents:
         decrypted_name = _decrypt_text(doc.filename)
         pages = json.loads(_decrypt_text(doc.text_content))
         full_text = "\n".join(p["text"] for p in pages if p.get("text"))
-        # Truncate very long documents to stay within context limits
         if len(full_text) > 80000:
             full_text = full_text[:80000] + "\n\n[... content truncated for context window ...]"
         procedure_parts.append(
@@ -832,13 +855,25 @@ RULES:
 LOADED PROCEDURES:
 {procedure_context}"""
 
-    # Build conversation messages (last 10 for context)
-    # Only allow 'user' and 'assistant' roles to prevent prompt injection
-    conversation = [
-        {"role": m.role, "content": m.content}
-        for m in body.conversation_history[-10:]
-        if m.role in ("user", "assistant")
-    ]
+    # Build conversation from DB history (prefer DB over client-sent history)
+    db_messages = (
+        db.query(DBChatMessage)
+        .filter(DBChatMessage.session_id == session.id)
+        .order_by(DBChatMessage.created_at)
+        .all()
+    )
+
+    if db_messages:
+        conversation = [
+            {"role": m.role, "content": _decrypt_text(m.content)}
+            for m in db_messages[-10:]
+        ]
+    else:
+        conversation = [
+            {"role": m.role, "content": m.content}
+            for m in body.conversation_history[-10:]
+            if m.role in ("user", "assistant")
+        ]
     conversation.append({"role": "user", "content": body.message})
 
     from anthropic import Anthropic
@@ -860,13 +895,88 @@ LOADED PROCEDURES:
         detail = "AI request failed" if IS_PRODUCTION else f"AI request failed: {str(e)}"
         raise HTTPException(status_code=500, detail=detail)
 
+    # Persist both messages
+    db.add(DBChatMessage(
+        id=str(uuid.uuid4()), session_id=session.id,
+        role="user", content=_encrypt_text(body.message), created_at=now,
+    ))
+    db.add(DBChatMessage(
+        id=str(uuid.uuid4()), session_id=session.id,
+        role="assistant", content=_encrypt_text(reply), created_at=now,
+    ))
+    session.updated_at = now
+    db.commit()
+
     return {
         "reply": reply,
+        "session_id": session.id,
         "documents_used": [
             {"id": d.id, "filename": _decrypt_text(d.filename)}
             for d in documents
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Chat History Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/chat/sessions", dependencies=[Depends(verify_api_key)])
+async def list_chat_sessions(limit: int = Query(default=30, le=100), db=Depends(get_db)):
+    """List past chat sessions, most recent first."""
+    sessions = (
+        db.query(DBChatSession)
+        .order_by(DBChatSession.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "sessions": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "doc_ids": json.loads(s.doc_ids),
+                "message_count": len(s.messages),
+                "created_at": s.created_at.isoformat(),
+                "updated_at": s.updated_at.isoformat(),
+            }
+            for s in sessions
+        ]
+    }
+
+
+@app.get("/chat/sessions/{session_id}", dependencies=[Depends(verify_api_key)])
+async def get_chat_session(session_id: str, db=Depends(get_db)):
+    """Get full message history for a chat session."""
+    session = db.query(DBChatSession).filter(DBChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return {
+        "id": session.id,
+        "title": session.title,
+        "doc_ids": json.loads(session.doc_ids),
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat(),
+        "messages": [
+            {
+                "role": m.role,
+                "content": _decrypt_text(m.content),
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in session.messages
+        ],
+    }
+
+
+@app.delete("/chat/sessions/{session_id}", dependencies=[Depends(verify_api_key)])
+async def delete_chat_session(session_id: str, db=Depends(get_db)):
+    """Delete a chat session and all its messages."""
+    session = db.query(DBChatSession).filter(DBChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    db.delete(session)
+    db.commit()
+    return {"deleted": session_id}
 
 
 # ---------------------------------------------------------------------------
