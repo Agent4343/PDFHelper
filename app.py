@@ -35,7 +35,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -59,6 +59,7 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
+CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "8192"))
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/pdfhelper_uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -879,42 +880,61 @@ LOADED PROCEDURES:
     from anthropic import Anthropic
     client = Anthropic(api_key=api_key)
 
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=1500,
-            system=system_prompt,
-            messages=conversation,
-        )
-        reply = "\n".join(
-            block.text for block in response.content if block.type == "text"
-        ) or "Sorry, I couldn't generate a response."
-    except Exception as e:
-        import logging
-        logging.getLogger("pdfhelper").error(f"Chat AI request failed: {e}")
-        detail = "AI request failed" if IS_PRODUCTION else f"AI request failed: {str(e)}"
-        raise HTTPException(status_code=500, detail=detail)
-
-    # Persist both messages
+    # Save user message now (assistant message saved after stream completes)
     db.add(DBChatMessage(
         id=str(uuid.uuid4()), session_id=session.id,
         role="user", content=_encrypt_text(body.message), created_at=now,
     ))
-    db.add(DBChatMessage(
-        id=str(uuid.uuid4()), session_id=session.id,
-        role="assistant", content=_encrypt_text(reply), created_at=now,
-    ))
-    session.updated_at = now
     db.commit()
 
-    return {
-        "reply": reply,
-        "session_id": session.id,
-        "documents_used": [
-            {"id": d.id, "filename": _decrypt_text(d.filename)}
-            for d in documents
-        ],
-    }
+    session_id = session.id
+    doc_info = [{"id": d.id, "filename": _decrypt_text(d.filename)} for d in documents]
+
+    async def stream_chat():
+        """Stream the AI response as Server-Sent Events."""
+        full_reply = ""
+        try:
+            # Send session metadata first
+            yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'documents_used': doc_info})}\n\n"
+
+            with client.messages.stream(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=CHAT_MAX_TOKENS,
+                system=system_prompt,
+                messages=conversation,
+            ) as stream:
+                for text in stream.text_stream:
+                    full_reply += text
+                    yield f"data: {json.dumps({'type': 'chunk', 'text': text})}\n\n"
+
+            # Signal completion
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            import logging
+            logging.getLogger("pdfhelper").error(f"Chat AI stream failed: {e}")
+            err_msg = "AI request failed" if IS_PRODUCTION else f"AI request failed: {str(e)}"
+            yield f"data: {json.dumps({'type': 'error', 'detail': err_msg})}\n\n"
+            full_reply = full_reply or err_msg
+        finally:
+            # Persist assistant reply after stream completes
+            save_db = SessionLocal()
+            try:
+                save_db.add(DBChatMessage(
+                    id=str(uuid.uuid4()), session_id=session_id,
+                    role="assistant",
+                    content=_encrypt_text(full_reply or "Sorry, I couldn't generate a response."),
+                    created_at=datetime.now(timezone.utc),
+                ))
+                sess = save_db.query(DBChatSession).filter(DBChatSession.id == session_id).first()
+                if sess:
+                    sess.updated_at = datetime.now(timezone.utc)
+                save_db.commit()
+            except Exception:
+                save_db.rollback()
+            finally:
+                save_db.close()
+
+    return StreamingResponse(stream_chat(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------

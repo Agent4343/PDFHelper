@@ -1051,19 +1051,57 @@ async function botSend(){
   botSending=true;
   document.getElementById('chat-send-btn').disabled=true;
   renderBotMessages();
+
+  /* Add a placeholder assistant message that we'll stream into */
+  var assistantIdx=botMessages.length;
+  botMessages.push({role:'assistant',content:''});
+
   try{
-    var body={message:text,doc_ids:[...botSelectedIds],conversation_history:botMessages.slice(0,-1).slice(-10)};
+    var body={message:text,doc_ids:[...botSelectedIds],conversation_history:botMessages.slice(0,-2).slice(-10)};
     if(currentSessionId) body.session_id=currentSessionId;
     var r=await fetch(API+'/chat',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
-    var d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Request failed');
-    botMessages.push({role:'assistant',content:d.reply});
-    /* Track session from server */
-    if(d.session_id) currentSessionId=d.session_id;
-    /* Refresh session list in background */
+
+    if(!r.ok){
+      var errData=await r.json().catch(function(){return {};});
+      throw new Error(errData.detail||'Request failed ('+r.status+')');
+    }
+
+    /* Read the SSE stream */
+    var reader=r.body.getReader();
+    var decoder=new TextDecoder();
+    var buffer='';
+
+    while(true){
+      var result=await reader.read();
+      if(result.done) break;
+      buffer+=decoder.decode(result.value,{stream:true});
+      /* Process complete SSE lines */
+      var lines=buffer.split('\n');
+      buffer=lines.pop()||'';
+      for(var i=0;i<lines.length;i++){
+        var line=lines[i].trim();
+        if(!line.startsWith('data: ')) continue;
+        try{
+          var evt=JSON.parse(line.substring(6));
+          if(evt.type==='meta'){
+            if(evt.session_id) currentSessionId=evt.session_id;
+          } else if(evt.type==='chunk'){
+            botMessages[assistantIdx].content+=evt.text;
+            renderBotMessages();
+          } else if(evt.type==='error'){
+            botMessages[assistantIdx].content+=(botMessages[assistantIdx].content?'\n\n':'')+'Error: '+evt.detail;
+          }
+        }catch(parseErr){}
+      }
+    }
+
+    if(!botMessages[assistantIdx].content){
+      botMessages[assistantIdx].content='Sorry, I couldn\'t generate a response.';
+    }
+
     loadChatSessions();
   }catch(e){
-    botMessages.push({role:'assistant',content:'Error: '+e.message});
+    botMessages[assistantIdx].content='Error: '+e.message;
   }
   botSending=false;
   document.getElementById('chat-send-btn').disabled=false;
