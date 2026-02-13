@@ -1360,28 +1360,35 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
 /* ---- Mobile ---- */
 @media(max-width:768px){
-  .app{position:relative;flex-direction:column;overflow:hidden}
+  /* Kill the outer flex — .app is just a plain block container.
+     This avoids ALL nested-flex and inherited-height issues. */
+  body{overflow:hidden}
+  .app{display:block;position:relative;width:100%;height:100vh;height:100dvh;overflow:hidden}
 
-  /* Sidebar becomes a full-height overlay drawer */
+  /* .main is the ONLY flex container — explicit height, no inheritance */
+  .main{display:flex;flex-direction:column;
+    width:100%;height:100vh;height:100dvh;overflow:hidden}
+  .topbar{flex-shrink:0}
+  .messages{flex:1;overflow-y:auto;min-height:0;padding:16px 12px;
+    -webkit-overflow-scrolling:touch}
+  .input-area{flex-shrink:0;padding:10px 12px;
+    padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+
+  /* Sidebar overlay drawer */
   .sidebar{position:absolute;top:0;left:0;z-index:100;width:280px;min-width:280px;
     height:100%;box-shadow:4px 0 24px rgba(0,0,0,0.5);
     transform:translateX(0);transition:transform .25s ease}
-  .sidebar.collapsed{width:280px;min-width:280px;transform:translateX(-100%);box-shadow:none}
-
-  /* Backdrop overlay when sidebar is open */
+  .sidebar.collapsed{width:280px;min-width:280px;
+    transform:translateX(-100%);box-shadow:none;pointer-events:none}
   .sidebar-backdrop{display:none;position:fixed;inset:0;z-index:99;
     background:rgba(0,0,0,0.5);-webkit-tap-highlight-color:transparent}
   .sidebar-backdrop.visible{display:block}
-
-  /* Main area takes full width */
-  .main{width:100%}
 
   /* Topbar compact */
   .topbar{padding:10px 14px;gap:10px}
   .topbar .bot-info .title{font-size:14px}
 
-  /* Messages */
-  .messages{padding:16px 12px;-webkit-overflow-scrolling:touch}
+  /* Chat bubbles */
   .bubble{max-width:88%}
 
   /* Empty state */
@@ -1390,13 +1397,12 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
   .suggestions{flex-direction:column;align-items:center}
   .suggestion{width:100%;max-width:260px;text-align:center}
 
-  /* Input area - safe area for notched phones */
-  .input-area{padding:10px 12px;padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+  /* Input */
   .input-row{border-radius:12px;padding:4px 4px 4px 12px}
-  .input-row textarea{font-size:16px} /* prevents iOS zoom on focus */
+  .input-row textarea{font-size:16px}
   .send-btn{width:36px;height:36px;border-radius:8px}
 
-  /* Sidebar doc items: bigger touch targets */
+  /* Sidebar touch targets */
   .doc-item{padding:14px 12px}
   .doc-actions{padding:10px 12px}
   .doc-actions button{padding:10px;font-size:12px}
