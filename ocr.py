@@ -30,6 +30,8 @@ def ocr_pdf_bytes(pdf_bytes: bytes) -> list[dict]:
     """Run OCR on a PDF's pages by extracting images and running Tesseract.
 
     Returns list of {"page": int, "text": str} same format as regular extraction.
+    If Tesseract fails on individual pages, those pages get empty text rather
+    than discarding the entire result.
     """
     if not OCR_AVAILABLE:
         return []
@@ -41,17 +43,16 @@ def ocr_pdf_bytes(pdf_bytes: bytes) -> list[dict]:
         page = doc[page_num]
         page_text = ""
 
-        # Render the page as an image and OCR it
-        # This handles both image-based and mixed PDFs
-        pix = page.get_pixmap(dpi=300)
-        img_bytes = pix.tobytes("png")
-        image = Image.open(io.BytesIO(img_bytes))
         try:
+            # Render the page as an image and OCR it
+            # This handles both image-based and mixed PDFs
+            pix = page.get_pixmap(dpi=300)
+            img_bytes = pix.tobytes("png")
+            image = Image.open(io.BytesIO(img_bytes))
             page_text = pytesseract.image_to_string(image)
         except Exception:
-            # Tesseract binary not installed or other OCR failure
-            doc.close()
-            return []
+            # OCR failed for this page — keep going with empty text
+            page_text = ""
 
         pages.append({"page": page_num + 1, "text": page_text})
 
