@@ -516,19 +516,18 @@ _ROOT_HTML = """<!DOCTYPE html>
 <title>PDFHelper</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html{height:100vh;height:-webkit-fill-available;height:100dvh}
 :root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;
 --accent:#3b82f6;--green:#22c55e;--red:#ef4444;--orange:#f59e0b;--code:#0d1117}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-background:var(--bg);color:var(--text);line-height:1.6;height:100%}
-.app{display:flex;height:100%}
+background:var(--bg);color:var(--text);line-height:1.6;margin:0}
+.app{display:flex;height:100vh;height:100dvh}
 /* Sidebar */
 .sidebar{width:220px;background:var(--card);border-right:1px solid var(--border);
 display:flex;flex-direction:column;flex-shrink:0}
 .sidebar .logo{padding:1.25rem 1rem;font-weight:700;font-size:1.1rem;
 border-bottom:1px solid var(--border)}
 .sidebar .logo span{color:var(--accent)}
-.sidebar nav{flex:1;padding:0.5rem 0}
+.sidebar nav{flex:1;padding:0.5rem 0;display:flex;flex-direction:column}
 .sidebar nav button{display:flex;align-items:center;gap:0.6rem;width:100%;
 padding:0.6rem 1rem;background:none;border:none;color:var(--muted);cursor:pointer;
 font-size:0.88rem;text-align:left;transition:all .15s}
@@ -631,7 +630,7 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .sidebar{width:56px}
 .sidebar .logo span,.sidebar nav button span,.sidebar .status span{display:none}
 .sidebar nav button{justify-content:center;padding:0.75rem}
-.main{padding:1rem 0.75rem}
+.main{padding:1rem 0.75rem;height:100%}
 .api-bar{flex-direction:column;align-items:stretch}
 .api-bar .field{width:100%}
 .api-bar .btn{width:100%;justify-content:center}
@@ -1218,7 +1217,6 @@ _BOT_HTML = """<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html{height:100vh;height:-webkit-fill-available;height:100dvh}
 :root{
   --bg:#0a0e17;--surface:#111827;--surface-light:#1a2236;
   --border:#1e293b;--border-active:#3b82f6;
@@ -1228,9 +1226,9 @@ html{height:100vh;height:-webkit-fill-available;height:100dvh}
   --white:#ffffff;--danger:#ef4444;
 }
 body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
-  background:var(--bg);color:var(--text);overflow:hidden;height:100%}
+  background:var(--bg);color:var(--text);overflow:hidden;margin:0}
 
-.app{display:flex;height:100%;width:100%}
+.app{display:flex;height:100vh;height:100dvh;width:100vw}
 
 /* ---- Sidebar ---- */
 .sidebar{width:320px;min-width:320px;background:var(--surface);
