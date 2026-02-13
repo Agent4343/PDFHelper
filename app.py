@@ -1371,16 +1371,18 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
     width:auto;height:auto;overflow:hidden
   }
 
-  /* Sidebar: fixed overlay drawer, hidden by default via transform */
+  /* Sidebar: fixed overlay drawer, hidden by default on mobile.
+     Uses .sidebar-open to show — no JS needed for initial hide. */
   .sidebar{
     position:fixed;top:0;left:0;bottom:0;
     width:280px;min-width:280px;z-index:100;
-    box-shadow:4px 0 24px rgba(0,0,0,0.5);
-    transform:translateX(0);transition:transform .25s ease;
-    overflow-y:auto
+    transform:translateX(-100%);transition:transform .25s ease;
+    overflow-y:auto;box-shadow:none;pointer-events:none
   }
-  .sidebar.collapsed{
-    transform:translateX(-100%);box-shadow:none;pointer-events:none
+  .sidebar.sidebar-open{
+    transform:translateX(0);
+    box-shadow:4px 0 24px rgba(0,0,0,0.5);
+    pointer-events:auto
   }
   .sidebar-backdrop{
     display:none;position:fixed;inset:0;z-index:99;
@@ -1706,24 +1708,32 @@ function toggleSidebar(){
   var sb=document.getElementById('sidebar');
   var ic=document.getElementById('toggle-icon');
   var bd=document.getElementById('sidebar-backdrop');
-  sb.classList.toggle('collapsed');
-  var closed=sb.classList.contains('collapsed');
-  ic.innerHTML=closed?'&#9776;':'&#9665;';
-  if(isMobile()) bd.className='sidebar-backdrop'+(closed?'':' visible');
+  if(isMobile()){
+    sb.classList.toggle('sidebar-open');
+    var open=sb.classList.contains('sidebar-open');
+    ic.innerHTML=open?'&#9665;':'&#9776;';
+    bd.className='sidebar-backdrop'+(open?' visible':'');
+  } else {
+    sb.classList.toggle('collapsed');
+    var closed=sb.classList.contains('collapsed');
+    ic.innerHTML=closed?'&#9776;':'&#9665;';
+  }
 }
 
 function closeSidebar(){
   var sb=document.getElementById('sidebar');
-  if(!sb.classList.contains('collapsed')){
+  if(isMobile()){
+    sb.classList.remove('sidebar-open');
+  } else {
     sb.classList.add('collapsed');
-    document.getElementById('toggle-icon').innerHTML='&#9776;';
-    document.getElementById('sidebar-backdrop').className='sidebar-backdrop';
   }
+  document.getElementById('toggle-icon').innerHTML='&#9776;';
+  document.getElementById('sidebar-backdrop').className='sidebar-backdrop';
 }
 
-/* Start sidebar collapsed on mobile */
+/* On mobile, sidebar starts hidden via CSS (no JS needed).
+   On desktop, set the toggle icon to the correct default. */
 if(isMobile()){
-  document.getElementById('sidebar').classList.add('collapsed');
   document.getElementById('toggle-icon').innerHTML='&#9776;';
 }
 
