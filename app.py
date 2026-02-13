@@ -1463,7 +1463,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
     <!-- Document list -->
     <div class="doc-list" id="doc-list">
-      <div class="doc-empty" id="doc-empty">Connecting to server...</div>
+      <div class="doc-empty" id="doc-empty">Loading documents...</div>
     </div>
 
     <!-- Select all / none / refresh -->
@@ -1557,20 +1557,8 @@ function connectKey(){
   const key = getKey();
   if(!key){ setKeyStatus('Enter your API key','bad'); return; }
   setKeyStatus('Connecting...','muted');
-  fetch(API+'/verify-key',{headers:{'X-API-Key':key}})
-    .then(async r=>{
-      if(r.ok){
-        connected=true;
-        localStorage.setItem('pdfhelper_apikey',key);
-        setKeyStatus('Connected','ok');
-        loadDocs();
-      } else if(r.status===401){
-        setKeyStatus('Invalid API key','bad');
-      } else {
-        setKeyStatus('Connection failed','bad');
-      }
-    })
-    .catch(e=>setKeyStatus('Cannot reach server','bad'));
+  localStorage.setItem('pdfhelper_apikey',key);
+  loadDocs();
 }
 
 function setKeyStatus(msg,cls){
@@ -1580,88 +1568,76 @@ function setKeyStatus(msg,cls){
 
 function hdrs(json){
   const h={};
-  const k=getKey();
+  const k=getKey()||localStorage.getItem('pdfhelper_apikey')||'';
   if(k) h['X-API-Key']=k;
   if(json) h['Content-Type']='application/json';
   return h;
 }
 
-/* Auto-load: check if API key is needed */
-(function(){
-  fetch(API+'/health').then(function(r){ return r.json(); }).then(function(d){
-    if(!d.api_key_required){
-      // No key needed — connect directly
-      connected=true;
-      loadDocs();
-      return;
-    }
-    // Key IS required — show the API key section
-    document.getElementById('api-section').style.display='';
-    var k=localStorage.getItem('pdfhelper_apikey');
-    if(k){document.getElementById('apikey').value=k;connectKey();}
-    else{
-      document.getElementById('doc-list').innerHTML=
-        '<div class="doc-empty">Enter your API key above to load documents.</div>';
-    }
-  }).catch(function(){
-    // Can't reach server — try again after 3s, then show error with retry
-    setTimeout(function(){
-      fetch(API+'/health').then(function(r){ return r.json(); }).then(function(d){
-        if(!d.api_key_required){
-          connected=true;
-          loadDocs();
-        } else {
-          document.getElementById('api-section').style.display='';
-          var k=localStorage.getItem('pdfhelper_apikey');
-          if(k){document.getElementById('apikey').value=k;connectKey();}
-          else{
-            document.getElementById('doc-list').innerHTML=
-              '<div class="doc-empty">Enter your API key above to load documents.</div>';
-          }
-        }
-      }).catch(function(){
-        document.getElementById('api-section').style.display='';
-        document.getElementById('doc-list').innerHTML=
-          '<div class="doc-empty">Cannot reach server.<br>'+
-          '<button onclick="location.reload()" style="margin-top:8px;padding:6px 14px;background:var(--primary);color:var(--white);border:none;border-radius:6px;font-size:12px;cursor:pointer">Reload Page</button></div>';
-        updateEmptyState();
-      });
-    },3000);
-  });
-})();
-
 /* ---- Documents ---- */
 var loadDocsRetries=0;
+
 function loadDocs(){
-  if(!connected) return;
   docsLoading=true;
   document.getElementById('doc-list').innerHTML='<div class="doc-empty">Loading documents...</div>';
   updateEmptyState();
-  fetch(API+'/documents',{headers:hdrs()})
+
+  /* Try with saved API key if we have one */
+  var savedKey=localStorage.getItem('pdfhelper_apikey');
+  var fetchHeaders={};
+  var inputKey=getKey();
+  if(inputKey) fetchHeaders['X-API-Key']=inputKey;
+  else if(savedKey) fetchHeaders['X-API-Key']=savedKey;
+
+  fetch(API+'/documents',{headers:fetchHeaders})
     .then(function(r){
-      if(!r.ok) throw new Error('Failed to load ('+r.status+')');
+      if(r.status===401){
+        /* API key required — show key section */
+        docsLoading=false;
+        connected=false;
+        document.getElementById('api-section').style.display='';
+        if(savedKey && !inputKey){
+          /* Saved key is stale */
+          document.getElementById('doc-list').innerHTML=
+            '<div class="doc-empty">Saved API key expired. Enter a new one above.</div>';
+        } else if(!inputKey){
+          document.getElementById('doc-list').innerHTML=
+            '<div class="doc-empty">Enter your API key above to load documents.</div>';
+        } else {
+          document.getElementById('doc-list').innerHTML=
+            '<div class="doc-empty">Invalid API key. Check and try again.</div>';
+        }
+        updateEmptyState();
+        return null;
+      }
+      if(!r.ok) throw new Error('Server error ('+r.status+')');
       return r.json();
     })
     .then(function(d){
+      if(!d) return; /* 401 handled above */
+      connected=true;
       allDocs=d.documents||[];
       selectedIds=new Set(allDocs.map(function(doc){return doc.id;}));
       docsLoading=false;
       loadDocsRetries=0;
+      /* If we used a key, mark it as connected */
+      if(fetchHeaders['X-API-Key']){
+        setKeyStatus('Connected','ok');
+      }
       renderDocs();
     })
     .catch(function(e){
       docsLoading=false;
       loadDocsRetries++;
-      if(loadDocsRetries<3){
-        // Auto-retry with backoff
-        var delay=loadDocsRetries*2000;
+      if(loadDocsRetries<4){
+        var delay=loadDocsRetries*1500;
         document.getElementById('doc-list').innerHTML=
           '<div class="doc-empty">Retrying in '+Math.round(delay/1000)+'s...</div>';
         setTimeout(loadDocs,delay);
       } else {
         loadDocsRetries=0;
         document.getElementById('doc-list').innerHTML=
-          '<div class="doc-empty">Failed to load documents: '+esc(e.message)+
+          '<div class="doc-empty">Cannot reach server: '+esc(e.message)+
           '<br><button onclick="loadDocs()" style="margin-top:8px;padding:6px 14px;background:var(--primary);color:var(--white);border:none;border-radius:6px;font-size:12px;cursor:pointer">Retry</button></div>';
       }
       updateEmptyState();
@@ -1670,8 +1646,11 @@ function loadDocs(){
 
 /* Auto-reload documents when user switches back to this tab */
 document.addEventListener('visibilitychange',function(){
-  if(!document.hidden && connected){ loadDocs(); }
+  if(!document.hidden){ loadDocs(); }
 });
+
+/* Start loading immediately */
+loadDocs();
 
 var hasGreeted=false;
 function renderDocs(){
