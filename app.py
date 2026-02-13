@@ -1476,6 +1476,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
     <div class="messages" id="messages">
       <div class="empty-state" id="empty-state">
+        <div id="doc-status-banner"></div>
         <div class="icon-box">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/>
@@ -1518,6 +1519,7 @@ let allDocs = [];
 let selectedIds = new Set();
 let messages = [];
 let sending = false;
+let docsLoading = false;
 
 function isMobile(){ return window.innerWidth<=768; }
 
@@ -1579,13 +1581,16 @@ function hdrs(json){
     document.getElementById('api-section').style.display='';
     document.getElementById('doc-list').innerHTML=
       '<div class="doc-empty">Cannot reach server. Check your connection.</div>';
+    updateEmptyState();
   });
 })();
 
 /* ---- Documents ---- */
 function loadDocs(){
   if(!connected) return;
+  docsLoading=true;
   document.getElementById('doc-list').innerHTML='<div class="doc-empty">Loading documents...</div>';
+  updateEmptyState();
   fetch(API+'/documents',{headers:hdrs()})
     .then(function(r){
       if(!r.ok) throw new Error('Failed to load ('+r.status+')');
@@ -1594,11 +1599,14 @@ function loadDocs(){
     .then(function(d){
       allDocs=d.documents||[];
       selectedIds=new Set(allDocs.map(function(doc){return doc.id;}));
+      docsLoading=false;
       renderDocs();
     })
     .catch(function(e){
+      docsLoading=false;
       document.getElementById('doc-list').innerHTML=
         '<div class="doc-empty">Failed to load documents: '+esc(e.message)+'</div>';
+      updateEmptyState();
     });
 }
 
@@ -1643,6 +1651,32 @@ function updateStatus(){
   stats.textContent=allDocs.length+' loaded '+String.fromCharCode(183)+' '+sel+' active';
   subtitle.textContent=sel>0?'Answering from '+sel+' procedure'+(sel>1?'s':''):'No documents selected';
   input.placeholder=sel>0?'Ask a question about your procedures...':'Select procedures from the sidebar first...';
+  updateEmptyState();
+}
+
+function updateEmptyState(){
+  var es=document.getElementById('empty-state');
+  if(!es) return;
+  var sel=selectedIds.size;
+  var statusHtml='';
+  if(docsLoading){
+    statusHtml='<div style="background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:10px 16px;font-size:13px;color:#94a3b8;margin-bottom:8px">'+
+      'Loading documents...</div>';
+  } else if(sel>0){
+    statusHtml='<div style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:10px 16px;font-size:13px;color:#10b981;margin-bottom:8px">'+
+      '<strong>'+sel+' document'+(sel>1?'s':'')+' loaded and ready</strong></div>';
+  } else if(allDocs.length>0){
+    statusHtml='<div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:10px 16px;font-size:13px;color:#f59e0b;margin-bottom:8px">'+
+      'Documents loaded but none selected. <a href="#" onclick="event.preventDefault();toggleSidebar()" style="color:#3b82f6;text-decoration:underline">Open sidebar</a> to select.</div>';
+  } else if(!connected){
+    statusHtml='<div style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:10px 16px;font-size:13px;color:#ef4444;margin-bottom:8px">'+
+      'Not connected to server. <button onclick="location.reload()" style="color:#3b82f6;background:none;border:none;text-decoration:underline;cursor:pointer;font-size:13px">Reload page</button></div>';
+  } else {
+    statusHtml='<div style="background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:10px 16px;font-size:13px;color:#94a3b8;margin-bottom:8px">'+
+      'No documents uploaded yet. <a href="/" style="color:#3b82f6;text-decoration:underline">Go to main app</a> to upload PDFs first.</div>';
+  }
+  var statusEl=document.getElementById('doc-status-banner');
+  if(statusEl){ statusEl.innerHTML=statusHtml; }
 }
 
 /* ---- Sidebar toggle ---- */
@@ -1782,12 +1816,14 @@ function createEmptyState(){
   div.className='empty-state';
   div.id='empty-state';
   div.innerHTML=
+    '<div id="doc-status-banner"></div>'+
     '<div class="icon-box"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></div>'+
     '<div><h3>Procedure Knowledge Bot</h3><p>Upload your procedure documents via the main app, select which ones to include, then ask questions. Answers come strictly from your data with source citations.</p></div>'+
     '<div class="suggestions">'+
     '<button class="suggestion" onclick="useSuggestion(this)">What are the lockout steps?</button>'+
     '<button class="suggestion" onclick="useSuggestion(this)">Who approves SIMOPS?</button>'+
     '<button class="suggestion" onclick="useSuggestion(this)">What PPE is required?</button></div>';
+  updateEmptyState();
   return div;
 }
 
