@@ -747,13 +747,13 @@ input[type=text],input[type=password],textarea{font-size:16px}
     <div class="page active" id="page-upload">
       <h2>Upload PDFs</h2>
       <div class="card">
-        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <label class="drop-zone" id="drop-zone" for="file-input">
           <input type="file" id="file-input" accept=".pdf" multiple>
           <div class="icon">&#128196;</div>
           <p>Click or drag PDF files here</p>
           <p style="font-size:0.78rem;color:var(--muted)">Max 20 files, 20 MB each</p>
           <div class="selected" id="file-list"></div>
-        </div>
+        </label>
         <button class="btn btn-primary" id="upload-btn" onclick="uploadFiles()">Upload</button>
       </div>
       <div id="upload-result"></div>
@@ -1016,13 +1016,18 @@ async function uploadFiles(){
   const fd=new FormData();
   selectedFiles.forEach(f=>fd.append('files',f));
   try{
-    const r=await fetch(API+'/upload',{method:'POST',headers:headers(false),body:fd});
+    /* Do NOT pass Content-Type for FormData — browser must set the boundary.
+       Only add headers if an API key is present. */
+    var opts={method:'POST',body:fd};
+    var k=getKey();
+    if(k) opts.headers={'X-API-Key':k};
+    const r=await fetch(API+'/upload',opts);
     let d;
     try{ d=await r.json(); }catch(jsonErr){ throw new Error('Server returned invalid response (status '+r.status+'). The database may be down — check DATABASE_URL in your Railway variables.'); }
-    if(r.status===401) throw new Error('Invalid API key. Enter your key above and click Connect first.');
+    if(r.status===401) throw new Error('Invalid API key.');
     if(r.status===503) throw new Error('Database is unavailable. Check that DATABASE_URL is set in your Railway service variables.');
     if(!r.ok) throw new Error(d.detail||'Upload failed (status '+r.status+')');
-    apiConnected=true; /* upload succeeded so server is reachable */
+    apiConnected=true;
     res.innerHTML='<div class="card"><h3>Uploaded '+d.count+' file(s)</h3>'+
       d.uploaded.map(u=>'<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+
       esc(u.filename)+'</div><div class="meta">'+u.pages+' pages &middot; ID: '+u.id.slice(0,8)+'...</div></div></div>').join('')+'</div>';
