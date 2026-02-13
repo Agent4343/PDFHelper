@@ -765,8 +765,8 @@ input[type=text],input[type=password],textarea{font-size:16px}
     <div class="page active" id="page-upload">
       <h2>Upload PDFs</h2>
       <div class="card">
+        <input type="file" id="file-input" accept=".pdf" multiple style="display:none">
         <label class="drop-zone" id="drop-zone" for="file-input">
-          <input type="file" id="file-input" accept=".pdf" multiple>
           <div class="icon">&#128196;</div>
           <p>Click or drag PDF files here</p>
           <p style="font-size:0.78rem;color:var(--muted)">Max 20 files, 20 MB each</p>
