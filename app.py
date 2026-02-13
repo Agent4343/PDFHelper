@@ -1360,47 +1360,70 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
 /* ---- Mobile ---- */
 @media(max-width:768px){
-  /* Kill the outer flex — .app is just a plain block container.
-     This avoids ALL nested-flex and inherited-height issues. */
-  body{overflow:hidden}
-  .app{display:block;position:relative;width:100%;height:100vh;height:100dvh;overflow:hidden}
+  html,body{height:100%;overflow:hidden;margin:0;padding:0}
 
-  /* .main is the ONLY flex container — explicit height, no inheritance */
-  .main{display:flex;flex-direction:column;
-    width:100%;height:100vh;height:100dvh;overflow:hidden}
-  .topbar{flex-shrink:0}
-  .messages{flex:1;overflow-y:auto;min-height:0;padding:16px 12px;
-    -webkit-overflow-scrolling:touch}
-  .input-area{flex-shrink:0;padding:10px 12px;
-    padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+  /* position:fixed + inset:0 = always matches visible viewport
+     on ALL mobile browsers, regardless of address bar state.
+     flex-direction:column so .main fills remaining space. */
+  .app{
+    position:fixed;top:0;left:0;right:0;bottom:0;
+    display:flex;flex-direction:column;
+    width:auto;height:auto;overflow:hidden
+  }
 
-  /* Sidebar overlay drawer */
-  .sidebar{position:absolute;top:0;left:0;z-index:100;width:280px;min-width:280px;
-    height:100%;box-shadow:4px 0 24px rgba(0,0,0,0.5);
-    transform:translateX(0);transition:transform .25s ease}
-  .sidebar.collapsed{width:280px;min-width:280px;
-    transform:translateX(-100%);box-shadow:none;pointer-events:none}
-  .sidebar-backdrop{display:none;position:fixed;inset:0;z-index:99;
-    background:rgba(0,0,0,0.5);-webkit-tap-highlight-color:transparent}
+  /* Sidebar: fixed overlay drawer, hidden by default via transform */
+  .sidebar{
+    position:fixed;top:0;left:0;bottom:0;
+    width:280px;min-width:280px;z-index:100;
+    box-shadow:4px 0 24px rgba(0,0,0,0.5);
+    transform:translateX(0);transition:transform .25s ease;
+    overflow-y:auto
+  }
+  .sidebar.collapsed{
+    transform:translateX(-100%);box-shadow:none;pointer-events:none
+  }
+  .sidebar-backdrop{
+    display:none;position:fixed;inset:0;z-index:99;
+    background:rgba(0,0,0,0.5);-webkit-tap-highlight-color:transparent
+  }
   .sidebar-backdrop.visible{display:block}
 
-  /* Topbar compact */
-  .topbar{padding:10px 14px;gap:10px}
+  /* Main chat area — only in-flow child of .app, takes all space */
+  .main{
+    flex:1;display:flex;flex-direction:column;
+    min-height:0;min-width:0;width:100%;overflow:hidden
+  }
+
+  /* Topbar: fixed height, never shrinks */
+  .topbar{flex-shrink:0;padding:10px 14px;gap:10px}
   .topbar .bot-info .title{font-size:14px}
 
-  /* Chat bubbles */
-  .bubble{max-width:88%}
+  /* Messages: fills remaining space, scrolls independently */
+  .messages{
+    flex:1;min-height:0;overflow-y:auto;
+    padding:16px 12px;-webkit-overflow-scrolling:touch
+  }
 
-  /* Empty state */
-  .empty-state{padding:20px 16px}
+  /* Empty state: auto height so it never clips, centered via padding */
+  .empty-state{
+    height:auto;min-height:100%;padding:20px 16px;
+    justify-content:center
+  }
   .empty-state p{font-size:12px;max-width:300px}
   .suggestions{flex-direction:column;align-items:center}
   .suggestion{width:100%;max-width:260px;text-align:center}
 
-  /* Input */
+  /* Input area: pinned to bottom, never shrinks */
+  .input-area{
+    flex-shrink:0;padding:10px 12px;
+    padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))
+  }
   .input-row{border-radius:12px;padding:4px 4px 4px 12px}
   .input-row textarea{font-size:16px}
   .send-btn{width:36px;height:36px;border-radius:8px}
+
+  /* Chat bubbles */
+  .bubble{max-width:88%}
 
   /* Sidebar touch targets */
   .doc-item{padding:14px 12px}
@@ -1411,7 +1434,6 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
 @media(max-width:380px){
   .sidebar{width:100vw;min-width:100vw}
-  .sidebar.collapsed{width:100vw;min-width:100vw}
 }
 </style>
 </head>
