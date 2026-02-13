@@ -864,40 +864,44 @@ let apiConnected = false;
 function getKey(){ return document.getElementById('apikey').value.trim(); }
 function saveKey(){ const k=getKey(); if(k) localStorage.setItem('pdfhelper_apikey',k); }
 async function loadKey(){
-  // Try to reach the server — use /documents as a direct check
-  // (avoids depending on /health which can hang)
-  var savedKey=localStorage.getItem('pdfhelper_apikey');
+  // Check /health first to see if API key is even required
   try{
-    var h={};
-    if(savedKey) h['X-API-Key']=savedKey;
     var controller=new AbortController();
     var timer=setTimeout(function(){controller.abort();},8000);
-    var r=await fetch(API+'/documents',{headers:h,signal:controller.signal});
+    var hr=await fetch(API+'/health',{signal:controller.signal});
     clearTimeout(timer);
-    if(r.ok){
-      // No key needed, or saved key worked
-      apiConnected=true;
-      if(!savedKey){
+    if(hr.ok){
+      var hd=await hr.json();
+      if(!hd.api_key_required){
+        // No API key needed — hide the bar, mark connected
+        apiConnected=true;
         document.querySelector('.api-bar').style.display='none';
-        setApiStatus('Connected (no API key required)','connected');
-      } else {
-        document.getElementById('apikey').value=savedKey;
-        setApiStatus('Connected','connected');
+        return;
       }
-      return;
-    }
-    if(r.status===401){
-      // API key required
-      if(savedKey){
-        // Saved key is expired/invalid
-        localStorage.removeItem('pdfhelper_apikey');
-        setApiStatus('Saved API key expired — enter a new one','disconnected');
-      }
-      return;
     }
   }catch(e){}
-  // Fallback: try saved key via testConnection
-  if(savedKey){ document.getElementById('apikey').value=savedKey; testConnection(); }
+  // API key IS required — try saved key
+  var savedKey=localStorage.getItem('pdfhelper_apikey');
+  if(savedKey){
+    document.getElementById('apikey').value=savedKey;
+    try{
+      var controller2=new AbortController();
+      var timer2=setTimeout(function(){controller2.abort();},8000);
+      var r=await fetch(API+'/verify-key',{headers:{'X-API-Key':savedKey},signal:controller2.signal});
+      clearTimeout(timer2);
+      if(r.ok){
+        apiConnected=true;
+        setApiStatus('Connected','connected');
+        return;
+      }
+      // Saved key is invalid
+      localStorage.removeItem('pdfhelper_apikey');
+      document.getElementById('apikey').value='';
+      setApiStatus('Saved API key expired — enter a new one','disconnected');
+    }catch(e){
+      setApiStatus('Cannot reach server — retrying...','disconnected');
+    }
+  }
 }
 function headers(json){
   const h = {};
