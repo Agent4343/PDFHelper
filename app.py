@@ -793,21 +793,40 @@ let apiConnected = false;
 function getKey(){ return document.getElementById('apikey').value.trim(); }
 function saveKey(){ const k=getKey(); if(k) localStorage.setItem('pdfhelper_apikey',k); }
 async function loadKey(){
-  // Check if the server even requires an API key
+  // Try to reach the server — use /documents as a direct check
+  // (avoids depending on /health which can hang)
+  var savedKey=localStorage.getItem('pdfhelper_apikey');
   try{
-    const r=await fetch(API+'/health');
+    var h={};
+    if(savedKey) h['X-API-Key']=savedKey;
+    var controller=new AbortController();
+    var timer=setTimeout(function(){controller.abort();},8000);
+    var r=await fetch(API+'/documents',{headers:h,signal:controller.signal});
+    clearTimeout(timer);
     if(r.ok){
-      const h=await r.json();
-      if(!h.api_key_required){
-        apiConnected=true;
+      // No key needed, or saved key worked
+      apiConnected=true;
+      if(!savedKey){
         document.querySelector('.api-bar').style.display='none';
         setApiStatus('Connected (no API key required)','connected');
-        return;
+      } else {
+        document.getElementById('apikey').value=savedKey;
+        setApiStatus('Connected','connected');
       }
+      return;
+    }
+    if(r.status===401){
+      // API key required
+      if(savedKey){
+        // Saved key is expired/invalid
+        localStorage.removeItem('pdfhelper_apikey');
+        setApiStatus('Saved API key expired — enter a new one','disconnected');
+      }
+      return;
     }
   }catch(e){}
-  const k=localStorage.getItem('pdfhelper_apikey');
-  if(k){ document.getElementById('apikey').value=k; testConnection(); }
+  // Fallback: try saved key via testConnection
+  if(savedKey){ document.getElementById('apikey').value=savedKey; testConnection(); }
 }
 function headers(json){
   const h = {};
