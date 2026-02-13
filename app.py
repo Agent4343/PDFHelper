@@ -1351,11 +1351,14 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
 /* ---- Mobile ---- */
 @media(max-width:768px){
-  .app{position:relative}
+  /* Fixed positioning fills exactly the visible viewport,
+     avoiding the 100vh mobile-browser-chrome problem */
+  .app{position:fixed;top:0;left:0;right:0;bottom:0;
+    height:auto;width:auto}
 
   /* Sidebar becomes a full-height overlay drawer */
   .sidebar{position:absolute;top:0;left:0;z-index:100;width:280px;min-width:280px;
-    height:100dvh;height:100vh;box-shadow:4px 0 24px rgba(0,0,0,0.5);
+    height:100%;box-shadow:4px 0 24px rgba(0,0,0,0.5);
     transform:translateX(0);transition:transform .25s ease}
   .sidebar.collapsed{width:280px;min-width:280px;transform:translateX(-100%);box-shadow:none}
 
@@ -1365,7 +1368,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
   .sidebar-backdrop.visible{display:block}
 
   /* Main area takes full width */
-  .main{width:100vw}
+  .main{width:100%}
 
   /* Topbar compact */
   .topbar{padding:10px 14px;gap:10px}
