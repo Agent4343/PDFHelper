@@ -625,6 +625,52 @@ max-width:90%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
 padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-weight:500}
 /* Hide all pages, show active */
 .page{display:none}.page.active{display:block}
+/* Chat/Bot page */
+.main.chat-active{padding:0;overflow:hidden}
+.main.chat-active .page.active{display:flex;height:100%}
+.chat-page{display:flex;flex-direction:column;width:100%;height:100%}
+.chat-doc-bar{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:6px;
+  flex-wrap:wrap;align-items:center;flex-shrink:0}
+.chat-doc-bar .chat-doc-label{font-size:12px;color:var(--muted);font-weight:600;margin-right:4px}
+.chat-doc-chip{font-size:11px;padding:4px 10px;border-radius:16px;cursor:pointer;
+  border:1px solid var(--border);color:var(--muted);background:none;transition:all .15s}
+.chat-doc-chip:hover{border-color:var(--accent)}
+.chat-doc-chip.active{background:#3b82f618;border-color:#3b82f650;color:var(--accent)}
+.chat-msgs{flex:1;overflow-y:auto;padding:20px 24px;min-height:0}
+.chat-msg{display:flex;margin-bottom:14px}
+.chat-msg.user{justify-content:flex-end}
+.chat-msg.assistant{justify-content:flex-start}
+.chat-bbl{max-width:75%;padding:12px 16px;font-size:14px;line-height:1.6;word-break:break-word}
+.chat-msg.user .chat-bbl{background:var(--accent);color:#fff;border-radius:16px 16px 4px 16px}
+.chat-msg.assistant .chat-bbl{background:#1a2236;border:1px solid var(--border);
+  border-radius:16px 16px 16px 4px;color:var(--text)}
+.chat-bbl strong{color:#fff}
+.chat-typing{display:flex;margin-bottom:14px}
+.chat-typing-bbl{padding:12px 20px;border-radius:16px 16px 16px 4px;background:#1a2236;
+  border:1px solid var(--border);display:flex;gap:6px;align-items:center}
+.chat-tdot{width:8px;height:8px;border-radius:50%;background:var(--accent);
+  animation:cpulse 1.2s ease-in-out infinite}
+.chat-tdot:nth-child(2){animation-delay:0.2s}
+.chat-tdot:nth-child(3){animation-delay:0.4s}
+@keyframes cpulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+.chat-input-bar{padding:14px 20px;border-top:1px solid var(--border);
+  display:flex;gap:10px;align-items:flex-end;flex-shrink:0}
+.chat-input-bar textarea{flex:1;padding:10px 14px;background:#1a2236;border:1px solid var(--border);
+  border-radius:10px;color:var(--text);font-size:14px;font-family:inherit;resize:none;
+  outline:none;line-height:1.5;max-height:120px;overflow-y:auto}
+.chat-input-bar textarea:focus{border-color:var(--accent)}
+.chat-input-bar textarea::placeholder{color:var(--muted)}
+.chat-send{padding:10px 18px;background:var(--accent);color:#fff;border:none;border-radius:10px;
+  font-size:14px;font-weight:600;cursor:pointer;flex-shrink:0;transition:opacity .15s}
+.chat-send:disabled{opacity:0.4;cursor:not-allowed}
+.chat-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  height:100%;gap:14px;opacity:0.8}
+.chat-empty h3{font-size:18px;font-weight:600;margin-bottom:4px}
+.chat-empty p{font-size:13px;color:var(--muted);max-width:420px;text-align:center;line-height:1.6}
+.chat-sugs{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:6px}
+.chat-sug{background:#1a2236;border:1px solid var(--border);color:var(--muted);
+  padding:8px 14px;border-radius:20px;font-size:12px;cursor:pointer;transition:all .15s}
+.chat-sug:hover{border-color:var(--accent);color:var(--text)}
 /* Responsive */
 @media(max-width:768px){
 .sidebar{width:56px}
@@ -638,6 +684,14 @@ input[type=text],input[type=password],textarea{font-size:16px}
 .btn{padding:0.65rem 1rem;font-size:0.9rem}
 .drop-zone{padding:1.25rem}
 .stat{min-width:80px}
+.main.chat-active{padding:0}
+.chat-doc-bar{padding:8px 10px;gap:4px}
+.chat-msgs{padding:14px 10px}
+.chat-input-bar{padding:10px;gap:8px}
+.chat-input-bar textarea{font-size:16px;padding:8px 12px}
+.chat-bbl{max-width:90%}
+.chat-sugs{flex-direction:column;align-items:center}
+.chat-sug{width:100%;max-width:260px;text-align:center}
 }
 </style>
 </head>
@@ -667,9 +721,9 @@ input[type=text],input[type=password],textarea{font-size:16px}
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <span>History</span>
       </button>
-      <button onclick="window.location.href='/bot'" id="nav-bot" style="margin-top:auto;border-top:1px solid var(--border)">
+      <button onclick="showPage('bot')" id="nav-bot" style="margin-top:auto;border-top:1px solid var(--border)">
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
-        <span>Bot</span>
+        <span>AI Chat</span>
       </button>
     </nav>
     <div class="status" id="health-status"></div>
@@ -778,6 +832,23 @@ input[type=text],input[type=password],textarea{font-size:16px}
       <div id="history-reports" style="display:none">
         <button class="btn btn-secondary" onclick="loadReports()" style="margin-bottom:0.75rem">Load Reports</button>
         <div id="reports-list"></div>
+      </div>
+    </div>
+
+    <!-- AI Chat page -->
+    <div class="page" id="page-bot">
+      <div class="chat-page">
+        <div class="chat-doc-bar">
+          <span class="chat-doc-label">Documents:</span>
+          <div id="chat-doc-chips" style="display:inline;"></div>
+        </div>
+        <div class="chat-msgs" id="chat-msgs"></div>
+        <div class="chat-input-bar">
+          <textarea id="chat-input" rows="1" placeholder="Ask about your procedures..."
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();botSend()}"
+            oninput="chatAutoResize(this)"></textarea>
+          <button class="chat-send" id="chat-send-btn" onclick="botSend()">Send</button>
+        </div>
       </div>
     </div>
 
@@ -898,8 +969,10 @@ function showPage(name){
   document.getElementById('page-'+name).classList.add('active');
   document.querySelectorAll('.sidebar nav button').forEach(b=>b.classList.remove('active'));
   document.getElementById('nav-'+name).classList.add('active');
+  document.querySelector('.main').classList.toggle('chat-active',name==='bot');
   if(name==='documents') loadDocuments();
   if(name==='history') loadHistory();
+  if(name==='bot') initBot();
 }
 function toggleKeyVisibility(e){
   const inp=document.getElementById('apikey');
@@ -1220,16 +1293,154 @@ function esc(s){if(!s)return'';const d=document.createElement('div');d.textConte
 
 /* ---- Load saved API key on startup ---- */
 loadKey();
+
+/* ---- AI Chat (Bot) ---- */
+var botMessages=[];
+var botSending=false;
+var botSelectedIds=new Set();
+var botInited=false;
+
+async function initBot(){
+  /* If main app already loaded docs, reuse them */
+  if(!allDocs.length){
+    try{
+      const r=await fetch(API+'/documents',{headers:headers()});
+      if(r.ok){
+        const d=await r.json();
+        apiConnected=true;
+        allDocs=d.documents||[];
+        updateDocSelectors();
+      }
+    }catch(e){}
+  }
+  botSelectedIds=new Set(allDocs.map(d=>d.id));
+  renderBotDocChips();
+  /* Greet on first visit when docs exist */
+  if(!botInited && allDocs.length>0 && botMessages.length===0){
+    botInited=true;
+    var g='I found **'+allDocs.length+' procedure'+(allDocs.length>1?'s':'')+'** ready to go:\\n\\n';
+    allDocs.forEach(function(d,i){ g+=(i+1)+'. '+d.filename+'\\n'; });
+    g+='\\nAll procedures are selected. Ask me anything!';
+    botMessages.push({role:'assistant',content:g});
+  }
+  renderBotMessages();
+}
+
+function renderBotDocChips(){
+  var el=document.getElementById('chat-doc-chips');
+  if(!el) return;
+  if(!allDocs.length){
+    el.innerHTML='<span style="font-size:12px;color:var(--muted)">No documents yet. Upload on the Upload tab first.</span>';
+    return;
+  }
+  el.innerHTML=allDocs.map(function(d){
+    var sel=botSelectedIds.has(d.id);
+    return '<button class="chat-doc-chip'+(sel?' active':'')+'" onclick="toggleBotDoc(\''+d.id+'\')">'+esc(d.filename)+'</button>';
+  }).join('');
+}
+
+function toggleBotDoc(id){
+  if(botSelectedIds.has(id)) botSelectedIds.delete(id);
+  else botSelectedIds.add(id);
+  renderBotDocChips();
+}
+
+function renderBotMessages(){
+  var el=document.getElementById('chat-msgs');
+  if(!el) return;
+  if(!botMessages.length){
+    var sugHtml='<div class="chat-sugs">';
+    if(allDocs.length>0){
+      sugHtml+='<button class="chat-sug" onclick="botUseSug(this)">Summarize all loaded procedures</button>';
+      if(allDocs.length>1) sugHtml+='<button class="chat-sug" onclick="botUseSug(this)">Key differences between procedures?</button>';
+      allDocs.slice(0,2).forEach(function(d){
+        sugHtml+='<button class="chat-sug" onclick="botUseSug(this)">Main steps in '+esc(d.filename)+'?</button>';
+      });
+    } else {
+      sugHtml+='<button class="chat-sug" onclick="botUseSug(this)">What are the lockout steps?</button>';
+      sugHtml+='<button class="chat-sug" onclick="botUseSug(this)">Who approves SIMOPS?</button>';
+      sugHtml+='<button class="chat-sug" onclick="botUseSug(this)">What PPE is required?</button>';
+    }
+    sugHtml+='</div>';
+    el.innerHTML='<div class="chat-empty">'+
+      '<div style="width:56px;height:56px;border-radius:14px;background:#3b82f618;display:flex;align-items:center;justify-content:center">'+
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div>'+
+      '<div><h3>AI Assistant</h3><p>'+(allDocs.length>0
+        ?allDocs.length+' procedure'+(allDocs.length>1?'s':'')+' loaded and selected. Ask me anything about them!'
+        :'Upload procedures on the Upload tab, then come here to ask questions.')+'</p></div>'+
+      sugHtml+'</div>';
+    return;
+  }
+  var html='';
+  botMessages.forEach(function(m){
+    html+='<div class="chat-msg '+m.role+'"><div class="chat-bbl">'+botFmt(m.content)+'</div></div>';
+  });
+  if(botSending){
+    html+='<div class="chat-typing"><div class="chat-typing-bbl">'+
+      '<div class="chat-tdot"></div><div class="chat-tdot"></div><div class="chat-tdot"></div>'+
+      '</div></div>';
+  }
+  html+='<div id="chat-end"></div>';
+  el.innerHTML=html;
+  var ce=document.getElementById('chat-end');
+  if(ce) ce.scrollIntoView({behavior:'smooth'});
+}
+
+function botUseSug(btn){
+  var inp=document.getElementById('chat-input');
+  inp.value=btn.textContent;
+  chatAutoResize(inp);
+  inp.focus();
+}
+
+function chatAutoResize(el){
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,120)+'px';
+}
+
+async function botSend(){
+  var inp=document.getElementById('chat-input');
+  var text=inp.value.trim();
+  if(!text||botSending) return;
+  if(botSelectedIds.size===0){
+    botMessages.push({role:'user',content:text});
+    botMessages.push({role:'assistant',content:'No documents selected. Select at least one document from the bar above.'});
+    inp.value='';chatAutoResize(inp);renderBotMessages();return;
+  }
+  botMessages.push({role:'user',content:text});
+  inp.value='';chatAutoResize(inp);
+  botSending=true;
+  document.getElementById('chat-send-btn').disabled=true;
+  renderBotMessages();
+  try{
+    var body={message:text,doc_ids:[...botSelectedIds],conversation_history:botMessages.slice(0,-1).slice(-10)};
+    var r=await fetch(API+'/chat',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
+    var d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Request failed');
+    botMessages.push({role:'assistant',content:d.reply});
+  }catch(e){
+    botMessages.push({role:'assistant',content:'Error: '+e.message});
+  }
+  botSending=false;
+  document.getElementById('chat-send-btn').disabled=false;
+  renderBotMessages();
+}
+
+function botFmt(text){
+  var safe=esc(text);
+  safe=safe.replace(/[*][*](.+?)[*][*]/g,'<strong>$1</strong>');
+  safe=safe.replace(/^[-] (.+)/gm,'<li style="margin-left:16px;list-style:disc">$1</li>');
+  safe=safe.replace(/^(\\d+)[.] (.+)/gm,'<li style="margin-left:16px;list-style:decimal">$2</li>');
+  var nl=String.fromCharCode(10);
+  var parts=safe.split(nl+nl);
+  if(parts.length>1) return parts.map(function(p){return '<p style="margin:0 0 8px 0">'+p.split(nl).join('<br>')+'</p>';}).join('');
+  return '<p style="margin:0 0 8px 0">'+safe.split(nl).join('<br>')+'</p>';
+}
 </script>
 </body>
 </html>"""
 
-_BOT_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>PDFHelper — Procedure Bot</title>
+_BOT_REMOVED = """
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -2042,10 +2253,11 @@ async def root():
     return _ROOT_HTML
 
 
-@app.get("/bot", response_class=HTMLResponse)
+@app.get("/bot")
 async def bot_page():
-    """Procedure Knowledge Bot — chat with your uploaded documents."""
-    return _BOT_HTML
+    """Redirect old bot page to main app."""
+    from starlette.responses import RedirectResponse
+    return RedirectResponse(url="/", status_code=301)
 
 
 @app.post("/upload", dependencies=[Depends(verify_api_key)])
