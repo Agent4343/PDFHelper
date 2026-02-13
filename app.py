@@ -671,9 +671,17 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .chat-sug{background:#1a2236;border:1px solid var(--border);color:var(--muted);
   padding:8px 14px;border-radius:20px;font-size:12px;cursor:pointer;transition:all .15s}
 .chat-sug:hover{border-color:var(--accent);color:var(--text)}
+/* Top nav tabs */
+.top-nav{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:1.25rem;
+  flex-wrap:wrap;flex-shrink:0}
+.top-nav button{padding:0.6rem 1rem;background:none;border:none;color:var(--muted);
+  cursor:pointer;font-size:0.85rem;font-weight:500;border-bottom:2px solid transparent;
+  transition:all .15s;white-space:nowrap}
+.top-nav button:hover{color:var(--text);background:#ffffff08}
+.top-nav button.active{color:var(--accent);border-bottom-color:var(--accent)}
 /* Responsive */
 @media(max-width:768px){
-.sidebar{width:56px}
+.sidebar{display:none}
 .sidebar .logo span,.sidebar nav button span,.sidebar .status span{display:none}
 .sidebar nav button{justify-content:center;padding:0.75rem}
 .main{padding:1rem 0.75rem;height:100%}
@@ -731,6 +739,16 @@ input[type=text],input[type=password],textarea{font-size:16px}
 
   <!-- Main content -->
   <main class="main">
+
+    <!-- Top navigation tabs -->
+    <div class="top-nav" id="top-nav">
+      <button class="active" onclick="showPage('upload')" id="tn-upload">Upload</button>
+      <button onclick="showPage('documents')" id="tn-documents">Documents</button>
+      <button onclick="showPage('search')" id="tn-search">Search</button>
+      <button onclick="showPage('analyze')" id="tn-analyze">Analyze</button>
+      <button onclick="showPage('history')" id="tn-history">History</button>
+      <button onclick="showPage('bot')" id="tn-bot">AI Chat</button>
+    </div>
 
     <!-- API Key bar — hidden by default, shown only if server requires a key -->
     <div class="api-bar" id="api-bar" style="display:none">
@@ -971,9 +989,19 @@ function requireKey(errorContainerId){
 function showPage(name){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
+  /* Update sidebar nav */
   document.querySelectorAll('.sidebar nav button').forEach(b=>b.classList.remove('active'));
-  document.getElementById('nav-'+name).classList.add('active');
-  document.querySelector('.main').classList.toggle('chat-active',name==='bot');
+  var sideBtn=document.getElementById('nav-'+name);
+  if(sideBtn) sideBtn.classList.add('active');
+  /* Update top nav tabs */
+  document.querySelectorAll('.top-nav button').forEach(b=>b.classList.remove('active'));
+  var topBtn=document.getElementById('tn-'+name);
+  if(topBtn) topBtn.classList.add('active');
+  /* Chat layout toggle */
+  var m=document.querySelector('.main');
+  m.classList.toggle('chat-active',name==='bot');
+  /* Hide top-nav when in chat mode so chat gets full height */
+  document.getElementById('top-nav').style.display=(name==='bot')?'none':'';
   if(name==='documents') loadDocuments();
   if(name==='history') loadHistory();
   if(name==='bot') initBot();
