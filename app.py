@@ -1673,6 +1673,7 @@ document.addEventListener('visibilitychange',function(){
   if(!document.hidden && connected){ loadDocs(); }
 });
 
+var hasGreeted=false;
 function renderDocs(){
   const el=document.getElementById('doc-list');
   const actions=document.getElementById('doc-actions');
@@ -1693,6 +1694,17 @@ function renderDocs(){
       '<div class="pages">'+doc.pages+' pages</div></div></div>';
   }).join('');
   updateStatus();
+
+  /* First time documents load — greet the user with procedure list */
+  if(!hasGreeted && allDocs.length>0 && messages.length===0){
+    hasGreeted=true;
+    var names=allDocs.map(function(d){ return d.filename; });
+    var greeting='I found **'+allDocs.length+' procedure document'+(allDocs.length>1?'s':'')+'** ready to go:\n\n';
+    names.forEach(function(n,i){ greeting+=(i+1)+'. '+n+'\n'; });
+    greeting+='\nAll procedures are selected. Which one would you like to ask about, or ask me anything across all of them?';
+    messages.push({role:'assistant',content:greeting});
+    renderMessages();
+  }
 }
 
 function toggleDoc(id){
@@ -1886,14 +1898,34 @@ function createEmptyState(){
   const div=document.createElement('div');
   div.className='empty-state';
   div.id='empty-state';
+
+  var suggestionsHtml='';
+  if(allDocs.length>0){
+    /* Build suggestions based on actual loaded documents */
+    suggestionsHtml='<div class="suggestions">';
+    suggestionsHtml+='<button class="suggestion" onclick="useSuggestion(this)">Summarize all loaded procedures</button>';
+    if(allDocs.length>1){
+      suggestionsHtml+='<button class="suggestion" onclick="useSuggestion(this)">What are the key differences between these procedures?</button>';
+    }
+    allDocs.slice(0,2).forEach(function(d){
+      suggestionsHtml+='<button class="suggestion" onclick="useSuggestion(this)">What are the main steps in '+esc(d.filename.replace(/\\.pdf$/i,''))+'?</button>';
+    });
+    suggestionsHtml+='</div>';
+  } else {
+    suggestionsHtml='<div class="suggestions">'+
+      '<button class="suggestion" onclick="useSuggestion(this)">What are the lockout steps?</button>'+
+      '<button class="suggestion" onclick="useSuggestion(this)">Who approves SIMOPS?</button>'+
+      '<button class="suggestion" onclick="useSuggestion(this)">What PPE is required?</button></div>';
+  }
+
   div.innerHTML=
     '<div id="doc-status-banner"></div>'+
     '<div class="icon-box"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></div>'+
-    '<div><h3>Procedure Knowledge Bot</h3><p>Upload your procedure documents via the main app, select which ones to include, then ask questions. Answers come strictly from your data with source citations.</p></div>'+
-    '<div class="suggestions">'+
-    '<button class="suggestion" onclick="useSuggestion(this)">What are the lockout steps?</button>'+
-    '<button class="suggestion" onclick="useSuggestion(this)">Who approves SIMOPS?</button>'+
-    '<button class="suggestion" onclick="useSuggestion(this)">What PPE is required?</button></div>';
+    '<div><h3>Procedure Knowledge Bot</h3><p>'+(allDocs.length>0
+      ? allDocs.length+' procedure'+(allDocs.length>1?'s':'')+' loaded and selected. Ask me anything about them!'
+      : 'Upload your procedure documents via the main app, select which ones to include, then ask questions.')+
+    ' Answers come strictly from your data with source citations.</p></div>'+
+    suggestionsHtml;
   updateEmptyState();
   return div;
 }
