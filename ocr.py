@@ -3,9 +3,17 @@ OCR support for scanned PDFs.
 
 Uses PyMuPDF's built-in image extraction + Tesseract OCR to extract text
 from PDFs that contain scanned images instead of selectable text.
+
+Performance optimizations:
+- Parallel OCR processing using ThreadPoolExecutor
+- Per-page OCR decisions so mixed PDFs only OCR the pages that need it
+- Configurable DPI (lower = faster, higher = more accurate)
 """
 
 import io
+import os
+from concurrent.futures import ThreadPoolExecutor
+
 import fitz  # PyMuPDF
 
 try:
@@ -15,69 +23,80 @@ try:
 except ImportError:
     OCR_AVAILABLE = False
 
+# Configurable via environment variable. 200 is a good balance of speed vs accuracy.
+# 300 is higher quality but ~2x slower. 150 is fast but may miss small text.
+OCR_DPI = int(os.getenv("OCR_DPI", "200"))
 
-def needs_ocr(pages: list[dict]) -> bool:
-    """Check if extracted text is mostly empty — indicating a scanned PDF."""
-    if not pages:
-        return False
-    total_chars = sum(len(p["text"].strip()) for p in pages)
-    avg_chars_per_page = total_chars / len(pages)
-    # If average text per page is very low, it's likely scanned
-    return avg_chars_per_page < 50
+# Max threads for parallel OCR. Each page is OCR'd independently.
+OCR_WORKERS = int(os.getenv("OCR_WORKERS", "4"))
+
+# Pages with fewer than this many characters are considered "needs OCR"
+OCR_CHAR_THRESHOLD = 50
 
 
-def ocr_pdf_bytes(pdf_bytes: bytes) -> list[dict]:
-    """Run OCR on a PDF's pages by extracting images and running Tesseract.
+def _page_needs_ocr(text: str) -> bool:
+    """Check if a single page has too little text and likely needs OCR."""
+    return len(text.strip()) < OCR_CHAR_THRESHOLD
 
-    Returns list of {"page": int, "text": str} same format as regular extraction.
-    If Tesseract fails on individual pages, those pages get empty text rather
-    than discarding the entire result.
-    """
-    if not OCR_AVAILABLE:
-        return []
 
-    pages = []
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        page_text = ""
-
-        try:
-            # Render the page as an image and OCR it
-            # This handles both image-based and mixed PDFs
-            pix = page.get_pixmap(dpi=300)
-            img_bytes = pix.tobytes("png")
-            image = Image.open(io.BytesIO(img_bytes))
-            page_text = pytesseract.image_to_string(image)
-        except Exception:
-            # OCR failed for this page — keep going with empty text
-            page_text = ""
-
-        pages.append({"page": page_num + 1, "text": page_text})
-
-    doc.close()
-    return pages
+def _ocr_single_page(page_png_bytes: bytes) -> str:
+    """Run Tesseract OCR on a single page image. Thread-safe."""
+    try:
+        image = Image.open(io.BytesIO(page_png_bytes))
+        return pytesseract.image_to_string(image)
+    except Exception:
+        return ""
 
 
 def extract_text_with_ocr_fallback(pdf_bytes: bytes) -> list[dict]:
-    """Extract text normally, falling back to OCR if the PDF is scanned.
+    """Extract text from a PDF, using OCR only on pages that need it.
+
+    For mixed PDFs (some pages scanned, some with text), this only OCRs the
+    pages that have little or no extractable text — much faster than OCR'ing
+    the entire document.
 
     Returns list of {"page": int, "text": str}.
     """
-    # Try normal text extraction first
-    pages = []
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    for page_num in range(len(doc)):
+    page_count = len(doc)
+
+    # Step 1: Extract text from all pages normally (fast)
+    pages = []
+    ocr_needed_indices = []
+    for page_num in range(page_count):
         page = doc[page_num]
         text = page.get_text()
         pages.append({"page": page_num + 1, "text": text})
+        if _page_needs_ocr(text):
+            ocr_needed_indices.append(page_num)
+
+    # Step 2: If no pages need OCR, or OCR isn't available, return early
+    if not ocr_needed_indices or not OCR_AVAILABLE:
+        doc.close()
+        return pages
+
+    # Step 3: Render only the pages that need OCR to PNG images
+    # (done in main thread because PyMuPDF isn't thread-safe)
+    page_images = {}
+    for page_num in ocr_needed_indices:
+        try:
+            pix = doc[page_num].get_pixmap(dpi=OCR_DPI)
+            page_images[page_num] = pix.tobytes("png")
+        except Exception:
+            pass  # Skip pages that fail to render
+
     doc.close()
 
-    # If we got very little text, try OCR
-    if needs_ocr(pages) and OCR_AVAILABLE:
-        ocr_pages = ocr_pdf_bytes(pdf_bytes)
-        if ocr_pages:
-            return ocr_pages
+    # Step 4: Run Tesseract in parallel across the pages that need OCR
+    if page_images:
+        with ThreadPoolExecutor(max_workers=min(OCR_WORKERS, len(page_images))) as pool:
+            futures = {
+                page_num: pool.submit(_ocr_single_page, png_bytes)
+                for page_num, png_bytes in page_images.items()
+            }
+            for page_num, future in futures.items():
+                ocr_text = future.result()
+                if ocr_text.strip():
+                    pages[page_num]["text"] = ocr_text
 
     return pages

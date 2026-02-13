@@ -7,6 +7,7 @@ Used by both the web API (app.py) and the agent pipeline (agents.py).
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def keyword_search(pages: list[dict], search_terms: list[str],
@@ -34,30 +35,13 @@ def keyword_search(pages: list[dict], search_terms: list[str],
     return results
 
 
-def ai_search(pages: list[dict], query: str, filename: str) -> list[dict]:
-    """Use Claude AI to semantically search pages for concepts.
+def _build_batch_prompt(filename: str, query: str, batch: list[dict]) -> str:
+    """Build the AI search prompt for a batch of pages."""
+    page_texts = ""
+    for p in batch:
+        page_texts += f"\n--- PAGE {p['page']} ---\n{p['text']}\n"
 
-    Returns a list of findings with page, matched_text, reason, needs_review,
-    and suggestion fields.
-    """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not configured on server")
-
-    from anthropic import Anthropic
-    client = Anthropic(api_key=api_key)
-    results = []
-
-    batch_size = 5
-    for i in range(0, len(pages), batch_size):
-        batch = pages[i:i + batch_size]
-        page_texts = ""
-        for p in batch:
-            page_texts += f"\n--- PAGE {p['page']} ---\n{p['text']}\n"
-        if not page_texts.strip():
-            continue
-
-        prompt = f"""You are a document reviewer. Analyze the following PDF pages from "{filename}" and search for content related to this query:
+    return f"""You are a document reviewer. Analyze the following PDF pages from "{filename}" and search for content related to this query:
 
 QUERY: {query}
 
@@ -77,27 +61,74 @@ Instructions:
 If nothing relevant is found, respond with an empty array: []
 Respond with ONLY valid JSON, no other text."""
 
-        try:
-            response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=4096,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            response_text = response.content[0].text.strip()
-            if response_text.startswith("```"):
-                response_text = re.sub(r"^```(?:json)?\n?", "", response_text)
-                response_text = re.sub(r"\n?```$", "", response_text)
 
-            findings = json.loads(response_text)
-            for finding in findings:
-                results.append({
-                    "page": finding.get("page", "?"),
-                    "matched_text": finding.get("matched_text", ""),
-                    "reason": finding.get("reason", ""),
-                    "needs_review": finding.get("needs_review", False),
-                    "suggestion": finding.get("suggestion", ""),
-                })
-        except (json.JSONDecodeError, Exception):
+def _search_batch(client, prompt: str) -> list[dict]:
+    """Send a single batch to the AI and parse the response. Thread-safe."""
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = response.content[0].text.strip()
+        if response_text.startswith("```"):
+            response_text = re.sub(r"^```(?:json)?\n?", "", response_text)
+            response_text = re.sub(r"\n?```$", "", response_text)
+
+        findings = json.loads(response_text)
+        return [
+            {
+                "page": f.get("page", "?"),
+                "matched_text": f.get("matched_text", ""),
+                "reason": f.get("reason", ""),
+                "needs_review": f.get("needs_review", False),
+                "suggestion": f.get("suggestion", ""),
+            }
+            for f in findings
+        ]
+    except (json.JSONDecodeError, Exception):
+        return []
+
+
+def ai_search(pages: list[dict], query: str, filename: str) -> list[dict]:
+    """Use Claude AI to semantically search pages for concepts.
+
+    Sends page batches in parallel for faster results on large documents.
+
+    Returns a list of findings with page, matched_text, reason, needs_review,
+    and suggestion fields.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not configured on server")
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    # Build batches
+    batch_size = 5
+    batches = []
+    for i in range(0, len(pages), batch_size):
+        batch = pages[i:i + batch_size]
+        page_texts = "".join(p["text"] for p in batch)
+        if not page_texts.strip():
             continue
+        prompt = _build_batch_prompt(filename, query, batch)
+        batches.append(prompt)
+
+    if not batches:
+        return []
+
+    # Single batch — no need for threading overhead
+    if len(batches) == 1:
+        return _search_batch(client, batches[0])
+
+    # Multiple batches — run in parallel (up to 3 concurrent API calls)
+    results = []
+    max_workers = min(3, len(batches))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [pool.submit(_search_batch, client, prompt) for prompt in batches]
+        for future in as_completed(futures):
+            results.extend(future.result())
 
     return results
