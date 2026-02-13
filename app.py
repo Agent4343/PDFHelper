@@ -732,12 +732,12 @@ input[type=text],input[type=password],textarea{font-size:16px}
   <!-- Main content -->
   <main class="main">
 
-    <!-- API Key bar (persistent) -->
-    <div class="api-bar">
+    <!-- API Key bar — hidden by default, shown only if server requires a key -->
+    <div class="api-bar" id="api-bar" style="display:none">
       <div class="field">
         <label for="apikey">API Key</label>
         <input type="password" id="apikey" placeholder="Enter your PDF_HELPER_API_KEY" autocomplete="off">
-        <div class="api-status unchecked" id="api-status">Not connected — enter your API key and click Connect</div>
+        <div class="api-status unchecked" id="api-status">Enter your API key and click Connect</div>
       </div>
       <button class="btn btn-secondary" onclick="toggleKeyVisibility(event)">Show</button>
       <button class="btn btn-primary" onclick="testConnection()">Connect</button>
@@ -864,7 +864,8 @@ let apiConnected = false;
 function getKey(){ return document.getElementById('apikey').value.trim(); }
 function saveKey(){ const k=getKey(); if(k) localStorage.setItem('pdfhelper_apikey',k); }
 async function loadKey(){
-  // Check /health first to see if API key is even required
+  // Check /health to see if API key is even required
+  var bar=document.getElementById('api-bar');
   try{
     var controller=new AbortController();
     var timer=setTimeout(function(){controller.abort();},8000);
@@ -873,14 +874,14 @@ async function loadKey(){
     if(hr.ok){
       var hd=await hr.json();
       if(!hd.api_key_required){
-        // No API key needed — hide the bar, mark connected
+        // No API key needed — keep bar hidden, mark connected
         apiConnected=true;
-        document.querySelector('.api-bar').style.display='none';
         return;
       }
     }
   }catch(e){}
-  // API key IS required — try saved key
+  // API key IS required — show the bar
+  bar.style.display='';
   var savedKey=localStorage.getItem('pdfhelper_apikey');
   if(savedKey){
     document.getElementById('apikey').value=savedKey;
@@ -894,7 +895,6 @@ async function loadKey(){
         setApiStatus('Connected','connected');
         return;
       }
-      // Saved key is invalid
       localStorage.removeItem('pdfhelper_apikey');
       document.getElementById('apikey').value='';
       setApiStatus('Saved API key expired — enter a new one','disconnected');
@@ -942,7 +942,7 @@ async function testConnection(){
     } else {
       apiConnected=false;
       if(r.status===401){
-        setApiStatus('Key does not match the server\\'s PDF_HELPER_API_KEY','disconnected');
+        setApiStatus("Key does not match the server's PDF_HELPER_API_KEY",'disconnected');
         toast('Key mismatch — enter the exact PDF_HELPER_API_KEY value from your Railway environment variables','error');
       } else {
         const d=await r.json().catch(()=>({}));
