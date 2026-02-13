@@ -512,15 +512,16 @@ _ROOT_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>PDFHelper</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
+html{height:100vh;height:-webkit-fill-available;height:100dvh}
 :root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;
 --accent:#3b82f6;--green:#22c55e;--red:#ef4444;--orange:#f59e0b;--code:#0d1117}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-background:var(--bg);color:var(--text);line-height:1.6}
-.app{display:flex;height:100vh}
+background:var(--bg);color:var(--text);line-height:1.6;height:100%}
+.app{display:flex;height:100%}
 /* Sidebar */
 .sidebar{width:220px;background:var(--card);border-right:1px solid var(--border);
 display:flex;flex-direction:column;flex-shrink:0}
@@ -626,9 +627,19 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 /* Hide all pages, show active */
 .page{display:none}.page.active{display:block}
 /* Responsive */
-@media(max-width:768px){.sidebar{width:56px}.sidebar .logo span,.sidebar nav button span,
-.sidebar .status span{display:none}.sidebar nav button{justify-content:center;padding:0.75rem}
-.main{padding:1.25rem}}
+@media(max-width:768px){
+.sidebar{width:56px}
+.sidebar .logo span,.sidebar nav button span,.sidebar .status span{display:none}
+.sidebar nav button{justify-content:center;padding:0.75rem}
+.main{padding:1rem 0.75rem}
+.api-bar{flex-direction:column;align-items:stretch}
+.api-bar .field{width:100%}
+.api-bar .btn{width:100%;justify-content:center}
+input[type=text],input[type=password],textarea{font-size:16px}
+.btn{padding:0.65rem 1rem;font-size:0.9rem}
+.drop-zone{padding:1.25rem}
+.stat{min-width:80px}
+}
 </style>
 </head>
 <body>
@@ -1207,6 +1218,7 @@ _BOT_HTML = """<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
+html{height:100vh;height:-webkit-fill-available;height:100dvh}
 :root{
   --bg:#0a0e17;--surface:#111827;--surface-light:#1a2236;
   --border:#1e293b;--border-active:#3b82f6;
@@ -1216,10 +1228,9 @@ _BOT_HTML = """<!DOCTYPE html>
   --white:#ffffff;--danger:#ef4444;
 }
 body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
-  background:var(--bg);color:var(--text);overflow:hidden;
-  height:100vh;height:100dvh}
+  background:var(--bg);color:var(--text);overflow:hidden;height:100%}
 
-.app{display:flex;height:100vh;height:100dvh;width:100vw}
+.app{display:flex;height:100%;width:100%}
 
 /* ---- Sidebar ---- */
 .sidebar{width:320px;min-width:320px;background:var(--surface);
@@ -1351,10 +1362,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
 /* ---- Mobile ---- */
 @media(max-width:768px){
-  /* Fixed positioning fills exactly the visible viewport,
-     avoiding the 100vh mobile-browser-chrome problem */
-  .app{position:fixed;top:0;left:0;right:0;bottom:0;
-    height:auto;width:auto}
+  .app{position:relative}
 
   /* Sidebar becomes a full-height overlay drawer */
   .sidebar{position:absolute;top:0;left:0;z-index:100;width:280px;min-width:280px;
@@ -1800,19 +1808,12 @@ function esc(s){if(!s)return '';const d=document.createElement('div');d.textCont
 
 /* ---- Mobile keyboard handling ---- */
 if(isMobile()){
-  /* When input is focused, scroll chat to bottom after keyboard opens */
   document.getElementById('chat-input').addEventListener('focus',function(){
     setTimeout(function(){
       var end=document.getElementById('chat-end');
       if(end) end.scrollIntoView({behavior:'smooth'});
     },350);
   });
-  /* Use visualViewport to adjust layout when keyboard opens */
-  if(window.visualViewport){
-    window.visualViewport.addEventListener('resize',function(){
-      document.documentElement.style.height=window.visualViewport.height+'px';
-    });
-  }
 }
 </script>
 </body>
