@@ -1292,7 +1292,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 .back-link a:hover{color:var(--primary)}
 
 /* ---- Main chat ---- */
-.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
 
 .topbar{padding:14px 24px;border-bottom:1px solid var(--border);
   display:flex;align-items:center;gap:14px;background:var(--surface)}
@@ -1306,7 +1306,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 .clear-btn:hover{border-color:var(--primary);color:var(--white)}
 
 /* Messages */
-.messages{flex:1;overflow-y:auto;padding:24px}
+.messages{flex:1;overflow-y:auto;padding:24px;min-height:0}
 .empty-state{display:flex;flex-direction:column;align-items:center;
   justify-content:center;height:100%;gap:16px;opacity:0.7}
 .empty-state .icon-box{width:64px;height:64px;border-radius:16px;
@@ -1362,7 +1362,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
 /* ---- Mobile ---- */
 @media(max-width:768px){
-  .app{position:relative}
+  .app{position:relative;flex-direction:column;overflow:hidden}
 
   /* Sidebar becomes a full-height overlay drawer */
   .sidebar{position:absolute;top:0;left:0;z-index:100;width:280px;min-width:280px;
@@ -1383,7 +1383,7 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
   .topbar .bot-info .title{font-size:14px}
 
   /* Messages */
-  .messages{padding:16px 12px}
+  .messages{padding:16px 12px;-webkit-overflow-scrolling:touch}
   .bubble{max-width:88%}
 
   /* Empty state */
