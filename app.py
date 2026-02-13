@@ -1463,13 +1463,16 @@ body{font-family:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
 
     <!-- Document list -->
     <div class="doc-list" id="doc-list">
-      <div class="doc-empty" id="doc-empty">Loading documents...</div>
+      <div class="doc-empty" id="doc-empty">Connecting to server...</div>
     </div>
 
-    <!-- Select all / none -->
+    <!-- Select all / none / refresh -->
     <div class="doc-actions" id="doc-actions" style="display:none">
       <button onclick="selectAll()">Select All</button>
       <button onclick="deselectAll()">Deselect All</button>
+    </div>
+    <div class="doc-actions">
+      <button onclick="loadDocs()" style="width:100%">&#8635; Refresh Documents</button>
     </div>
 
     <!-- Back link -->
@@ -1585,7 +1588,7 @@ function hdrs(json){
 
 /* Auto-load: check if API key is needed */
 (function(){
-  fetch(API+'/health').then(r=>r.json()).then(d=>{
+  fetch(API+'/health').then(function(r){ return r.json(); }).then(function(d){
     if(!d.api_key_required){
       // No key needed — connect directly
       connected=true;
@@ -1601,15 +1604,34 @@ function hdrs(json){
         '<div class="doc-empty">Enter your API key above to load documents.</div>';
     }
   }).catch(function(){
-    // Can't reach server — show key section as fallback
-    document.getElementById('api-section').style.display='';
-    document.getElementById('doc-list').innerHTML=
-      '<div class="doc-empty">Cannot reach server. Check your connection.</div>';
-    updateEmptyState();
+    // Can't reach server — try again after 3s, then show error with retry
+    setTimeout(function(){
+      fetch(API+'/health').then(function(r){ return r.json(); }).then(function(d){
+        if(!d.api_key_required){
+          connected=true;
+          loadDocs();
+        } else {
+          document.getElementById('api-section').style.display='';
+          var k=localStorage.getItem('pdfhelper_apikey');
+          if(k){document.getElementById('apikey').value=k;connectKey();}
+          else{
+            document.getElementById('doc-list').innerHTML=
+              '<div class="doc-empty">Enter your API key above to load documents.</div>';
+          }
+        }
+      }).catch(function(){
+        document.getElementById('api-section').style.display='';
+        document.getElementById('doc-list').innerHTML=
+          '<div class="doc-empty">Cannot reach server.<br>'+
+          '<button onclick="location.reload()" style="margin-top:8px;padding:6px 14px;background:var(--primary);color:var(--white);border:none;border-radius:6px;font-size:12px;cursor:pointer">Reload Page</button></div>';
+        updateEmptyState();
+      });
+    },3000);
   });
 })();
 
 /* ---- Documents ---- */
+var loadDocsRetries=0;
 function loadDocs(){
   if(!connected) return;
   docsLoading=true;
@@ -1624,15 +1646,32 @@ function loadDocs(){
       allDocs=d.documents||[];
       selectedIds=new Set(allDocs.map(function(doc){return doc.id;}));
       docsLoading=false;
+      loadDocsRetries=0;
       renderDocs();
     })
     .catch(function(e){
       docsLoading=false;
-      document.getElementById('doc-list').innerHTML=
-        '<div class="doc-empty">Failed to load documents: '+esc(e.message)+'</div>';
+      loadDocsRetries++;
+      if(loadDocsRetries<3){
+        // Auto-retry with backoff
+        var delay=loadDocsRetries*2000;
+        document.getElementById('doc-list').innerHTML=
+          '<div class="doc-empty">Retrying in '+Math.round(delay/1000)+'s...</div>';
+        setTimeout(loadDocs,delay);
+      } else {
+        loadDocsRetries=0;
+        document.getElementById('doc-list').innerHTML=
+          '<div class="doc-empty">Failed to load documents: '+esc(e.message)+
+          '<br><button onclick="loadDocs()" style="margin-top:8px;padding:6px 14px;background:var(--primary);color:var(--white);border:none;border-radius:6px;font-size:12px;cursor:pointer">Retry</button></div>';
+      }
       updateEmptyState();
     });
 }
+
+/* Auto-reload documents when user switches back to this tab */
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden && connected){ loadDocs(); }
+});
 
 function renderDocs(){
   const el=document.getElementById('doc-list');
