@@ -1206,6 +1206,92 @@ async def upload_drawing(
     }
 
 
+@app.post("/drawings/upload-batch", dependencies=[Depends(verify_api_key)])
+async def upload_drawings_batch(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    equipment_tags: str = Query(default="", description="Comma-separated equipment tags shared across all drawings"),
+    description: str = Query(default="", description="Shared description for these drawings"),
+    db=Depends(get_db),
+):
+    """Upload multiple P&ID drawings at once. Each file gets its filename as the title and drawing number."""
+    if len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(status_code=400, detail=f"Max {MAX_FILES_PER_REQUEST} files per request.")
+
+    uploaded = []
+    errors = []
+
+    for file in files:
+        try:
+            content = await file.read()
+            if len(content) > MAX_FILE_SIZE:
+                errors.append({"filename": file.filename, "error": f"File too large. Max {MAX_FILE_SIZE // (1024*1024)}MB."})
+                continue
+
+            drawing_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc)
+
+            fname = (file.filename or "drawing.pdf").strip()
+            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+
+            # Save encrypted file
+            safe_name = re.sub(r"[^\w.\-]", "_", fname)
+            dest = UPLOAD_DIR / f"{drawing_id}_{safe_name}"
+            if ENCRYPTION_KEY:
+                from encryption import encrypt_bytes
+                dest.write_bytes(encrypt_bytes(content))
+            else:
+                dest.write_bytes(content)
+
+            # Extract text if PDF
+            text_content = "[]"
+            page_count = 1
+            if ext == "pdf":
+                try:
+                    pages = extract_text_from_bytes(content)
+                    text_content = json.dumps(pages)
+                    page_count = len(pages)
+                except Exception:
+                    pass
+
+            # Use filename (without extension) as default title
+            default_title = fname.rsplit(".", 1)[0] if "." in fname else fname
+
+            drawing = DBDrawing(
+                id=drawing_id,
+                filename=_encrypt_text(fname),
+                filepath=_encrypt_text(str(dest)),
+                title=_encrypt_text(default_title),
+                drawing_number=_encrypt_text(default_title),
+                equipment_tags=_encrypt_text(equipment_tags) if equipment_tags else None,
+                description=_encrypt_text(description) if description else None,
+                page_count=page_count,
+                text_content=_encrypt_text(text_content),
+                uploaded_at=now,
+            )
+            db.add(drawing)
+            db.commit()
+
+            log_upload(request, drawing_id, fname, len(content))
+
+            uploaded.append({
+                "id": drawing_id,
+                "filename": fname,
+                "title": default_title,
+                "page_count": page_count,
+                "uploaded_at": now.isoformat(),
+            })
+        except Exception as e:
+            errors.append({"filename": file.filename or "unknown", "error": str(e)})
+
+    return {
+        "uploaded": uploaded,
+        "errors": errors,
+        "total_uploaded": len(uploaded),
+        "total_errors": len(errors),
+    }
+
+
 @app.get("/drawings", dependencies=[Depends(verify_api_key)])
 async def list_drawings(db=Depends(get_db)):
     """List all uploaded P&ID drawings."""
