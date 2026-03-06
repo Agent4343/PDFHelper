@@ -261,6 +261,31 @@ def _sanitize_filename(filename: str) -> str:
     return name or "unnamed.pdf"
 
 
+def _validate_filepath(filepath: Path) -> Path:
+    """Validate that a filepath is within UPLOAD_DIR. Prevents path traversal."""
+    try:
+        resolved = filepath.resolve()
+        if not resolved.is_relative_to(UPLOAD_DIR.resolve()):
+            raise ValueError(f"Path escapes upload directory: {filepath}")
+        if resolved.is_symlink():
+            raise ValueError(f"Symlinks not allowed: {filepath}")
+        return resolved
+    except (OSError, ValueError):
+        raise
+
+
+def _safe_unlink(filepath: Path) -> None:
+    """Safely delete a file, handling race conditions (TOCTOU)."""
+    try:
+        validated = _validate_filepath(filepath)
+        validated.unlink()
+    except FileNotFoundError:
+        pass  # Already deleted — not an error
+    except ValueError:
+        import logging
+        logging.getLogger("pdfhelper").warning("Blocked path traversal attempt: %s", filepath)
+
+
 PDF_MAGIC_BYTES = b"%PDF-"
 
 
@@ -357,9 +382,7 @@ def _run_cleanup(db) -> int:
     old_docs = db.query(DBDocument).filter(DBDocument.uploaded_at < cutoff).all()
     count = 0
     for doc in old_docs:
-        filepath = Path(doc.filepath)
-        if filepath.exists():
-            filepath.unlink()
+        _safe_unlink(Path(doc.filepath))
         db.delete(doc)
         count += 1
     if count:
@@ -752,9 +775,7 @@ async def delete_document(doc_id: str, request: Request, db=Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    filepath = Path(doc.filepath)
-    if filepath.exists():
-        filepath.unlink()
+    _safe_unlink(Path(doc.filepath))
 
     log_delete(_get_client_ip(request), doc_id, _decrypt_text(doc.filename))
 
@@ -1232,7 +1253,7 @@ async def upload_drawing(
     ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
 
     # Save encrypted file
-    safe_name = re.sub(r"[^\w.\-]", "_", fname)
+    safe_name = _sanitize_filename(fname) if fname else "drawing"
     dest = UPLOAD_DIR / f"{drawing_id}_{safe_name}"
     if ENCRYPTION_KEY:
         from encryption import encrypt_bytes
@@ -1308,7 +1329,7 @@ async def upload_drawings_batch(
             ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
 
             # Save encrypted file
-            safe_name = re.sub(r"[^\w.\-]", "_", fname)
+            safe_name = _sanitize_filename(fname) if fname else "drawing"
             dest = UPLOAD_DIR / f"{drawing_id}_{safe_name}"
             if ENCRYPTION_KEY:
                 from encryption import encrypt_bytes
@@ -1394,9 +1415,7 @@ async def delete_drawing(drawing_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=404, detail="Drawing not found")
     # Delete file
     try:
-        fpath = Path(_decrypt_text(drawing.filepath))
-        if fpath.exists():
-            fpath.unlink()
+        _safe_unlink(Path(_decrypt_text(drawing.filepath)))
     except Exception:
         pass
     db.delete(drawing)
@@ -1491,7 +1510,7 @@ async def generate_isolation(
                 if d.id not in selected_ids:
                     continue
                 try:
-                    fpath = Path(_decrypt_text(d.filepath))
+                    fpath = _validate_filepath(Path(_decrypt_text(d.filepath)))
                     if ENCRYPTION_KEY:
                         from encryption import decrypt_bytes as dec_bytes
                         raw = dec_bytes(fpath.read_bytes())

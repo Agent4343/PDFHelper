@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+from pathlib import Path
 import pytest
 from unittest.mock import MagicMock
 
@@ -9,7 +10,10 @@ from unittest.mock import MagicMock
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import _sanitize_filename, _verify_pdf_content, _get_client_ip, PDF_MAGIC_BYTES
+from app import (
+    _sanitize_filename, _verify_pdf_content, _get_client_ip, PDF_MAGIC_BYTES,
+    _validate_filepath, _safe_unlink, UPLOAD_DIR,
+)
 
 
 class TestSanitizeFilename:
@@ -90,3 +94,42 @@ class TestContentHash:
         h1 = hashlib.sha256(b"content A").hexdigest()
         h2 = hashlib.sha256(b"content B").hexdigest()
         assert h1 != h2
+
+
+class TestValidateFilepath:
+    def test_valid_path_in_upload_dir(self):
+        path = UPLOAD_DIR / "test_file.pdf"
+        # Create a temp file to resolve against
+        path.touch()
+        try:
+            result = _validate_filepath(path)
+            assert result.is_relative_to(UPLOAD_DIR.resolve())
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_path_traversal_blocked(self):
+        evil_path = UPLOAD_DIR / ".." / ".." / "etc" / "passwd"
+        with pytest.raises(ValueError, match="escapes upload directory"):
+            _validate_filepath(evil_path)
+
+    def test_absolute_path_outside_upload_dir(self):
+        with pytest.raises(ValueError, match="escapes upload directory"):
+            _validate_filepath(Path("/etc/passwd"))
+
+
+class TestSafeUnlink:
+    def test_deletes_valid_file(self):
+        path = UPLOAD_DIR / "test_delete_me.tmp"
+        path.write_bytes(b"data")
+        _safe_unlink(path)
+        assert not path.exists()
+
+    def test_missing_file_no_error(self):
+        path = UPLOAD_DIR / "nonexistent_file.tmp"
+        # Should not raise
+        _safe_unlink(path)
+
+    def test_traversal_blocked(self):
+        evil_path = UPLOAD_DIR / ".." / ".." / "etc" / "passwd"
+        # Should not raise, but should log warning and not delete
+        _safe_unlink(evil_path)
