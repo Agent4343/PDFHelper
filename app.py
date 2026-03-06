@@ -14,6 +14,7 @@ Security features:
 - Auto-cleanup of old files
 """
 
+import hashlib
 import json
 import os
 import re
@@ -600,12 +601,15 @@ async def upload_pdfs(
         # Encrypt and save
         _encrypt_and_save(content, save_path)
 
+        content_hash = hashlib.sha256(content).hexdigest()
+
         db_doc = DBDocument(
             id=doc_id,
             filename=_encrypt_text(clean_name),
             filepath=str(save_path),
             page_count=len(pages),
             text_content=_encrypt_text(json.dumps(pages)),
+            content_hash=content_hash,
             uploaded_at=datetime.now(timezone.utc),
         )
         db.add(db_doc)
@@ -1041,6 +1045,58 @@ async def analyze_documents(
 
     client_ip = _get_client_ip(request)
 
+    # Build a cache key from document content hashes + analysis parameters
+    # This lets us skip re-analysis when the same documents are analyzed
+    # with the same compliance context (search is fast enough to always re-run)
+    doc_hashes = sorted(d.content_hash or d.id for d in documents)
+    cache_key_input = json.dumps({
+        "hashes": doc_hashes,
+        "compliance_context": body.compliance_context,
+    }, sort_keys=True)
+    cache_key = hashlib.sha256(cache_key_input.encode()).hexdigest()
+
+    # Check for a cached analysis with the same content + parameters
+    cached_report = (
+        db.query(DBAnalysisReport)
+        .filter(DBAnalysisReport.cache_key == cache_key)
+        .order_by(DBAnalysisReport.analyzed_at.desc())
+        .first()
+    )
+    if cached_report:
+        cached_analysis = json.loads(_decrypt_text(cached_report.report_data))
+        # Re-run search if requested (cheap), but reuse the cached analysis
+        if body.search_terms or body.ai_query:
+            docs_for_agents: dict[str, list[dict]] = {}
+            for doc in documents:
+                decrypted_name = _decrypt_text(doc.filename)
+                pages = json.loads(_decrypt_text(doc.text_content))
+                docs_for_agents[decrypted_name] = pages
+            from search import keyword_search, ai_search
+            search_results = {"keyword_results": [], "ai_results": []}
+            for filename, pages in docs_for_agents.items():
+                if body.search_terms:
+                    kw_matches = keyword_search(pages, body.search_terms)
+                    for m in kw_matches:
+                        m["filename"] = filename
+                    search_results["keyword_results"].extend(kw_matches)
+                if body.ai_query:
+                    import asyncio
+                    ai_matches = await asyncio.to_thread(ai_search, pages, body.ai_query, filename)
+                    for m in ai_matches:
+                        m["filename"] = filename
+                    search_results["ai_results"].extend(ai_matches)
+            cached_analysis["search_results"] = search_results
+
+        return {
+            "report_id": cached_report.id,
+            "cached": True,
+            "report": cached_analysis.get("report"),
+            "document_analyses": cached_analysis.get("document_analyses"),
+            "cross_reference_findings": cached_analysis.get("cross_reference_findings"),
+            "compliance_findings": cached_analysis.get("compliance_findings"),
+            "search_results": cached_analysis.get("search_results"),
+        }
+
     # Build documents dict for the agent pipeline
     docs_for_agents: dict[str, list[dict]] = {}
     for doc in documents:
@@ -1071,6 +1127,7 @@ async def analyze_documents(
         total_issues=analysis.get("report", {}).get("total_issues_found", 0),
         critical_issues=analysis.get("report", {}).get("critical_issues", 0),
         risk_level=analysis.get("report", {}).get("overall_risk_level", "unknown"),
+        cache_key=cache_key,
         analyzed_at=datetime.now(timezone.utc),
     )
     db.add(db_report)
@@ -1079,14 +1136,18 @@ async def analyze_documents(
     log_search(client_ip, report_id, body.search_terms, body.ai_query,
                len(documents), db_report.total_issues, db_report.critical_issues)
 
-    return {
+    response = {
         "report_id": report_id,
+        "cached": False,
         "report": analysis.get("report"),
         "document_analyses": analysis.get("document_analyses"),
         "cross_reference_findings": analysis.get("cross_reference_findings"),
         "compliance_findings": analysis.get("compliance_findings"),
         "search_results": analysis.get("search_results"),
     }
+    if analysis.get("warnings"):
+        response["warnings"] = analysis["warnings"]
+    return response
 
 
 @app.get("/reports", dependencies=[Depends(verify_api_key)])

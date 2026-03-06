@@ -38,6 +38,7 @@ class DBDocument(Base):
     filepath = Column(String, nullable=False)
     page_count = Column(Integer, nullable=False)
     text_content = Column(Text, nullable=False)  # JSON of extracted pages
+    content_hash = Column(String, nullable=True)  # SHA-256 of PDF bytes for cache lookups
     uploaded_at = Column(DateTime, nullable=False)
 
 
@@ -66,6 +67,7 @@ class DBAnalysisReport(Base):
     total_issues = Column(Integer, default=0)
     critical_issues = Column(Integer, default=0)
     risk_level = Column(String, nullable=True)
+    cache_key = Column(String, nullable=True, index=True)  # SHA-256 of doc hashes + params
     analyzed_at = Column(DateTime, nullable=False)
 
 

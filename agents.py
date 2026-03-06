@@ -120,6 +120,58 @@ def _build_page_text(pages: list[dict], budget: int = _AGENT_TEXT_BUDGET) -> str
     return "".join(parts)
 
 
+# Pages-per-chunk threshold. Documents larger than this get split into
+# chunks that are analyzed independently then merged. Keeps each API call
+# well within context limits.
+_CHUNK_PAGE_LIMIT = 60
+
+
+def _merge_analysis_results(chunks: list[dict], filename: str) -> dict:
+    """Merge multiple chunk analyses into a single document analysis."""
+    merged = {
+        "title": "",
+        "type": "",
+        "topics": [],
+        "key_dates": [],
+        "current_revision": "",
+        "key_references": [],
+        "regulatory_references": [],
+        "sections": [],
+        "roles_identified": [],
+        "summary": "",
+    }
+    summaries = []
+
+    for chunk in chunks:
+        if chunk.get("error"):
+            continue
+        # Take the first non-empty title/type/revision
+        if not merged["title"] and chunk.get("title"):
+            merged["title"] = chunk["title"]
+        if not merged["type"] and chunk.get("type"):
+            merged["type"] = chunk["type"]
+        if not merged["current_revision"] and chunk.get("current_revision"):
+            merged["current_revision"] = chunk["current_revision"]
+
+        # Merge lists, deduplicating
+        for list_key in ("topics", "key_dates", "key_references",
+                         "regulatory_references", "sections", "roles_identified"):
+            for item in chunk.get(list_key, []):
+                if item and item not in merged[list_key]:
+                    merged[list_key].append(item)
+
+        if chunk.get("summary"):
+            summaries.append(chunk["summary"])
+
+    # Combine chunk summaries
+    if len(summaries) == 1:
+        merged["summary"] = summaries[0]
+    elif summaries:
+        merged["summary"] = " ".join(summaries[:3])  # Keep it concise
+
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # Agent: Document Analyzer
 # ---------------------------------------------------------------------------
@@ -127,8 +179,25 @@ def _build_page_text(pages: list[dict], budget: int = _AGENT_TEXT_BUDGET) -> str
 def document_analysis_agent(filename: str, pages: list[dict]) -> dict:
     """Deeply analyze a single document — structure, topics, key findings.
 
+    For large documents (>60 pages), splits into chunks, analyzes each
+    independently, then merges the results.
+
     Returns a structured summary of what the document contains.
     """
+    # Split large documents into chunks
+    if len(pages) > _CHUNK_PAGE_LIMIT:
+        chunks = []
+        for i in range(0, len(pages), _CHUNK_PAGE_LIMIT):
+            chunk_pages = pages[i:i + _CHUNK_PAGE_LIMIT]
+            chunk_result = _analyze_document_chunk(filename, chunk_pages, i // _CHUNK_PAGE_LIMIT + 1)
+            chunks.append(chunk_result)
+        return _merge_analysis_results(chunks, filename)
+
+    return _analyze_document_chunk(filename, pages)
+
+
+def _analyze_document_chunk(filename: str, pages: list[dict], chunk_num: int | None = None) -> dict:
+    """Analyze a chunk of pages from a document."""
     page_text = _build_page_text(pages)
 
     system = """You are a document analysis specialist. Your job is to deeply
@@ -238,9 +307,25 @@ def compliance_agent(filename: str, pages: list[dict],
     """Check a document for compliance issues — outdated regulations,
     missing required language, policy gaps.
 
+    For large documents (>60 pages), splits into chunks and merges findings.
+
     compliance_context: optional user-provided context like
     "Check against OSHA 2024 standards" or "FDA 21 CFR Part 11"
     """
+    if len(pages) > _CHUNK_PAGE_LIMIT:
+        all_findings = []
+        for i in range(0, len(pages), _CHUNK_PAGE_LIMIT):
+            chunk_pages = pages[i:i + _CHUNK_PAGE_LIMIT]
+            findings = _compliance_check_chunk(filename, chunk_pages, compliance_context)
+            all_findings.extend(findings)
+        return all_findings
+
+    return _compliance_check_chunk(filename, pages, compliance_context)
+
+
+def _compliance_check_chunk(filename: str, pages: list[dict],
+                            compliance_context: str | None = None) -> list[dict]:
+    """Run compliance check on a chunk of pages."""
     page_text = _build_page_text(pages)
 
     context_instruction = ""
@@ -367,6 +452,9 @@ def run_full_analysis(
 
     Returns the complete analysis with all agent outputs merged.
     """
+    # Track any agent errors so the caller can surface them
+    warnings = []
+
     # Steps 1 & 3: Run document analysis and compliance checks in parallel
     # (each document is independent, so all calls can run concurrently)
     doc_analyses = []
@@ -387,14 +475,26 @@ def run_full_analysis(
         # Collect document analysis results
         for future in as_completed(analysis_futures):
             filename = analysis_futures[future]
-            analysis = future.result()
+            try:
+                analysis = future.result()
+            except Exception as exc:
+                logger.error("Document analysis crashed for %s", filename, exc_info=True)
+                analysis = {"error": f"Analysis failed: {exc}"}
+                warnings.append(f"Document analysis failed for {filename}")
+            if "error" in analysis:
+                warnings.append(f"Document analysis incomplete for {filename}: {analysis['error']}")
             analysis["filename"] = filename
             doc_analyses.append(analysis)
 
         # Collect compliance results
         for future in as_completed(compliance_futures):
             filename = compliance_futures[future]
-            findings = future.result()
+            try:
+                findings = future.result()
+            except Exception as exc:
+                logger.error("Compliance check crashed for %s", filename, exc_info=True)
+                findings = []
+                warnings.append(f"Compliance check failed for {filename}")
             if findings:
                 compliance_findings[filename] = findings
 
@@ -429,18 +529,31 @@ def run_full_analysis(
     with ThreadPoolExecutor(max_workers=2) as pool:
         cross_ref_future = pool.submit(_run_cross_ref)
         search_future = pool.submit(_run_search)
-        cross_ref_findings = cross_ref_future.result()
-        search_results = search_future.result()
+        try:
+            cross_ref_findings = cross_ref_future.result()
+        except Exception as exc:
+            logger.error("Cross-reference check crashed", exc_info=True)
+            cross_ref_findings = []
+            warnings.append(f"Cross-reference check failed: {exc}")
+        try:
+            search_results = search_future.result()
+        except Exception as exc:
+            logger.error("Search crashed", exc_info=True)
+            search_results = None
+            warnings.append(f"Search failed: {exc}")
 
     # Step 5: Generate summary report
     report = summary_report_agent(
         doc_analyses, cross_ref_findings, compliance_findings, search_results,
     )
 
-    return {
+    result = {
         "report": report,
         "document_analyses": doc_analyses,
         "cross_reference_findings": cross_ref_findings,
         "compliance_findings": compliance_findings,
         "search_results": search_results,
     }
+    if warnings:
+        result["warnings"] = warnings
+    return result
