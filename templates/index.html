@@ -242,6 +242,10 @@ input[type=text],input[type=password],textarea{font-size:16px}
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <span>History</span>
       </button>
+      <button onclick="showPage('isointel')" id="nav-isointel" style="border-top:1px solid var(--border)">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span>IsoIntel</span>
+      </button>
       <button onclick="showPage('bot')" id="nav-bot" style="margin-top:auto;border-top:1px solid var(--border)">
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
         <span>AI Chat</span>
@@ -260,6 +264,7 @@ input[type=text],input[type=password],textarea{font-size:16px}
       <button onclick="showPage('search')" id="tn-search">Search</button>
       <button onclick="showPage('analyze')" id="tn-analyze">Analyze</button>
       <button onclick="showPage('history')" id="tn-history">History</button>
+      <button onclick="showPage('isointel')" id="tn-isointel">IsoIntel</button>
       <button onclick="showPage('bot')" id="tn-bot">AI Chat</button>
     </div>
 
@@ -367,6 +372,91 @@ input[type=text],input[type=password],textarea{font-size:16px}
     </div>
 
     <!-- AI Chat page -->
+    <!-- IsoIntel page -->
+    <div class="page" id="page-isointel">
+      <h2>IsoIntel — Isolation Package Generator</h2>
+
+      <!-- Drawing Management -->
+      <div class="card">
+        <h3>P&ID Drawings</h3>
+        <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.75rem">Upload your P&ID drawings (PDF or images). The AI reads these to trace flow paths and identify isolation points.</p>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">
+          <input type="file" id="drawing-file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none">
+          <button class="btn btn-secondary" onclick="document.getElementById('drawing-file').click()">Select Drawing</button>
+          <input type="text" id="drawing-title" placeholder="Drawing title (e.g. Crude Oil Separation P&ID)" style="flex:1;min-width:200px">
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">
+          <input type="text" id="drawing-number" placeholder="Drawing number (e.g. HEB-PID-1234)" style="flex:1">
+          <input type="text" id="drawing-tags" placeholder="Equipment tags (comma-separated, e.g. HB-P-1001A, HB-V-1001)" style="flex:1">
+        </div>
+        <input type="text" id="drawing-desc" placeholder="Description (e.g. 1st stage separation system)" style="margin-bottom:0.75rem">
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <button class="btn btn-primary" id="upload-drawing-btn" onclick="uploadDrawing()">Upload Drawing</button>
+          <span id="drawing-file-name" style="font-size:0.82rem;color:var(--muted)"></span>
+        </div>
+        <div id="drawing-list" style="margin-top:1rem"><p style="color:var(--muted);font-size:0.85rem">No drawings uploaded yet.</p></div>
+      </div>
+
+      <!-- Generate Isolation -->
+      <div class="card">
+        <h3>Generate Isolation Package</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+          <div>
+            <label for="iso-equip">Equipment / Tag</label>
+            <input type="text" id="iso-equip" placeholder="e.g. HB-P-1001A">
+          </div>
+          <div>
+            <label for="iso-worktype">Work Type</label>
+            <select id="iso-worktype" style="width:100%;padding:0.55rem 0.75rem;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.88rem">
+              <option value="MAINTENANCE">Maintenance</option>
+              <option value="HOT WORK">Hot Work</option>
+              <option value="CONFINED SPACE ENTRY">Confined Space Entry</option>
+              <option value="PRESSURE TEST">Pressure Test</option>
+              <option value="INSPECTION">Inspection</option>
+              <option value="EQUIPMENT REMOVAL">Equipment Removal</option>
+              <option value="ELECTRICAL ISOLATION">Electrical Isolation</option>
+              <option value="INSTRUMENT MAINTENANCE">Instrument Maintenance</option>
+            </select>
+          </div>
+          <div style="grid-column:1/-1">
+            <label for="iso-work">Work Description</label>
+            <textarea id="iso-work" rows="2" placeholder="Describe the work to be performed, e.g. Replace mechanical seal on crude oil transfer pump"></textarea>
+          </div>
+          <div>
+            <label for="iso-fluid">Fluid Service</label>
+            <input type="text" id="iso-fluid" placeholder="e.g. Crude Oil, HC Gas, Produced Water" value="Crude Oil">
+          </div>
+          <div>
+            <label for="iso-facility">Facility</label>
+            <input type="text" id="iso-facility" placeholder="e.g. Hebron" value="Hebron">
+          </div>
+          <div style="grid-column:1/-1">
+            <label for="iso-special">Special Requirements</label>
+            <input type="text" id="iso-special" placeholder="e.g. H2S service, NORM suspected, pyrophoric scale" value="None">
+          </div>
+        </div>
+        <div style="margin-top:0.75rem">
+          <label>Drawing Selection</label>
+          <div id="iso-drawing-chips" style="margin-bottom:0.5rem;font-size:0.82rem;color:var(--muted)">Auto-select (AI will choose relevant drawings)</div>
+        </div>
+        <button class="btn btn-primary" id="iso-generate-btn" onclick="generateIsolation()" style="margin-top:0.75rem">Generate Isolation Package</button>
+      </div>
+
+      <!-- Output -->
+      <div class="card" id="iso-output-card" style="display:none">
+        <h3 id="iso-output-title">Generating...</h3>
+        <div id="iso-status" style="font-size:0.85rem;color:var(--accent);margin-bottom:0.75rem"></div>
+        <div id="iso-output" style="white-space:pre-wrap;font-family:monospace;font-size:0.82rem;line-height:1.7;max-height:70vh;overflow-y:auto;background:var(--code);padding:1rem;border-radius:6px;border:1px solid var(--border)"></div>
+      </div>
+
+      <!-- Past Isolations -->
+      <div class="card">
+        <h3>Past Isolation Packages</h3>
+        <button class="btn btn-secondary" onclick="loadIsolations()" style="margin-bottom:0.75rem">Refresh</button>
+        <div id="iso-history"><p style="color:var(--muted);font-size:0.85rem">Click Refresh to load past isolations.</p></div>
+      </div>
+    </div>
+
     <div class="page" id="page-bot">
       <div class="chat-layout">
         <div class="chat-sessions">
@@ -524,6 +614,7 @@ function showPage(name){
   m.classList.toggle('chat-active',name==='bot');
   if(name==='documents') loadDocuments();
   if(name==='history') loadHistory();
+  if(name==='isointel') initIsoIntel();
   if(name==='bot') initBot();
 }
 function toggleKeyVisibility(e){
@@ -1117,6 +1208,284 @@ function botFmt(text){
   var parts=safe.split(nl+nl);
   if(parts.length>1) return parts.map(function(p){return '<p style="margin:0 0 8px 0">'+p.split(nl).join('<br>')+'</p>';}).join('');
   return '<p style="margin:0 0 8px 0">'+safe.split(nl).join('<br>')+'</p>';
+}
+
+/* ================================================================
+   IsoIntel — Drawing Management & Isolation Generation
+   ================================================================ */
+var isoInitDone=false;
+var isoDrawings=[];
+var isoSelectedDrawingIds=[];
+
+function initIsoIntel(){
+  if(!isoInitDone){
+    isoInitDone=true;
+    document.getElementById('drawing-file').addEventListener('change',function(){
+      var f=this.files[0];
+      document.getElementById('drawing-file-name').textContent=f?f.name:'';
+    });
+  }
+  loadDrawings();
+}
+
+async function loadDrawings(){
+  try{
+    var r=await fetch(API+'/drawings',{headers:headers()});
+    var d=await r.json();
+    isoDrawings=d.drawings||[];
+    renderDrawingList();
+    renderDrawingChips();
+  }catch(e){
+    document.getElementById('drawing-list').innerHTML='<p style="color:var(--red);font-size:0.85rem">Failed to load drawings.</p>';
+  }
+}
+
+function renderDrawingList(){
+  var el=document.getElementById('drawing-list');
+  if(!isoDrawings.length){
+    el.innerHTML='<p style="color:var(--muted);font-size:0.85rem">No drawings uploaded yet.</p>';
+    return;
+  }
+  var html='<table style="width:100%;font-size:0.82rem;border-collapse:collapse">';
+  html+='<tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 8px;color:var(--muted)">Title</th><th style="text-align:left;padding:4px 8px;color:var(--muted)">Drawing #</th><th style="text-align:left;padding:4px 8px;color:var(--muted)">Tags</th><th style="padding:4px 8px;color:var(--muted)">Actions</th></tr>';
+  isoDrawings.forEach(function(d){
+    html+='<tr style="border-bottom:1px solid var(--border)">';
+    html+='<td style="padding:4px 8px">'+esc(d.title||d.filename)+'</td>';
+    html+='<td style="padding:4px 8px">'+esc(d.drawing_number||'-')+'</td>';
+    html+='<td style="padding:4px 8px;font-size:0.78rem;color:var(--muted)">'+esc(d.equipment_tags||'-')+'</td>';
+    html+='<td style="padding:4px 8px;text-align:center"><button class="btn btn-danger" style="padding:2px 8px;font-size:0.75rem" onclick="deleteDrawing(\''+d.id+'\')">Delete</button></td>';
+    html+='</tr>';
+  });
+  html+='</table>';
+  el.innerHTML=html;
+}
+
+function renderDrawingChips(){
+  var el=document.getElementById('iso-drawing-chips');
+  if(!isoDrawings.length){
+    el.innerHTML='<span style="color:var(--muted)">No drawings available — upload P&IDs first</span>';
+    return;
+  }
+  isoSelectedDrawingIds=[];
+  var html='<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;cursor:pointer"><input type="radio" name="iso-draw-mode" value="auto" checked onchange="isoSelectedDrawingIds=[];renderDrawingCheckboxes()"> Auto-select (AI chooses)</label>';
+  html+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="iso-draw-mode" value="manual" onchange="renderDrawingCheckboxes()"> Manual select</label>';
+  html+='<div id="iso-draw-checks" style="margin-top:6px"></div>';
+  el.innerHTML=html;
+}
+
+function renderDrawingCheckboxes(){
+  var mode=document.querySelector('input[name="iso-draw-mode"]:checked').value;
+  var el=document.getElementById('iso-draw-checks');
+  if(mode==='auto'){el.innerHTML='';isoSelectedDrawingIds=[];return;}
+  var html='';
+  isoDrawings.forEach(function(d){
+    html+='<label style="display:flex;align-items:center;gap:6px;margin:4px 0;font-size:0.82rem;cursor:pointer">';
+    html+='<input type="checkbox" value="'+d.id+'" onchange="updateIsoDrawingIds()">';
+    html+=esc(d.title||d.filename);
+    if(d.drawing_number) html+=' <span style="color:var(--muted)">('+esc(d.drawing_number)+')</span>';
+    html+='</label>';
+  });
+  el.innerHTML=html;
+}
+
+function updateIsoDrawingIds(){
+  isoSelectedDrawingIds=[];
+  document.querySelectorAll('#iso-draw-checks input:checked').forEach(function(cb){
+    isoSelectedDrawingIds.push(cb.value);
+  });
+}
+
+async function uploadDrawing(){
+  var fileEl=document.getElementById('drawing-file');
+  if(!fileEl.files.length){toast('Select a drawing file first','var(--red)');return;}
+  var f=fileEl.files[0];
+  var title=document.getElementById('drawing-title').value.trim();
+  var num=document.getElementById('drawing-number').value.trim();
+  var tags=document.getElementById('drawing-tags').value.trim();
+  var desc=document.getElementById('drawing-desc').value.trim();
+
+  var btn=document.getElementById('upload-drawing-btn');
+  btn.disabled=true;btn.textContent='Uploading...';
+
+  try{
+    var fd=new FormData();
+    fd.append('file',f);
+    var params=new URLSearchParams();
+    if(title) params.set('title',title);
+    if(num) params.set('drawing_number',num);
+    if(tags) params.set('equipment_tags',tags);
+    if(desc) params.set('description',desc);
+
+    var h={};var k=getKey();if(k) h['X-API-Key']=k;
+    var r=await fetch(API+'/drawings/upload?'+params.toString(),{method:'POST',headers:h,body:fd});
+    var d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Upload failed');
+    toast('Drawing uploaded: '+d.filename,'var(--green)');
+    fileEl.value='';
+    document.getElementById('drawing-file-name').textContent='';
+    document.getElementById('drawing-title').value='';
+    document.getElementById('drawing-number').value='';
+    document.getElementById('drawing-tags').value='';
+    document.getElementById('drawing-desc').value='';
+    loadDrawings();
+  }catch(e){
+    toast('Error: '+e.message,'var(--red)');
+  }
+  btn.disabled=false;btn.textContent='Upload Drawing';
+}
+
+async function deleteDrawing(id){
+  if(!confirm('Delete this drawing?')) return;
+  try{
+    var r=await fetch(API+'/drawings/'+id,{method:'DELETE',headers:headers()});
+    if(!r.ok) throw new Error('Delete failed');
+    toast('Drawing deleted','var(--green)');
+    loadDrawings();
+  }catch(e){toast('Error: '+e.message,'var(--red)');}
+}
+
+var isoGenerating=false;
+
+async function generateIsolation(){
+  if(isoGenerating) return;
+  var equip=document.getElementById('iso-equip').value.trim();
+  var work=document.getElementById('iso-work').value.trim();
+  if(!equip||!work){toast('Enter equipment tag and work description','var(--red)');return;}
+  if(!isoDrawings.length){toast('Upload P&ID drawings first','var(--red)');return;}
+
+  isoGenerating=true;
+  var btn=document.getElementById('iso-generate-btn');
+  btn.disabled=true;btn.textContent='Generating...';
+
+  var outCard=document.getElementById('iso-output-card');
+  outCard.style.display='';
+  document.getElementById('iso-output-title').textContent='Generating Isolation Package...';
+  document.getElementById('iso-status').textContent='Initializing...';
+  document.getElementById('iso-output').textContent='';
+
+  var body={
+    equipment_tag:equip,
+    work_description:work,
+    work_type:document.getElementById('iso-worktype').value,
+    fluid_service:document.getElementById('iso-fluid').value.trim()||'Not specified',
+    special_requirements:document.getElementById('iso-special').value.trim()||'None',
+    facility:document.getElementById('iso-facility').value.trim()||'Hebron',
+    regime:'C-NLOPB / C-NLOER',
+    drawing_ids:isoSelectedDrawingIds
+  };
+
+  try{
+    var r=await fetch(API+'/isolations/generate',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
+    if(!r.ok){
+      var errData=await r.json().catch(function(){return {};});
+      throw new Error(errData.detail||'Request failed ('+r.status+')');
+    }
+
+    var reader=r.body.getReader();
+    var decoder=new TextDecoder();
+    var buffer='';
+    var fullText='';
+    var certNum='';
+
+    while(true){
+      var result=await reader.read();
+      if(result.done) break;
+      buffer+=decoder.decode(result.value,{stream:true});
+      var lines=buffer.split('\n');
+      buffer=lines.pop()||'';
+      for(var i=0;i<lines.length;i++){
+        var line=lines[i].trim();
+        if(!line.startsWith('data: ')) continue;
+        try{
+          var evt=JSON.parse(line.substring(6));
+          if(evt.type==='status'){
+            document.getElementById('iso-status').textContent=evt.message;
+          } else if(evt.type==='pass1_result'){
+            document.getElementById('iso-status').textContent='Pass 1 complete — selected '+evt.drawing_ids.length+' drawings: '+evt.drawing_titles.join(', ');
+          } else if(evt.type==='meta'){
+            certNum=evt.cert_number||'';
+            document.getElementById('iso-output-title').textContent='Isolation Package — '+certNum;
+          } else if(evt.type==='chunk'){
+            fullText+=evt.text;
+            document.getElementById('iso-output').textContent=fullText;
+            document.getElementById('iso-output').scrollTop=document.getElementById('iso-output').scrollHeight;
+          } else if(evt.type==='done'){
+            document.getElementById('iso-status').textContent='Complete — saved to database';
+            /* Try to pretty-print JSON */
+            try{
+              var parsed=JSON.parse(fullText);
+              document.getElementById('iso-output').textContent=JSON.stringify(parsed,null,2);
+            }catch(pe){}
+          } else if(evt.type==='error'){
+            document.getElementById('iso-status').innerHTML='<span style="color:var(--red)">Error: '+esc(evt.detail)+'</span>';
+          }
+        }catch(pe){}
+      }
+    }
+  }catch(e){
+    document.getElementById('iso-status').innerHTML='<span style="color:var(--red)">Error: '+esc(e.message)+'</span>';
+  }
+
+  isoGenerating=false;
+  btn.disabled=false;btn.textContent='Generate Isolation Package';
+}
+
+async function loadIsolations(){
+  try{
+    var r=await fetch(API+'/isolations',{headers:headers()});
+    var d=await r.json();
+    var isos=d.isolations||[];
+    var el=document.getElementById('iso-history');
+    if(!isos.length){el.innerHTML='<p style="color:var(--muted);font-size:0.85rem">No isolation packages yet.</p>';return;}
+
+    var html='<table style="width:100%;font-size:0.82rem;border-collapse:collapse">';
+    html+='<tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 8px;color:var(--muted)">Cert #</th><th style="text-align:left;padding:4px 8px;color:var(--muted)">Equipment</th><th style="text-align:left;padding:4px 8px;color:var(--muted)">Work Type</th><th style="text-align:left;padding:4px 8px;color:var(--muted)">Hazard</th><th style="text-align:left;padding:4px 8px;color:var(--muted)">Points</th><th style="text-align:left;padding:4px 8px;color:var(--muted)">Date</th><th style="padding:4px 8px;color:var(--muted)">Actions</th></tr>';
+    isos.forEach(function(p){
+      var hazColor=p.hazard_classification==='HIGH'?'var(--red)':p.hazard_classification==='MEDIUM'?'var(--orange)':'var(--green)';
+      html+='<tr style="border-bottom:1px solid var(--border)">';
+      html+='<td style="padding:4px 8px;font-family:monospace">'+esc(p.cert_number)+'</td>';
+      html+='<td style="padding:4px 8px">'+esc(p.equipment_tag)+'</td>';
+      html+='<td style="padding:4px 8px">'+esc(p.work_type)+'</td>';
+      html+='<td style="padding:4px 8px;color:'+hazColor+'">'+esc(p.hazard_classification||'-')+'</td>';
+      html+='<td style="padding:4px 8px">'+p.valve_count+' valves, '+p.blind_count+' blinds</td>';
+      html+='<td style="padding:4px 8px">'+new Date(p.created_at).toLocaleDateString()+'</td>';
+      html+='<td style="padding:4px 8px;text-align:center"><button class="btn btn-secondary" style="padding:2px 8px;font-size:0.75rem" onclick="viewIsolation(\''+p.id+'\')">View</button> <button class="btn btn-danger" style="padding:2px 8px;font-size:0.75rem" onclick="deleteIsolation(\''+p.id+'\')">Delete</button></td>';
+      html+='</tr>';
+    });
+    html+='</table>';
+    el.innerHTML=html;
+  }catch(e){
+    document.getElementById('iso-history').innerHTML='<p style="color:var(--red);font-size:0.85rem">Failed to load isolations.</p>';
+  }
+}
+
+async function viewIsolation(id){
+  try{
+    var r=await fetch(API+'/isolations/'+id,{headers:headers()});
+    var d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Not found');
+
+    var outCard=document.getElementById('iso-output-card');
+    outCard.style.display='';
+    document.getElementById('iso-output-title').textContent='Isolation Package — '+d.cert_number;
+    document.getElementById('iso-status').textContent=d.equipment_tag+' | '+d.work_type+' | '+d.hazard_classification+' | '+new Date(d.created_at).toLocaleString();
+    try{
+      document.getElementById('iso-output').textContent=JSON.stringify(d.package,null,2);
+    }catch(e2){
+      document.getElementById('iso-output').textContent=JSON.stringify(d,null,2);
+    }
+    outCard.scrollIntoView({behavior:'smooth'});
+  }catch(e){toast('Error: '+e.message,'var(--red)');}
+}
+
+async function deleteIsolation(id){
+  if(!confirm('Delete this isolation package?')) return;
+  try{
+    var r=await fetch(API+'/isolations/'+id,{method:'DELETE',headers:headers()});
+    if(!r.ok) throw new Error('Delete failed');
+    toast('Isolation deleted','var(--green)');
+    loadIsolations();
+  }catch(e){toast('Error: '+e.message,'var(--red)');}
 }
 </script>
 </body>
