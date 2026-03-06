@@ -8,9 +8,36 @@ Pass 2: Full isolation generation (vision-enabled, reads P&ID images + rules)
 import json
 import logging
 import os
+import re
 import time
 
 logger = logging.getLogger("pdfhelper.isointel")
+
+
+# ---------------------------------------------------------------------------
+# Input sanitization — mitigate prompt injection from user-supplied fields
+# ---------------------------------------------------------------------------
+
+# Allowed media types for drawing images
+_ALLOWED_MEDIA_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+# Max size for a single base64 image (~10 MB decoded)
+_MAX_IMAGE_B64_LEN = 14_000_000
+
+
+def _sanitize_prompt_input(value: str, max_length: int = 5000) -> str:
+    """Sanitize user input before inserting into AI prompts.
+
+    Strips control characters and common prompt injection patterns while
+    preserving legitimate technical content (equipment tags, descriptions).
+    """
+    if not value:
+        return value
+    # Truncate to max length
+    value = value[:max_length]
+    # Strip null bytes and other control chars (keep newlines, tabs)
+    value = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', value)
+    return value
 
 # Model constants — configurable via environment
 PASS1_MODEL = os.getenv("ISOINTEL_PASS1_MODEL", "claude-sonnet-4-5-20250929")
@@ -382,9 +409,11 @@ OUTPUT_SCHEMA = """{
 def build_system_prompt(facility: str, regime: str, facility_rules: str = "") -> str:
     """Build the full system prompt with facility-specific variables."""
     return SYSTEM_PROMPT_TEMPLATE.format(
-        facility=facility or "the facility",
-        regime=regime or "C-NLOPB / C-NLOER",
-        facility_rules=facility_rules or "No facility-specific rules documents uploaded.",
+        facility=_sanitize_prompt_input(facility or "the facility", 200),
+        regime=_sanitize_prompt_input(regime or "C-NLOPB / C-NLOER", 200),
+        facility_rules=_sanitize_prompt_input(
+            facility_rules or "No facility-specific rules documents uploaded.", 50000
+        ),
     )
 
 
@@ -394,11 +423,11 @@ def run_pass1(client, drawings_metadata: list[dict], job: dict) -> list[str]:
     Returns a list of up to 4 drawing IDs relevant to the isolation.
     """
     prompt = PASS1_PROMPT_TEMPLATE.format(
-        equipment_tag=job["equipment_tag"],
-        work_description=job["work_description"],
-        work_type=job["work_type"],
-        fluid_service=job.get("fluid_service", "Not specified"),
-        drawing_metadata_json=json.dumps(drawings_metadata, indent=2),
+        equipment_tag=_sanitize_prompt_input(job["equipment_tag"], 200),
+        work_description=_sanitize_prompt_input(job["work_description"], 5000),
+        work_type=_sanitize_prompt_input(job["work_type"], 100),
+        fluid_service=_sanitize_prompt_input(job.get("fluid_service", "Not specified"), 200),
+        drawing_metadata_json=json.dumps(drawings_metadata, indent=2)[:50000],
     )
 
     logger.info("Pass 1: searching %d drawings for %s", len(drawings_metadata), job["equipment_tag"])
@@ -462,26 +491,33 @@ def run_pass2_stream(client, job: dict, drawing_images: list[dict],
         n_drawings=len(drawing_images),
         drawing_list=drawing_list,
         rules_note=rules_note,
-        equipment_tag=job["equipment_tag"],
-        work_description=job["work_description"],
-        work_type=job["work_type"],
-        fluid_service=job.get("fluid_service", "Not specified"),
-        special_requirements=job.get("special_requirements", "None"),
-        facility=facility or "Offshore facility",
-        regime=regime or "C-NLOPB / C-NLOER",
-        cert_number=cert_number,
+        equipment_tag=_sanitize_prompt_input(job["equipment_tag"], 200),
+        work_description=_sanitize_prompt_input(job["work_description"], 5000),
+        work_type=_sanitize_prompt_input(job["work_type"], 100),
+        fluid_service=_sanitize_prompt_input(job.get("fluid_service", "Not specified"), 200),
+        special_requirements=_sanitize_prompt_input(job.get("special_requirements", "None"), 5000),
+        facility=_sanitize_prompt_input(facility or "Offshore facility", 200),
+        regime=_sanitize_prompt_input(regime or "C-NLOPB / C-NLOER", 200),
+        cert_number=_sanitize_prompt_input(cert_number, 100),
         output_schema=OUTPUT_SCHEMA,
     )
 
     # Build the multimodal content: images first, then text
     content_blocks = []
     for d in drawing_images:
+        media_type = d.get("media_type", "image/png")
+        if media_type not in _ALLOWED_MEDIA_TYPES:
+            media_type = "image/png"
+        image_data = d["image_b64"]
+        if len(image_data) > _MAX_IMAGE_B64_LEN:
+            logger.warning("Skipping oversized drawing image (%d bytes)", len(image_data))
+            continue
         content_blocks.append({
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": d.get("media_type", "image/png"),
-                "data": d["image_b64"],
+                "media_type": media_type,
+                "data": image_data,
             },
         })
     content_blocks.append({"type": "text", "text": user_text})

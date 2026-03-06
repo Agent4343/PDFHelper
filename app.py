@@ -381,30 +381,31 @@ def _run_cleanup_background():
 # ---------------------------------------------------------------------------
 
 class SearchRequest(BaseModel):
-    search_terms: list[str] = Field(default=[], description="Exact keywords to search")
-    ai_query: str | None = Field(default=None, description="AI concept search query")
+    search_terms: list[str] = Field(default=[], max_length=50, description="Exact keywords to search")
+    ai_query: str | None = Field(default=None, max_length=2000, description="AI concept search query")
     case_sensitive: bool = False
 
 
 class AnalyzeRequest(BaseModel):
     compliance_context: str | None = Field(
         default=None,
+        max_length=2000,
         description="Optional compliance standard to check against, e.g. 'OSHA 2024', 'HIPAA', 'FDA 21 CFR Part 11'",
     )
-    search_terms: list[str] = Field(default=[], description="Optional keywords to search for")
-    ai_query: str | None = Field(default=None, description="Optional AI concept search query")
+    search_terms: list[str] = Field(default=[], max_length=50, description="Optional keywords to search for")
+    ai_query: str | None = Field(default=None, max_length=2000, description="Optional AI concept search query")
 
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"] = Field(description="'user' or 'assistant'")
-    content: str
+    content: str = Field(max_length=50000)
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(description="The user's message")
-    doc_ids: list[str] = Field(default=[], description="Document IDs to use as context (empty = all)")
-    conversation_history: list[ChatMessage] = Field(default=[], description="Previous messages for context")
-    session_id: str | None = Field(default=None, description="Chat session ID to continue (omit to create new)")
+    message: str = Field(max_length=10000, description="The user's message")
+    doc_ids: list[str] = Field(default=[], max_length=100, description="Document IDs to use as context (empty = all)")
+    conversation_history: list[ChatMessage] = Field(default=[], max_length=200, description="Previous messages for context")
+    session_id: str | None = Field(default=None, max_length=100, description="Chat session ID to continue (omit to create new)")
 
 
 class HealthResponse(BaseModel):
@@ -414,15 +415,22 @@ class HealthResponse(BaseModel):
     warnings: list[str] = []
 
 
+# Valid work types for isolation requests
+_VALID_WORK_TYPES = {
+    "MAINTENANCE", "HOT WORK", "CONFINED SPACE ENTRY", "PRESSURE TEST",
+    "INSPECTION", "EQUIPMENT REMOVAL", "ELECTRICAL ISOLATION", "INSTRUMENT MAINTENANCE",
+}
+
+
 class IsolationRequest(BaseModel):
-    equipment_tag: str = Field(description="Equipment tag, e.g. HB-P-1001A")
-    work_description: str = Field(description="Description of work to be performed")
-    work_type: str = Field(description="MAINTENANCE, HOT WORK, CONFINED SPACE ENTRY, PRESSURE TEST, INSPECTION, EQUIPMENT REMOVAL, ELECTRICAL ISOLATION, INSTRUMENT MAINTENANCE")
-    fluid_service: str = Field(default="Not specified", description="Fluid service, e.g. Crude Oil, HC Gas, Produced Water")
-    special_requirements: str = Field(default="None", description="Any special requirements")
-    facility: str = Field(default="Hebron", description="Facility name")
-    regime: str = Field(default="C-NLOPB / C-NLOER", description="Regulatory regime")
-    drawing_ids: list[str] = Field(default=[], description="Specific drawing IDs to use (empty = auto-select via Pass 1)")
+    equipment_tag: str = Field(max_length=200, description="Equipment tag, e.g. HB-P-1001A")
+    work_description: str = Field(max_length=5000, description="Description of work to be performed")
+    work_type: str = Field(max_length=100, description="MAINTENANCE, HOT WORK, CONFINED SPACE ENTRY, PRESSURE TEST, INSPECTION, EQUIPMENT REMOVAL, ELECTRICAL ISOLATION, INSTRUMENT MAINTENANCE")
+    fluid_service: str = Field(default="Not specified", max_length=200, description="Fluid service, e.g. Crude Oil, HC Gas, Produced Water")
+    special_requirements: str = Field(default="None", max_length=5000, description="Any special requirements")
+    facility: str = Field(default="Hebron", max_length=200, description="Facility name")
+    regime: str = Field(default="C-NLOPB / C-NLOER", max_length=200, description="Regulatory regime")
+    drawing_ids: list[str] = Field(default=[], max_length=20, description="Specific drawing IDs to use (empty = auto-select via Pass 1)")
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +529,10 @@ async def health_check():
         db.close()
     except Exception as e:
         db_ok = False
-        db_err = f"Database connection failed: {e}"
+        # Log full error for operators, but don't expose connection details to clients
+        import logging
+        logging.getLogger("pdfhelper").error("Health check DB failure: %s", e)
+        db_err = "Database connection failed"
 
     warnings = list(_startup_errors)
     if db_err:
