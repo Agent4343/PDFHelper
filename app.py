@@ -60,6 +60,7 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
+CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-4-5-20250929")
 CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "8192"))
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/pdfhelper_uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -493,7 +494,7 @@ async def db_error_handler(request: Request, exc: SAOperationalError):
 async def general_error_handler(request: Request, exc: Exception):
     """Catch-all so errors always return JSON, never HTML."""
     import traceback, logging
-    logging.getLogger("pdfhelper").error(f"Unhandled error on {request.url.path}: {exc}\n{traceback.format_exc()}")
+    logging.getLogger("pdfhelper").error("Unhandled error on %s: %s\n%s", request.url.path, exc, traceback.format_exc())
     if IS_PRODUCTION:
         detail = "Internal server error"
     else:
@@ -913,7 +914,7 @@ LOADED PROCEDURES:
             yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'documents_used': doc_info})}\n\n"
 
             with client.messages.stream(
-                model="claude-sonnet-4-5-20250929",
+                model=CHAT_MODEL,
                 max_tokens=CHAT_MAX_TOKENS,
                 system=system_prompt,
                 messages=conversation,
@@ -926,7 +927,7 @@ LOADED PROCEDURES:
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
             import logging
-            logging.getLogger("pdfhelper").error(f"Chat AI stream failed: {e}")
+            logging.getLogger("pdfhelper").error("Chat AI stream failed: %s", e)
             err_msg = "AI request failed" if IS_PRODUCTION else f"AI request failed: {str(e)}"
             yield f"data: {json.dumps({'type': 'error', 'detail': err_msg})}\n\n"
             full_reply = full_reply or err_msg
@@ -1254,7 +1255,7 @@ async def upload_drawing(
     db.add(drawing)
     db.commit()
 
-    log_upload(request, drawing_id, fname, len(content))
+    log_upload(_get_client_ip(request), fname, drawing_id, 1)
 
     return {
         "id": drawing_id,
@@ -1333,7 +1334,7 @@ async def upload_drawings_batch(
             db.add(drawing)
             db.commit()
 
-            log_upload(request, drawing_id, fname, len(content))
+            log_upload(_get_client_ip(request), fname, drawing_id, 1)
 
             uploaded.append({
                 "id": drawing_id,
@@ -1542,7 +1543,7 @@ async def generate_isolation(
 
         except Exception as e:
             import logging
-            logging.getLogger("pdfhelper").error(f"Isolation generation failed: {e}")
+            logging.getLogger("pdfhelper").error("Isolation generation failed: %s", e)
             err_msg = "Isolation generation failed" if IS_PRODUCTION else f"Isolation generation failed: {str(e)}"
             yield f"data: {json.dumps({'type': 'error', 'detail': err_msg})}\n\n"
         finally:

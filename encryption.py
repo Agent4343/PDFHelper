@@ -29,7 +29,6 @@ def _get_fernet() -> Fernet:
     # If the user supplies a plain passphrase instead of a proper Fernet key,
     # derive a valid 32-byte key from it.
     try:
-        Fernet(key.encode())
         return Fernet(key.encode())
     except Exception:
         derived = hashlib.sha256(key.encode()).digest()

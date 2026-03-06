@@ -7,8 +7,24 @@ Pass 2: Full isolation generation (vision-enabled, reads P&ID images + rules)
 
 import json
 import logging
+import os
+import time
 
 logger = logging.getLogger("pdfhelper.isointel")
+
+# Model constants — configurable via environment
+PASS1_MODEL = os.getenv("ISOINTEL_PASS1_MODEL", "claude-sonnet-4-5-20250929")
+PASS2_MODEL = os.getenv("ISOINTEL_PASS2_MODEL", "claude-opus-4-5-20250929")
+
+MAX_RETRIES = 3
+RETRY_BACKOFF = 2
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    """Check if an API error is transient and worth retrying."""
+    exc_str = str(exc).lower()
+    retryable_indicators = ["rate_limit", "overloaded", "529", "500", "502", "503", "timeout"]
+    return any(indicator in exc_str for indicator in retryable_indicators)
 
 
 # ---------------------------------------------------------------------------
@@ -356,8 +372,8 @@ OUTPUT_SCHEMA = """{
   ],
   "decontaminationRequirements": "string",
   "decontaminationRationale": "string",
-  "reinistatementProcedure": "string",
-  "reinistatementRationale": "string",
+  "reinstatementProcedure": "string",
+  "reinstatementRationale": "string",
   "simopsConsiderations": "string | null",
   "additionalHazards": ["string"]
 }"""
@@ -387,20 +403,33 @@ def run_pass1(client, drawings_metadata: list[dict], job: dict) -> list[str]:
 
     logger.info("Pass 1: searching %d drawings for %s", len(drawings_metadata), job["equipment_tag"])
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.messages.create(
+                model=PASS1_MODEL,
+                max_tokens=500,
+                messages=[{"role": "user", "content": prompt}],
+            )
 
-    text = "".join(b.text for b in response.content if b.type == "text")
+            text = "".join(b.text for b in response.content if b.type == "text")
 
-    try:
-        ids = json.loads(text.strip())
-        if isinstance(ids, list):
-            return [str(i) for i in ids[:4]]
-    except json.JSONDecodeError:
-        logger.warning("Pass 1 returned non-JSON: %s", text[:200])
+            try:
+                ids = json.loads(text.strip())
+                if isinstance(ids, list):
+                    return [str(i) for i in ids[:4]]
+            except json.JSONDecodeError:
+                logger.warning("Pass 1 returned non-JSON: %s", text[:200])
+
+            return []
+        except Exception as exc:
+            if _is_retryable_error(exc) and attempt < MAX_RETRIES - 1:
+                wait = RETRY_BACKOFF * (2 ** attempt)
+                logger.warning("Pass 1 failed (attempt %d/%d), retrying in %ds: %s",
+                               attempt + 1, MAX_RETRIES, wait, exc)
+                time.sleep(wait)
+            else:
+                logger.error("Pass 1 failed for %s", job["equipment_tag"], exc_info=True)
+                raise
 
     return []
 
@@ -461,7 +490,7 @@ def run_pass2_stream(client, job: dict, drawing_images: list[dict],
                 job["equipment_tag"], len(drawing_images))
 
     with client.messages.stream(
-        model="claude-opus-4-5-20250929",
+        model=PASS2_MODEL,
         max_tokens=12000,
         system=system_prompt,
         messages=[{"role": "user", "content": content_blocks}],
