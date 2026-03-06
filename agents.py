@@ -80,6 +80,47 @@ def _parse_json_response(text: str) -> list | dict:
 
 
 # ---------------------------------------------------------------------------
+# Text budget helpers
+# ---------------------------------------------------------------------------
+
+# Total character budget for text sent to each agent call.
+# Claude Sonnet has ~680K char context; we stay well under with room for
+# the system prompt, JSON schema, and response.
+_AGENT_TEXT_BUDGET = 180_000
+
+
+def _build_page_text(pages: list[dict], budget: int = _AGENT_TEXT_BUDGET) -> str:
+    """Build concatenated page text that fits within a character budget.
+
+    Distributes the budget evenly across pages, but allows shorter pages to
+    donate their unused budget to longer ones (two-pass).  This avoids the
+    old fixed 2000-char-per-page limit that truncated dense safety tables.
+    """
+    if not pages:
+        return ""
+
+    # First pass: find pages shorter than their equal share
+    equal_share = budget // len(pages)
+    short_pages = {}  # page index -> actual length
+    surplus = 0
+    for i, p in enumerate(pages):
+        length = len(p["text"])
+        if length <= equal_share:
+            short_pages[i] = length
+            surplus += equal_share - length
+
+    # Second pass: long pages split the surplus
+    long_count = len(pages) - len(short_pages)
+    long_limit = equal_share + (surplus // max(long_count, 1)) if long_count else equal_share
+
+    parts = []
+    for i, p in enumerate(pages):
+        limit = len(p["text"]) if i in short_pages else long_limit
+        parts.append(f"\n--- PAGE {p['page']} ---\n{p['text'][:limit]}\n")
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Agent: Document Analyzer
 # ---------------------------------------------------------------------------
 
@@ -88,14 +129,15 @@ def document_analysis_agent(filename: str, pages: list[dict]) -> dict:
 
     Returns a structured summary of what the document contains.
     """
-    # Build a condensed view (first 8000 chars per page batch to stay in limits)
-    page_text = ""
-    for p in pages:
-        page_text += f"\n--- PAGE {p['page']} ---\n{p['text'][:2000]}\n"
+    page_text = _build_page_text(pages)
 
     system = """You are a document analysis specialist. Your job is to deeply
-analyze documents and produce structured summaries. Be thorough and precise.
-Respond with ONLY valid JSON, no other text."""
+analyze documents and produce structured summaries. Pay special attention to:
+- Revision history and document version information
+- Regulatory references (specific regulation sections, standards codes)
+- Safety-critical procedures, roles, and responsibilities
+- Tables containing specifications, approved lists, or reference values
+Be thorough and precise. Respond with ONLY valid JSON, no other text."""
 
     prompt = f"""Analyze this document: "{filename}"
 
@@ -105,11 +147,14 @@ CONTENT:
 Produce a JSON object with:
 {{
   "title": "document title if identifiable",
-  "type": "procedure/policy/manual/report/form/other",
+  "type": "procedure/policy/manual/report/form/safety_document/regulatory/other",
   "topics": ["list of main topics covered"],
   "key_dates": ["any dates mentioned (revision dates, effective dates, deadlines)"],
-  "key_references": ["any regulations, standards, or other documents referenced"],
+  "current_revision": "revision identifier if found (e.g. D14, Rev 3)",
+  "key_references": ["any regulations, standards, or other documents referenced — include section numbers"],
+  "regulatory_references": ["specific regulatory citations e.g. 'OHS Regulations Section 144(3)', 'CSA 117.2'"],
   "sections": ["list of major sections or headings"],
+  "roles_identified": ["any roles/positions mentioned (e.g. PIC, Permit Holder, Area Authority)"],
   "summary": "2-3 sentence summary of the document's purpose and content"
 }}"""
 
@@ -148,10 +193,13 @@ where. Respond with ONLY valid JSON, no other text."""
         doc_summaries += f"""
 --- DOCUMENT {i}: {doc['filename']} ---
 Summary: {doc.get('summary', 'N/A')}
+Revision: {doc.get('current_revision', 'N/A')}
 Topics: {', '.join(doc.get('topics', []))}
 Key References: {', '.join(doc.get('key_references', []))}
+Regulatory References: {', '.join(doc.get('regulatory_references', []))}
 Key Dates: {', '.join(doc.get('key_dates', []))}
 Sections: {', '.join(doc.get('sections', []))}
+Roles: {', '.join(doc.get('roles_identified', []))}
 """
 
     prompt = f"""Compare these {len(documents)} documents and find any inconsistencies,
@@ -193,18 +241,23 @@ def compliance_agent(filename: str, pages: list[dict],
     compliance_context: optional user-provided context like
     "Check against OSHA 2024 standards" or "FDA 21 CFR Part 11"
     """
-    page_text = ""
-    for p in pages:
-        page_text += f"\n--- PAGE {p['page']} ---\n{p['text'][:2000]}\n"
+    page_text = _build_page_text(pages)
 
     context_instruction = ""
     if compliance_context:
         context_instruction = f"\nThe user specifically wants you to check against: {compliance_context}\n"
 
-    system = """You are a compliance and regulatory specialist. Your job is to
-review documents for compliance issues: outdated regulatory references, missing
-required language, policy gaps, and procedural deficiencies. Be specific about
-page numbers and exact text. Respond with ONLY valid JSON, no other text."""
+    system = """You are a compliance and regulatory specialist with expertise in
+industrial safety, offshore operations, and occupational health regulations.
+Your job is to review documents for compliance issues including:
+- Outdated regulatory references or standards citations
+- Missing required language (e.g. required permit conditions, safety statements)
+- Policy gaps where procedures don't cover required scenarios
+- Inconsistencies between referenced regulations and stated procedures
+- Missing or outdated revision dates
+- Incomplete role/responsibility definitions
+Be specific about page numbers and quote exact text. Respond with ONLY valid JSON,
+no other text."""
 
     prompt = f"""Review this document for compliance issues: "{filename}"
 {context_instruction}
@@ -214,10 +267,11 @@ CONTENT:
 Return a JSON array of compliance findings. Each finding:
 {{
   "page": page_number,
-  "issue_type": "outdated_reference/missing_language/policy_gap/procedural_deficiency/formatting_issue",
+  "issue_type": "outdated_reference/missing_language/policy_gap/procedural_deficiency/formatting_issue/role_gap/isolation_concern",
   "found_text": "the specific text that has the issue (quote directly)",
   "issue": "description of the compliance problem",
   "severity": "critical/high/medium/low",
+  "regulation": "the specific regulation or standard this relates to, if applicable",
   "recommendation": "specific suggestion to fix the issue"
 }}
 

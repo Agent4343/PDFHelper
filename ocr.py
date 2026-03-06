@@ -52,12 +52,59 @@ def _ocr_single_page(page_png_bytes: bytes) -> str:
         return ""
 
 
+def _extract_page_text(page) -> str:
+    """Extract text from a single page, using table-aware extraction when available.
+
+    PyMuPDF 1.23+ supports find_tables() which preserves tabular structure
+    that get_text() garbles (e.g. valve isolation tables, specification charts).
+    Falls back to plain get_text() on older versions.
+    """
+    # Try table-aware extraction first (PyMuPDF 1.23+)
+    if hasattr(page, "find_tables"):
+        try:
+            tables = page.find_tables()
+            if tables.tables:
+                # Extract non-table text and tables separately, then combine
+                # This preserves both flowing text and table structure
+                parts = []
+                plain_text = page.get_text()
+
+                # Add the plain text (which includes everything)
+                parts.append(plain_text)
+
+                # Append structured table representations
+                for table in tables:
+                    try:
+                        df = table.to_pandas()
+                        # Convert table to a readable format with column alignment
+                        table_str = "\n[TABLE]\n" + df.to_string(index=False) + "\n[/TABLE]\n"
+                        parts.append(table_str)
+                    except Exception:
+                        # Fallback: extract table as list of rows
+                        rows = table.extract()
+                        if rows:
+                            table_lines = []
+                            for row in rows:
+                                cells = [str(c) if c is not None else "" for c in row]
+                                table_lines.append(" | ".join(cells))
+                            parts.append("\n[TABLE]\n" + "\n".join(table_lines) + "\n[/TABLE]\n")
+
+                return "\n".join(parts)
+        except Exception:
+            logger.debug("Table extraction failed for page, falling back to plain text")
+
+    return page.get_text()
+
+
 def extract_text_with_ocr_fallback(pdf_bytes: bytes) -> list[dict]:
     """Extract text from a PDF, using OCR only on pages that need it.
 
     For mixed PDFs (some pages scanned, some with text), this only OCRs the
     pages that have little or no extractable text — much faster than OCR'ing
     the entire document.
+
+    Uses table-aware extraction when PyMuPDF supports it, preserving the
+    structure of specification tables, valve lists, and similar tabular data.
 
     Returns list of {"page": int, "text": str}.
     """
@@ -69,7 +116,7 @@ def extract_text_with_ocr_fallback(pdf_bytes: bytes) -> list[dict]:
     ocr_needed_indices = []
     for page_num in range(page_count):
         page = doc[page_num]
-        text = page.get_text()
+        text = _extract_page_text(page)
         pages.append({"page": page_num + 1, "text": text})
         if _page_needs_ocr(text):
             ocr_needed_indices.append(page_num)

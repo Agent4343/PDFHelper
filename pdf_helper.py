@@ -31,8 +31,41 @@ console = Console()
 # PDF text extraction
 # ---------------------------------------------------------------------------
 
+def _extract_page_text(page) -> str:
+    """Extract text from a single page, using table-aware extraction when available.
+
+    PyMuPDF 1.23+ supports find_tables() which preserves tabular structure
+    that get_text() garbles (e.g. valve isolation tables, specification charts).
+    Falls back to plain get_text() on older versions.
+    """
+    if hasattr(page, "find_tables"):
+        try:
+            tables = page.find_tables()
+            if tables.tables:
+                parts = [page.get_text()]
+                for table in tables:
+                    try:
+                        df = table.to_pandas()
+                        parts.append("\n[TABLE]\n" + df.to_string(index=False) + "\n[/TABLE]\n")
+                    except Exception:
+                        rows = table.extract()
+                        if rows:
+                            table_lines = []
+                            for row in rows:
+                                cells = [str(c) if c is not None else "" for c in row]
+                                table_lines.append(" | ".join(cells))
+                            parts.append("\n[TABLE]\n" + "\n".join(table_lines) + "\n[/TABLE]\n")
+                return "\n".join(parts)
+        except Exception:
+            pass
+    return page.get_text()
+
+
 def extract_text_from_pdf(pdf_path: str) -> list[dict]:
     """Extract text from each page of a PDF.
+
+    Uses table-aware extraction when PyMuPDF supports it, preserving the
+    structure of specification tables and similar tabular data.
 
     Returns a list of dicts: [{"page": 1, "text": "..."}, ...]
     """
@@ -41,7 +74,7 @@ def extract_text_from_pdf(pdf_path: str) -> list[dict]:
         doc = fitz.open(pdf_path)
         for page_num in range(len(doc)):
             page = doc[page_num]
-            text = page.get_text()
+            text = _extract_page_text(page)
             pages.append({"page": page_num + 1, "text": text})
         doc.close()
     except Exception as e:
