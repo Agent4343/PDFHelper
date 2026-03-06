@@ -6,11 +6,15 @@ The orchestrator coordinates them and merges their results into a single report.
 """
 
 import json
+import logging
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from anthropic import Anthropic
+
+logger = logging.getLogger(__name__)
 
 
 _client: Anthropic | None = None
@@ -30,15 +34,40 @@ def _get_client() -> Anthropic:
 MODEL = "claude-sonnet-4-5-20250929"
 
 
+MAX_RETRIES = 3
+RETRY_BACKOFF = 2  # seconds, doubled each retry
+
+
 def _call_ai(system_prompt: str, user_prompt: str, max_tokens: int = 4096) -> str:
-    """Make a single AI call with a system prompt and user prompt."""
-    response = _get_client().messages.create(
-        model=MODEL,
-        max_tokens=max_tokens,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    return response.content[0].text.strip()
+    """Make a single AI call with a system prompt and user prompt.
+
+    Retries on transient errors (rate limits, server errors) with exponential backoff.
+    """
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = _get_client().messages.create(
+                model=MODEL,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            return response.content[0].text.strip()
+        except Exception as exc:
+            is_retryable = _is_retryable_error(exc)
+            if is_retryable and attempt < MAX_RETRIES - 1:
+                wait = RETRY_BACKOFF * (2 ** attempt)
+                logger.warning("AI call failed (attempt %d/%d), retrying in %ds: %s",
+                               attempt + 1, MAX_RETRIES, wait, exc)
+                time.sleep(wait)
+            else:
+                raise
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    """Check if an API error is transient and worth retrying."""
+    exc_str = str(exc).lower()
+    retryable_indicators = ["rate_limit", "overloaded", "529", "500", "502", "503", "timeout"]
+    return any(indicator in exc_str for indicator in retryable_indicators)
 
 
 def _parse_json_response(text: str) -> list | dict:
@@ -87,7 +116,11 @@ Produce a JSON object with:
     try:
         result = _parse_json_response(_call_ai(system, prompt))
         return result if isinstance(result, dict) else {}
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
+        logger.warning("Document analysis returned invalid JSON for %s", filename)
+        return {"error": f"Could not analyze {filename}"}
+    except Exception:
+        logger.error("Document analysis failed for %s", filename, exc_info=True)
         return {"error": f"Could not analyze {filename}"}
 
 
@@ -140,7 +173,11 @@ If no issues found, return an empty array: []"""
     try:
         result = _parse_json_response(_call_ai(system, prompt, max_tokens=4096))
         return result if isinstance(result, list) else []
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
+        logger.warning("Cross-reference agent returned invalid JSON")
+        return []
+    except Exception:
+        logger.error("Cross-reference agent failed", exc_info=True)
         return []
 
 
@@ -189,7 +226,11 @@ If the document appears compliant with no issues, return an empty array: []"""
     try:
         result = _parse_json_response(_call_ai(system, prompt, max_tokens=4096))
         return result if isinstance(result, list) else []
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
+        logger.warning("Compliance agent returned invalid JSON for %s", filename)
+        return []
+    except Exception:
+        logger.error("Compliance agent failed for %s", filename, exc_info=True)
         return []
 
 
@@ -223,7 +264,7 @@ no other text."""
 
     prompt = f"""Generate an executive summary report from this analysis data:
 
-{json.dumps(input_data, indent=2)[:12000]}
+{json.dumps(input_data, indent=2)[:30000]}
 
 Return a JSON object:
 {{
@@ -246,9 +287,13 @@ Return a JSON object:
 }}"""
 
     try:
-        result = _parse_json_response(_call_ai(system, prompt, max_tokens=4096))
+        result = _parse_json_response(_call_ai(system, prompt, max_tokens=8192))
         return result if isinstance(result, dict) else {}
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
+        logger.warning("Summary report agent returned invalid JSON")
+        return {"error": "Could not generate summary report"}
+    except Exception:
+        logger.error("Summary report agent failed", exc_info=True)
         return {"error": "Could not generate summary report"}
 
 
@@ -299,27 +344,39 @@ def run_full_analysis(
             if findings:
                 compliance_findings[filename] = findings
 
-    # Step 2: Cross-reference check (needs doc_analyses from step 1)
+    # Step 2 & 3: Cross-reference check and search run in parallel
+    # (cross-ref needs doc_analyses from step 1, search is independent)
     cross_ref_findings = []
-    if len(documents) > 1:
-        cross_ref_findings = cross_reference_agent(doc_analyses)
-
-    # Step 4: Run keyword/AI search if requested
     search_results = None
-    if search_terms or ai_query:
+
+    def _run_cross_ref():
+        if len(documents) > 1:
+            return cross_reference_agent(doc_analyses)
+        return []
+
+    def _run_search():
+        if not search_terms and not ai_query:
+            return None
         from search import keyword_search, ai_search
-        search_results = {"keyword_results": [], "ai_results": []}
+        results = {"keyword_results": [], "ai_results": []}
         for filename, pages in documents.items():
             if search_terms:
                 kw_matches = keyword_search(pages, search_terms)
                 for m in kw_matches:
                     m["filename"] = filename
-                search_results["keyword_results"].extend(kw_matches)
+                results["keyword_results"].extend(kw_matches)
             if ai_query:
                 ai_matches = ai_search(pages, ai_query, filename)
                 for m in ai_matches:
                     m["filename"] = filename
-                search_results["ai_results"].extend(ai_matches)
+                results["ai_results"].extend(ai_matches)
+        return results
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        cross_ref_future = pool.submit(_run_cross_ref)
+        search_future = pool.submit(_run_search)
+        cross_ref_findings = cross_ref_future.result()
+        search_results = search_future.result()
 
     # Step 5: Generate summary report
     report = summary_report_agent(

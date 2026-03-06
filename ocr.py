@@ -11,10 +11,13 @@ Performance optimizations:
 """
 
 import io
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 
 import fitz  # PyMuPDF
+
+logger = logging.getLogger(__name__)
 
 try:
     from PIL import Image
@@ -45,6 +48,7 @@ def _ocr_single_page(page_png_bytes: bytes) -> str:
         image = Image.open(io.BytesIO(page_png_bytes))
         return pytesseract.image_to_string(image)
     except Exception:
+        logger.warning("OCR failed for page image (%d bytes)", len(page_png_bytes), exc_info=True)
         return ""
 
 
@@ -83,7 +87,7 @@ def extract_text_with_ocr_fallback(pdf_bytes: bytes) -> list[dict]:
             pix = doc[page_num].get_pixmap(dpi=OCR_DPI)
             page_images[page_num] = pix.tobytes("png")
         except Exception:
-            pass  # Skip pages that fail to render
+            logger.warning("Failed to render page %d for OCR", page_num + 1, exc_info=True)
 
     doc.close()
 

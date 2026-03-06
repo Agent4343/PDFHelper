@@ -5,9 +5,29 @@ Used by both the web API (app.py) and the agent pipeline (agents.py).
 """
 
 import json
+import logging
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+logger = logging.getLogger(__name__)
+
+MODEL = os.getenv("SEARCH_MODEL", "claude-sonnet-4-5-20250929")
+
+_client = None
+
+
+def _get_client():
+    """Return a shared Anthropic client instance (created once, reused)."""
+    global _client
+    if _client is None:
+        key = os.getenv("ANTHROPIC_API_KEY")
+        if not key:
+            raise RuntimeError("ANTHROPIC_API_KEY not configured on server")
+        from anthropic import Anthropic
+        _client = Anthropic(api_key=key)
+    return _client
 
 
 def keyword_search(pages: list[dict], search_terms: list[str],
@@ -62,32 +82,64 @@ If nothing relevant is found, respond with an empty array: []
 Respond with ONLY valid JSON, no other text."""
 
 
-def _search_batch(client, prompt: str) -> list[dict]:
-    """Send a single batch to the AI and parse the response. Thread-safe."""
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        response_text = response.content[0].text.strip()
-        if response_text.startswith("```"):
-            response_text = re.sub(r"^```(?:json)?\n?", "", response_text)
-            response_text = re.sub(r"\n?```$", "", response_text)
+def _parse_json_response(text: str) -> list | dict:
+    """Extract JSON from an AI response, handling markdown code blocks."""
+    cleaned = text
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\n?", "", cleaned)
+        cleaned = re.sub(r"\n?```$", "", cleaned)
+    return json.loads(cleaned)
 
-        findings = json.loads(response_text)
-        return [
-            {
-                "page": f.get("page", "?"),
-                "matched_text": f.get("matched_text", ""),
-                "reason": f.get("reason", ""),
-                "needs_review": f.get("needs_review", False),
-                "suggestion": f.get("suggestion", ""),
-            }
-            for f in findings
-        ]
-    except (json.JSONDecodeError, Exception):
-        return []
+
+MAX_RETRIES = 3
+RETRY_BACKOFF = 2
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    """Check if an API error is transient and worth retrying."""
+    exc_str = str(exc).lower()
+    retryable_indicators = ["rate_limit", "overloaded", "529", "500", "502", "503", "timeout"]
+    return any(indicator in exc_str for indicator in retryable_indicators)
+
+
+def _search_batch(client, prompt: str) -> list[dict]:
+    """Send a single batch to the AI and parse the response. Thread-safe.
+
+    Retries on transient API errors with exponential backoff.
+    """
+    response_text = ""
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            response_text = response.content[0].text.strip()
+            findings = _parse_json_response(response_text)
+            return [
+                {
+                    "page": f.get("page", "?"),
+                    "matched_text": f.get("matched_text", ""),
+                    "reason": f.get("reason", ""),
+                    "needs_review": f.get("needs_review", False),
+                    "suggestion": f.get("suggestion", ""),
+                }
+                for f in findings
+            ]
+        except json.JSONDecodeError:
+            logger.warning("AI search returned invalid JSON: %.200s", response_text)
+            return []
+        except Exception as exc:
+            if _is_retryable_error(exc) and attempt < MAX_RETRIES - 1:
+                wait = RETRY_BACKOFF * (2 ** attempt)
+                logger.warning("AI search batch failed (attempt %d/%d), retrying in %ds: %s",
+                               attempt + 1, MAX_RETRIES, wait, exc)
+                time.sleep(wait)
+            else:
+                logger.error("AI search batch failed", exc_info=True)
+                return []
+    return []
 
 
 def ai_search(pages: list[dict], query: str, filename: str) -> list[dict]:
@@ -98,12 +150,7 @@ def ai_search(pages: list[dict], query: str, filename: str) -> list[dict]:
     Returns a list of findings with page, matched_text, reason, needs_review,
     and suggestion fields.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not configured on server")
-
-    from anthropic import Anthropic
-    client = Anthropic(api_key=api_key)
+    client = _get_client()
 
     # Build batches
     batch_size = 5
