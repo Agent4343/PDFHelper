@@ -146,30 +146,10 @@ async def startup():
         logger.warning("Database init failed on first attempt: %s — retrying in background", exc)
         asyncio.create_task(_retry_db_init(logger))
 
-    # Auto-create admin account on first run
-    try:
-        db = SessionLocal()
-        any_user = db.query(DBUser).first()
-        if not any_user:
-            username = ADMIN_USERNAME or "admin"
-            password = ADMIN_PASSWORD or secrets.token_urlsafe(16)
-            admin = DBUser(
-                id=str(uuid.uuid4()),
-                username=username,
-                password_hash=_hash_password(password),
-                is_admin=True,
-                created_at=datetime.now(timezone.utc),
-            )
-            db.add(admin)
-            db.commit()
-            logger.info("="*50)
-            logger.info("ADMIN ACCOUNT CREATED")
-            logger.info("  Username: %s", username)
-            if not ADMIN_PASSWORD:
-                logger.info("  Password: %s", password)
-                logger.info("  (Set ADMIN_PASSWORD env var to choose your own)")
-            logger.info("="*50)
-        elif ADMIN_USERNAME and ADMIN_PASSWORD:
+    # Auto-create admin if env vars are set and no user with that name exists
+    if ADMIN_USERNAME and ADMIN_PASSWORD:
+        try:
+            db = SessionLocal()
             existing = db.query(DBUser).filter(DBUser.username == ADMIN_USERNAME).first()
             if not existing:
                 admin = DBUser(
@@ -181,10 +161,10 @@ async def startup():
                 )
                 db.add(admin)
                 db.commit()
-                logger.info("Admin account '%s' created.", ADMIN_USERNAME)
-        db.close()
-    except Exception as exc:
-        logger.warning("Failed to auto-create admin account: %s", exc)
+                logger.info("Admin account '%s' created from env vars.", ADMIN_USERNAME)
+            db.close()
+        except Exception as exc:
+            logger.warning("Failed to auto-create admin account: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -748,6 +728,36 @@ async def bot_page():
 # ---------------------------------------------------------------------------
 # User registration & login
 # ---------------------------------------------------------------------------
+
+@app.get("/setup-needed")
+async def setup_needed(db=Depends(get_db)):
+    """Check if initial setup is required (no users exist yet)."""
+    any_user = db.query(DBUser).first()
+    return {"setup_needed": any_user is None}
+
+
+@app.post("/setup")
+async def setup(body: RegisterRequest, db=Depends(get_db)):
+    """First-run setup: create the initial admin account. Only works when no users exist."""
+    any_user = db.query(DBUser).first()
+    if any_user:
+        raise HTTPException(status_code=403, detail="Setup already completed. Use /login instead.")
+
+    user_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    user = DBUser(
+        id=user_id,
+        username=body.username,
+        password_hash=_hash_password(body.password),
+        is_admin=True,
+        created_at=now,
+    )
+    db.add(user)
+    db.commit()
+
+    token = _create_jwt(user_id, body.username, is_admin=True)
+    return {"user_id": user_id, "username": body.username, "token": token}
+
 
 @app.post("/register")
 async def register(body: RegisterRequest, db=Depends(get_db)):

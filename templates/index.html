@@ -269,6 +269,28 @@ input[type=text],input[type=password],textarea{font-size:16px}
     </div>
 
     <!-- Auth bar — login/register or API key -->
+    <!-- First-run setup overlay -->
+    <div id="setup-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:9999;display:none;align-items:center;justify-content:center">
+      <div class="card" style="max-width:400px;width:100%;text-align:center">
+        <h2 style="margin-bottom:0.5rem">Welcome to PDFHelper</h2>
+        <p style="color:var(--muted);margin-bottom:1.25rem;font-size:0.9rem">Create your admin account to get started.</p>
+        <div style="text-align:left;margin-bottom:0.75rem">
+          <label for="setup-username">Username</label>
+          <input type="text" id="setup-username" placeholder="Choose a username" autocomplete="username">
+        </div>
+        <div style="text-align:left;margin-bottom:0.75rem">
+          <label for="setup-password">Password</label>
+          <input type="password" id="setup-password" placeholder="Choose a password (min 8 chars)" autocomplete="new-password">
+        </div>
+        <div style="text-align:left;margin-bottom:1rem">
+          <label for="setup-password2">Confirm Password</label>
+          <input type="password" id="setup-password2" placeholder="Re-enter password" autocomplete="new-password">
+        </div>
+        <button class="btn btn-primary" style="width:100%" onclick="doSetup()">Create Account</button>
+        <div class="api-status unchecked" id="setup-status" style="margin-top:0.75rem"></div>
+      </div>
+    </div>
+
     <div class="api-bar" id="auth-bar" style="display:none">
       <!-- Login/Register mode -->
       <div id="auth-user-form">
@@ -281,9 +303,8 @@ input[type=text],input[type=password],textarea{font-size:16px}
           <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password" style="width:140px">
         </div>
         <button class="btn btn-primary" onclick="doLogin()">Login</button>
-        <button class="btn btn-secondary" onclick="doRegister()">Register</button>
         <button class="btn btn-secondary" onclick="showApiKeyMode()">Use API Key</button>
-        <div class="api-status unchecked" id="auth-status">Login or register to get started</div>
+        <div class="api-status unchecked" id="auth-status">Login to get started</div>
       </div>
       <!-- API Key mode (hidden by default) -->
       <div id="auth-apikey-form" style="display:none">
@@ -538,6 +559,34 @@ function setAuthStatus(msg, cls){
   const el=document.getElementById('auth-status');
   el.textContent=msg; el.className='api-status '+cls;
 }
+async function doSetup(){
+  const u=document.getElementById('setup-username').value.trim();
+  const p=document.getElementById('setup-password').value;
+  const p2=document.getElementById('setup-password2').value;
+  const st=document.getElementById('setup-status');
+  if(!u||!p){ st.textContent='Enter a username and password'; st.className='api-status disconnected'; return; }
+  if(u.length<3){ st.textContent='Username must be at least 3 characters'; st.className='api-status disconnected'; return; }
+  if(p.length<8){ st.textContent='Password must be at least 8 characters'; st.className='api-status disconnected'; return; }
+  if(p!==p2){ st.textContent='Passwords do not match'; st.className='api-status disconnected'; return; }
+  st.textContent='Creating account...'; st.className='api-status unchecked';
+  try{
+    const r=await fetch(API+'/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    if(r.ok){
+      const d=await r.json();
+      authToken=d.token;
+      localStorage.setItem('pdfhelper_jwt',d.token);
+      localStorage.setItem('pdfhelper_username',d.username);
+      apiConnected=true;
+      document.getElementById('setup-overlay').style.display='none';
+      document.getElementById('auth-bar').style.display='';
+      showLoggedIn(d.username);
+      toast('Admin account created — welcome, '+d.username+'!');
+    } else {
+      const d=await r.json().catch(()=>({}));
+      st.textContent=d.detail||'Setup failed'; st.className='api-status disconnected';
+    }
+  }catch(e){ st.textContent='Cannot reach server'; st.className='api-status disconnected'; }
+}
 async function doLogin(){
   const u=document.getElementById('auth-username').value.trim();
   const p=document.getElementById('auth-password').value;
@@ -595,6 +644,17 @@ function doLogout(){
 }
 async function loadKey(){
   var bar=document.getElementById('auth-bar');
+  // Check if first-run setup is needed
+  try{
+    var sr=await fetch(API+'/setup-needed');
+    if(sr.ok){
+      var sd=await sr.json();
+      if(sd.setup_needed){
+        document.getElementById('setup-overlay').style.display='flex';
+        return;
+      }
+    }
+  }catch(e){}
   try{
     var controller=new AbortController();
     var timer=setTimeout(function(){controller.abort();},8000);
