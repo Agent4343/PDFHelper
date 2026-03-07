@@ -778,13 +778,29 @@ async function loadKey(){
     if(hr.ok){
       var hd=await hr.json();
       if(!hd.api_key_required){
-        // No auth needed — check if we still have a saved JWT
+        // No API key needed — but if a user account exists, validate the saved JWT
         var savedJwt=localStorage.getItem('pdfhelper_jwt');
         if(savedJwt){
-          authToken=savedJwt;
-          var savedUser=localStorage.getItem('pdfhelper_username')||'user';
+          try{
+            var mr=await fetch(API+'/me',{headers:{'Authorization':'Bearer '+savedJwt}});
+            if(mr.ok){
+              var md=await mr.json();
+              authToken=savedJwt;
+              bar.style.display='';
+              showLoggedIn(md.username||localStorage.getItem('pdfhelper_username')||'user');
+              apiConnected=true;
+              return;
+            }
+          }catch(e){}
+          // JWT is invalid/expired — clear it
+          localStorage.removeItem('pdfhelper_jwt');
+          localStorage.removeItem('pdfhelper_username');
+        }
+        // Check if users exist — if so, show login form
+        if(hd.has_users){
           bar.style.display='';
-          showLoggedIn(savedUser);
+          showLoginMode();
+          return;
         }
         apiConnected=true;
         return;
@@ -970,7 +986,13 @@ async function uploadFiles(){
     const r=await fetch(API+'/upload',opts);
     let d;
     try{ d=await r.json(); }catch(jsonErr){ throw new Error('Server returned invalid response (status '+r.status+'). The database may be down — check DATABASE_URL in your Railway variables.'); }
-    if(r.status===401) throw new Error('Invalid API key.');
+    if(r.status===401){
+      // Token may have expired — clear it and ask user to log in again
+      authToken=null; apiConnected=false;
+      localStorage.removeItem('pdfhelper_jwt');
+      showLoginMode();
+      throw new Error(d.detail||'Your session has expired. Please log in again.');
+    }
     if(r.status===503) throw new Error('Database is unavailable. Check that DATABASE_URL is set in your Railway service variables.');
     if(!r.ok) throw new Error(d.detail||'Upload failed (status '+r.status+')');
     apiConnected=true;

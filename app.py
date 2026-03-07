@@ -563,6 +563,7 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     api_key_required: bool = False
+    has_users: bool = False
     warnings: list[str] = []
 
 
@@ -689,11 +690,21 @@ async def health_check():
     if db_err:
         warnings.append(db_err)
 
+    has_users = False
+    if db_ok:
+        try:
+            db = SessionLocal()
+            has_users = db.query(DBUser).first() is not None
+            db.close()
+        except Exception:
+            pass
+
     status = "ok" if (not warnings and db_ok) else "degraded"
     return {
         "status": status,
         "version": "1.0.0",
         "api_key_required": True,
+        "has_users": has_users,
         "warnings": warnings,
     }
 
