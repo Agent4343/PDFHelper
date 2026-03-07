@@ -74,6 +74,8 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "24"))
 # Set to "true" to allow new user registration (otherwise admin-only)
 ALLOW_REGISTRATION = os.getenv("ALLOW_REGISTRATION", "true").lower() == "true"
+# Optional invite code required to register (empty = no code needed)
+REGISTRATION_SECRET = os.getenv("REGISTRATION_SECRET", "").strip()
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -522,6 +524,7 @@ class ChatRequest(BaseModel):
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_]+$")
     password: str = Field(min_length=8, max_length=128)
+    invite_code: str | None = Field(default=None, max_length=256, description="Invite code required when REGISTRATION_SECRET is set")
 
 
 class LoginRequest(BaseModel):
@@ -533,6 +536,8 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     api_key_required: bool = False
+    registration_open: bool = True
+    invite_code_required: bool = False
     warnings: list[str] = []
 
 
@@ -664,6 +669,8 @@ async def health_check():
         "status": status,
         "version": "1.0.0",
         "api_key_required": bool(API_KEY),
+        "registration_open": ALLOW_REGISTRATION,
+        "invite_code_required": bool(REGISTRATION_SECRET),
         "warnings": warnings,
     }
 
@@ -711,6 +718,11 @@ async def register(body: RegisterRequest, db=Depends(get_db)):
     """Create a new user account. Returns a JWT token."""
     if not ALLOW_REGISTRATION:
         raise HTTPException(status_code=403, detail="Registration is disabled. Contact an admin.")
+
+    if REGISTRATION_SECRET and not secrets.compare_digest(
+        (body.invite_code or "").encode(), REGISTRATION_SECRET.encode()
+    ):
+        raise HTTPException(status_code=403, detail="Invalid or missing invite code.")
 
     existing = db.query(DBUser).filter(DBUser.username == body.username).first()
     if existing:
