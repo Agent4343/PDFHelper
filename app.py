@@ -72,8 +72,11 @@ AUTO_CLEANUP_HOURS = int(os.getenv("AUTO_CLEANUP_HOURS", "72"))
 JWT_SECRET = os.getenv("JWT_SECRET", "").strip() or secrets.token_hex(32)
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "24"))
-# Set to "true" to allow new user registration (otherwise admin-only)
-ALLOW_REGISTRATION = os.getenv("ALLOW_REGISTRATION", "true").lower() == "true"
+# Set to "true" to allow new user registration (default: disabled for single-user)
+ALLOW_REGISTRATION = os.getenv("ALLOW_REGISTRATION", "false").lower() == "true"
+# Auto-create admin account on startup (set both to enable)
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -142,6 +145,26 @@ async def startup():
     except Exception as exc:
         logger.warning("Database init failed on first attempt: %s — retrying in background", exc)
         asyncio.create_task(_retry_db_init(logger))
+
+    # Auto-create admin account if ADMIN_USERNAME and ADMIN_PASSWORD are set
+    if ADMIN_USERNAME and ADMIN_PASSWORD:
+        try:
+            db = SessionLocal()
+            existing = db.query(DBUser).filter(DBUser.username == ADMIN_USERNAME).first()
+            if not existing:
+                admin = DBUser(
+                    id=str(uuid.uuid4()),
+                    username=ADMIN_USERNAME,
+                    password_hash=_hash_password(ADMIN_PASSWORD),
+                    is_admin=True,
+                    created_at=datetime.now(timezone.utc),
+                )
+                db.add(admin)
+                db.commit()
+                logger.info("Admin account '%s' created.", ADMIN_USERNAME)
+            db.close()
+        except Exception as exc:
+            logger.warning("Failed to auto-create admin account: %s", exc)
 
 
 # ---------------------------------------------------------------------------
