@@ -118,7 +118,7 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 /* Chat/Bot page */
 .main.chat-active{padding:0;overflow:hidden;display:flex;flex-direction:column}
 .main.chat-active .top-nav{flex-shrink:0;margin-bottom:0}
-.main.chat-active .page.active{display:flex;flex:1;min-height:0}
+.main.chat-active .page.active{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
 .chat-page{display:flex;flex-direction:column;width:100%;height:100%}
 .chat-doc-bar{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:6px;
   flex-wrap:wrap;align-items:center;flex-shrink:0}
@@ -163,7 +163,7 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
   padding:8px 14px;border-radius:20px;font-size:12px;cursor:pointer;transition:all .15s}
 .chat-sug:hover{border-color:var(--accent);color:var(--text)}
 /* Chat session sidebar */
-.chat-layout{display:flex;width:100%;height:100%}
+.chat-layout{display:flex;width:100%;flex:1;min-height:0}
 .chat-sessions{width:220px;border-right:1px solid var(--border);display:flex;flex-direction:column;
   flex-shrink:0;background:#0d1220;overflow:hidden}
 .chat-sessions .sess-header{padding:10px 12px;display:flex;justify-content:space-between;align-items:center;
@@ -228,14 +228,25 @@ input[style*="width:70px"],input[style*="width:90px"],input[style*="width:140px"
 /* Chat */
 .main.chat-active{padding:0}
 .main.chat-active .top-nav{margin:0;padding:0 0.5rem}
-.chat-doc-bar{padding:8px 10px;gap:4px}
-.chat-msgs{padding:14px 10px}
-.chat-input-bar{padding:10px;gap:8px}
+/* Hide the info card on mobile chat — it eats too much space */
+#page-bot>.card{display:none}
+.chat-layout{flex-direction:column}
+.chat-sessions{display:none}
+.chat-page{flex:1;min-height:0}
+.chat-doc-bar{padding:6px 10px;gap:4px;overflow-x:auto;flex-wrap:nowrap;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none}
+.chat-doc-bar::-webkit-scrollbar{display:none}
+.chat-doc-chip{flex-shrink:0}
+.chat-msgs{padding:10px;flex:1;min-height:0;overflow-y:auto;
+  -webkit-overflow-scrolling:touch}
+.chat-input-bar{padding:8px;gap:8px;padding-bottom:max(8px,env(safe-area-inset-bottom))}
 .chat-input-bar textarea{font-size:16px;padding:8px 12px}
-.chat-bbl{max-width:92%}
+.chat-bbl{max-width:92%;padding:10px 12px;font-size:13px}
+.chat-empty{padding:1rem}
+.chat-empty h3{font-size:16px}
+.chat-empty p{font-size:12px}
 .chat-sugs{flex-direction:column;align-items:center}
 .chat-sug{width:100%;max-width:280px;text-align:center}
-.chat-sessions{display:none}
 /* Setup overlay */
 #setup-overlay .card{margin:0.75rem;max-width:100%!important}
 /* Tables */
