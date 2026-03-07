@@ -268,15 +268,40 @@ input[type=text],input[type=password],textarea{font-size:16px}
       <button onclick="showPage('bot')" id="tn-bot">AI Chat</button>
     </div>
 
-    <!-- API Key bar — hidden by default, shown only if server requires a key -->
-    <div class="api-bar" id="api-bar" style="display:none">
-      <div class="field">
-        <label for="apikey">API Key</label>
-        <input type="password" id="apikey" placeholder="Enter your PDF_HELPER_API_KEY" autocomplete="off">
+    <!-- Auth bar — login/register or API key -->
+    <div class="api-bar" id="auth-bar" style="display:none">
+      <!-- Login/Register mode -->
+      <div id="auth-user-form">
+        <div class="field" style="display:inline-block;margin-right:0.5rem">
+          <label for="auth-username">Username</label>
+          <input type="text" id="auth-username" placeholder="Username" autocomplete="username" style="width:140px">
+        </div>
+        <div class="field" style="display:inline-block;margin-right:0.5rem">
+          <label for="auth-password">Password</label>
+          <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password" style="width:140px">
+        </div>
+        <button class="btn btn-primary" onclick="doLogin()">Login</button>
+        <button class="btn btn-secondary" onclick="doRegister()">Register</button>
+        <button class="btn btn-secondary" onclick="showApiKeyMode()">Use API Key</button>
+        <div class="api-status unchecked" id="auth-status">Login or register to get started</div>
+      </div>
+      <!-- API Key mode (hidden by default) -->
+      <div id="auth-apikey-form" style="display:none">
+        <div class="field" style="display:inline-block;margin-right:0.5rem">
+          <label for="apikey">API Key</label>
+          <input type="password" id="apikey" placeholder="Enter your PDF_HELPER_API_KEY" autocomplete="off">
+        </div>
+        <button class="btn btn-secondary" onclick="toggleKeyVisibility(event)">Show</button>
+        <button class="btn btn-primary" onclick="testConnection()">Connect</button>
+        <button class="btn btn-secondary" onclick="showLoginMode()">Use Login</button>
         <div class="api-status unchecked" id="api-status">Enter your API key and click Connect</div>
       </div>
-      <button class="btn btn-secondary" onclick="toggleKeyVisibility(event)">Show</button>
-      <button class="btn btn-primary" onclick="testConnection()">Connect</button>
+      <!-- Logged-in state -->
+      <div id="auth-logged-in" style="display:none">
+        <span id="auth-user-display" style="font-weight:600;margin-right:0.75rem"></span>
+        <button class="btn btn-secondary" onclick="doLogout()">Logout</button>
+        <div class="api-status connected" id="auth-status-ok">Connected</div>
+      </div>
     </div>
 
     <!-- Upload page -->
@@ -489,12 +514,87 @@ input[type=text],input[type=password],textarea{font-size:16px}
 <script>
 const API = window.location.origin;
 let apiConnected = false;
+let authToken = null;
 
 function getKey(){ return document.getElementById('apikey').value.trim(); }
 function saveKey(){ const k=getKey(); if(k) localStorage.setItem('pdfhelper_apikey',k); }
+function showApiKeyMode(){
+  document.getElementById('auth-user-form').style.display='none';
+  document.getElementById('auth-apikey-form').style.display='';
+  document.getElementById('auth-logged-in').style.display='none';
+}
+function showLoginMode(){
+  document.getElementById('auth-user-form').style.display='';
+  document.getElementById('auth-apikey-form').style.display='none';
+  document.getElementById('auth-logged-in').style.display='none';
+}
+function showLoggedIn(username){
+  document.getElementById('auth-user-form').style.display='none';
+  document.getElementById('auth-apikey-form').style.display='none';
+  document.getElementById('auth-logged-in').style.display='';
+  document.getElementById('auth-user-display').textContent='Logged in as: '+username;
+}
+function setAuthStatus(msg, cls){
+  const el=document.getElementById('auth-status');
+  el.textContent=msg; el.className='api-status '+cls;
+}
+async function doLogin(){
+  const u=document.getElementById('auth-username').value.trim();
+  const p=document.getElementById('auth-password').value;
+  if(!u||!p){ setAuthStatus('Enter username and password','disconnected'); return; }
+  setAuthStatus('Logging in...','unchecked');
+  try{
+    const r=await fetch(API+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    if(r.ok){
+      const d=await r.json();
+      authToken=d.token;
+      localStorage.setItem('pdfhelper_jwt',d.token);
+      localStorage.setItem('pdfhelper_username',d.username);
+      apiConnected=true;
+      showLoggedIn(d.username);
+      toast('Logged in as '+d.username);
+    } else {
+      const d=await r.json().catch(()=>({}));
+      setAuthStatus(d.detail||'Login failed','disconnected');
+      toast(d.detail||'Login failed','error');
+    }
+  }catch(e){ setAuthStatus('Cannot reach server','disconnected'); toast('Cannot reach server','error'); }
+}
+async function doRegister(){
+  const u=document.getElementById('auth-username').value.trim();
+  const p=document.getElementById('auth-password').value;
+  if(!u||!p){ setAuthStatus('Enter username and password','disconnected'); return; }
+  if(p.length<8){ setAuthStatus('Password must be at least 8 characters','disconnected'); return; }
+  setAuthStatus('Registering...','unchecked');
+  try{
+    const r=await fetch(API+'/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+    if(r.ok){
+      const d=await r.json();
+      authToken=d.token;
+      localStorage.setItem('pdfhelper_jwt',d.token);
+      localStorage.setItem('pdfhelper_username',d.username);
+      apiConnected=true;
+      showLoggedIn(d.username);
+      toast('Account created — logged in as '+d.username);
+    } else {
+      const d=await r.json().catch(()=>({}));
+      setAuthStatus(d.detail||'Registration failed','disconnected');
+      toast(d.detail||'Registration failed','error');
+    }
+  }catch(e){ setAuthStatus('Cannot reach server','disconnected'); toast('Cannot reach server','error'); }
+}
+function doLogout(){
+  authToken=null;
+  apiConnected=false;
+  localStorage.removeItem('pdfhelper_jwt');
+  localStorage.removeItem('pdfhelper_username');
+  localStorage.removeItem('pdfhelper_apikey');
+  showLoginMode();
+  setAuthStatus('Logged out','disconnected');
+  toast('Logged out');
+}
 async function loadKey(){
-  // Check /health to see if API key is even required
-  var bar=document.getElementById('api-bar');
+  var bar=document.getElementById('auth-bar');
   try{
     var controller=new AbortController();
     var timer=setTimeout(function(){controller.abort();},8000);
@@ -503,23 +603,51 @@ async function loadKey(){
     if(hr.ok){
       var hd=await hr.json();
       if(!hd.api_key_required){
-        // No API key needed — keep bar hidden, mark connected
+        // No auth needed — check if we still have a saved JWT
+        var savedJwt=localStorage.getItem('pdfhelper_jwt');
+        if(savedJwt){
+          authToken=savedJwt;
+          var savedUser=localStorage.getItem('pdfhelper_username')||'user';
+          bar.style.display='';
+          showLoggedIn(savedUser);
+        }
         apiConnected=true;
         return;
       }
     }
   }catch(e){}
-  // API key IS required — show the bar
+  // Auth IS required — show the bar
   bar.style.display='';
-  var savedKey=localStorage.getItem('pdfhelper_apikey');
-  if(savedKey){
-    document.getElementById('apikey').value=savedKey;
+  // Try saved JWT first
+  var savedJwt=localStorage.getItem('pdfhelper_jwt');
+  if(savedJwt){
     try{
       var controller2=new AbortController();
       var timer2=setTimeout(function(){controller2.abort();},8000);
-      var r=await fetch(API+'/verify-key',{headers:{'X-API-Key':savedKey},signal:controller2.signal});
+      var r=await fetch(API+'/me',{headers:{'Authorization':'Bearer '+savedJwt},signal:controller2.signal});
       clearTimeout(timer2);
       if(r.ok){
+        var d=await r.json();
+        authToken=savedJwt;
+        apiConnected=true;
+        showLoggedIn(d.username||'user');
+        return;
+      }
+      localStorage.removeItem('pdfhelper_jwt');
+      localStorage.removeItem('pdfhelper_username');
+    }catch(e){}
+  }
+  // Try saved API key
+  var savedKey=localStorage.getItem('pdfhelper_apikey');
+  if(savedKey){
+    document.getElementById('apikey').value=savedKey;
+    showApiKeyMode();
+    try{
+      var controller3=new AbortController();
+      var timer3=setTimeout(function(){controller3.abort();},8000);
+      var r2=await fetch(API+'/verify-key',{headers:{'X-API-Key':savedKey},signal:controller3.signal});
+      clearTimeout(timer3);
+      if(r2.ok){
         apiConnected=true;
         setApiStatus('Connected','connected');
         return;
@@ -534,8 +662,12 @@ async function loadKey(){
 }
 function headers(json){
   const h = {};
-  const k = getKey();
-  if(k) h['X-API-Key']=k;
+  if(authToken){
+    h['Authorization']='Bearer '+authToken;
+  } else {
+    const k = getKey();
+    if(k) h['X-API-Key']=k;
+  }
   if(json) h['Content-Type']='application/json';
   return h;
 }
@@ -587,13 +719,11 @@ async function testConnection(){
 }
 function requireKey(errorContainerId){
   if(apiConnected) return true;
-  if(!getKey()){
-    toast('Enter your API key and click Connect first','error');
-    setApiStatus('API key required','disconnected');
-    if(errorContainerId) showInlineError(errorContainerId,'Enter your API key at the top and click Connect before continuing.');
+  if(!authToken && !getKey()){
+    toast('Login or enter your API key first','error');
+    if(errorContainerId) showInlineError(errorContainerId,'Login or enter your API key at the top to continue.');
   } else {
-    toast('Click Connect to verify your API key first','error');
-    setApiStatus('Not connected — click Connect','disconnected');
+    toast('Click Connect or Login to authenticate first','error');
   }
   return false;
 }

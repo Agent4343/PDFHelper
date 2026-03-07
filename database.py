@@ -30,6 +30,17 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+class DBUser(Base):
+    """Registered user with hashed password."""
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    username = Column(String, nullable=False, unique=True, index=True)
+    password_hash = Column(String, nullable=False)
+    is_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime, nullable=False)
+
+
 class DBDocument(Base):
     __tablename__ = "documents"
 
@@ -75,6 +86,7 @@ class DBChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
     title = Column(String, nullable=True)              # auto-generated from first message
     doc_ids = Column(Text, nullable=False)              # JSON list of document IDs
     created_at = Column(DateTime, nullable=False)

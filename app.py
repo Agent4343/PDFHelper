@@ -41,7 +41,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from database import (
-    SessionLocal, engine, Base, DBDocument, DBSearchResult, DBAnalysisReport,
+    SessionLocal, engine, Base, DBUser, DBDocument, DBSearchResult, DBAnalysisReport,
     DBChatSession, DBChatMessage, DBDrawing, DBIsolationPackage,
 )
 from audit import log_upload, log_search, log_delete, log_auth_failure, log_access
@@ -67,6 +67,13 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Auto-cleanup: delete uploads older than this many hours (0 = disabled)
 AUTO_CLEANUP_HOURS = int(os.getenv("AUTO_CLEANUP_HOURS", "72"))
+
+# JWT auth config
+JWT_SECRET = os.getenv("JWT_SECRET", "").strip() or secrets.token_hex(32)
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "24"))
+# Set to "true" to allow new user registration (otherwise admin-only)
+ALLOW_REGISTRATION = os.getenv("ALLOW_REGISTRATION", "true").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -108,6 +115,14 @@ async def startup():
         msg = (
             "WARNING: PDF_HELPER_API_KEY not set in production. "
             "API endpoints will reject requests until it is configured."
+        )
+        logger.warning(msg)
+        _startup_errors.append(msg)
+
+    if IS_PRODUCTION and not os.getenv("JWT_SECRET", "").strip():
+        msg = (
+            "WARNING: JWT_SECRET not set in production. "
+            "A random secret was generated — JWTs will not survive restarts."
         )
         logger.warning(msg)
         _startup_errors.append(msg)
@@ -295,23 +310,96 @@ def _verify_pdf_content(data: bytes) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Password hashing & JWT helpers
+# ---------------------------------------------------------------------------
+
+_HASH_ITERATIONS = 260_000  # OWASP recommended for PBKDF2-SHA256
+
+
+def _hash_password(password: str) -> str:
+    """Hash a password with PBKDF2-SHA256 + random salt."""
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _HASH_ITERATIONS)
+    return f"{salt}:{h.hex()}"
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    """Verify a password against a stored PBKDF2 hash."""
+    try:
+        salt, hash_hex = stored_hash.split(":", 1)
+        h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _HASH_ITERATIONS)
+        return secrets.compare_digest(h.hex(), hash_hex)
+    except (ValueError, AttributeError):
+        return False
+
+
+def _create_jwt(user_id: str, username: str, is_admin: bool = False) -> str:
+    """Create a signed JWT token for authenticated users."""
+    import jwt
+    payload = {
+        "sub": user_id,
+        "username": username,
+        "admin": is_admin,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS),
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def _decode_jwt(token: str) -> dict | None:
+    """Decode and verify a JWT token. Returns payload or None."""
+    import jwt
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Auth dependency
 # ---------------------------------------------------------------------------
 
-async def verify_api_key(request: Request):
-    """Require a valid API key for all endpoints."""
-    if not API_KEY:
-        # Dev mode only — production enforced at startup
+async def verify_auth(request: Request):
+    """Authenticate via JWT Bearer token OR legacy API key."""
+    # Dev mode: skip auth if no API_KEY and no JWT_SECRET configured
+    if not API_KEY and os.getenv("JWT_SECRET", "").strip() == "":
         return
+
     auth = request.headers.get("Authorization", "")
+
+    # Try JWT Bearer token first
     if auth.startswith("Bearer "):
         token = auth[7:]
-    else:
-        token = request.headers.get("X-API-Key", "")
+        payload = _decode_jwt(token)
+        if payload:
+            request.state.user_id = payload.get("sub")
+            request.state.username = payload.get("username")
+            request.state.is_admin = payload.get("admin", False)
+            return
 
-    if not token or not secrets.compare_digest(token, API_KEY):
-        log_auth_failure(_get_client_ip(request), request.url.path)
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    # Fall back to legacy API key (X-API-Key header)
+    api_key_token = request.headers.get("X-API-Key", "")
+    if API_KEY and api_key_token and secrets.compare_digest(api_key_token, API_KEY):
+        request.state.user_id = None  # API key users have no user_id
+        request.state.username = "api_key_user"
+        request.state.is_admin = False
+        return
+
+    # Also accept Bearer token as API key for backward compatibility
+    if API_KEY and auth.startswith("Bearer "):
+        token = auth[7:]
+        if secrets.compare_digest(token, API_KEY):
+            request.state.user_id = None
+            request.state.username = "api_key_user"
+            request.state.is_admin = False
+            return
+
+    log_auth_failure(_get_client_ip(request), request.url.path)
+    raise HTTPException(status_code=401, detail="Invalid or missing credentials")
+
+
+# Backward-compatible alias
+verify_api_key = verify_auth
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +517,16 @@ class ChatRequest(BaseModel):
     doc_ids: list[str] = Field(default=[], max_length=100, description="Document IDs to use as context (empty = all)")
     conversation_history: list[ChatMessage] = Field(default=[], max_length=200, description="Previous messages for context")
     session_id: str | None = Field(default=None, max_length=100, description="Chat session ID to continue (omit to create new)")
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_]+$")
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(max_length=50)
+    password: str = Field(max_length=128)
 
 
 class HealthResponse(BaseModel):
@@ -602,6 +700,57 @@ async def bot_page():
     """Redirect old bot page to main app."""
     from starlette.responses import RedirectResponse
     return RedirectResponse(url="/", status_code=301)
+
+
+# ---------------------------------------------------------------------------
+# User registration & login
+# ---------------------------------------------------------------------------
+
+@app.post("/register")
+async def register(body: RegisterRequest, db=Depends(get_db)):
+    """Create a new user account. Returns a JWT token."""
+    if not ALLOW_REGISTRATION:
+        raise HTTPException(status_code=403, detail="Registration is disabled. Contact an admin.")
+
+    existing = db.query(DBUser).filter(DBUser.username == body.username).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Username already taken")
+
+    user_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    user = DBUser(
+        id=user_id,
+        username=body.username,
+        password_hash=_hash_password(body.password),
+        is_admin=False,
+        created_at=now,
+    )
+    db.add(user)
+    db.commit()
+
+    token = _create_jwt(user_id, body.username)
+    return {"user_id": user_id, "username": body.username, "token": token}
+
+
+@app.post("/login")
+async def login(body: LoginRequest, db=Depends(get_db)):
+    """Authenticate and receive a JWT token."""
+    user = db.query(DBUser).filter(DBUser.username == body.username).first()
+    if not user or not _verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    token = _create_jwt(user.id, user.username, user.is_admin)
+    return {"user_id": user.id, "username": user.username, "token": token}
+
+
+@app.get("/me", dependencies=[Depends(verify_auth)])
+async def get_current_user(request: Request):
+    """Return the currently authenticated user's info."""
+    return {
+        "user_id": getattr(request.state, "user_id", None),
+        "username": getattr(request.state, "username", None),
+        "is_admin": getattr(request.state, "is_admin", False),
+    }
 
 
 @app.post("/upload", dependencies=[Depends(verify_api_key)])
@@ -862,13 +1011,18 @@ async def chat_with_documents(
 
     # Resolve or create chat session
     now = datetime.now(timezone.utc)
+    current_user_id = getattr(request.state, "user_id", None)
     session = None
     if body.session_id:
         session = db.query(DBChatSession).filter(DBChatSession.id == body.session_id).first()
+        # Enforce session ownership: user can only access their own sessions
+        if session and current_user_id and session.user_id and session.user_id != current_user_id:
+            raise HTTPException(status_code=403, detail="You do not own this chat session")
 
     if session is None:
         session = DBChatSession(
             id=str(uuid.uuid4()),
+            user_id=current_user_id,
             title=body.message[:100],
             doc_ids=json.dumps(body.doc_ids),
             created_at=now,
@@ -990,14 +1144,15 @@ LOADED PROCEDURES:
 # ---------------------------------------------------------------------------
 
 @app.get("/chat/sessions", dependencies=[Depends(verify_api_key)])
-async def list_chat_sessions(limit: int = Query(default=30, le=100), db=Depends(get_db)):
-    """List past chat sessions, most recent first."""
-    sessions = (
-        db.query(DBChatSession)
-        .order_by(DBChatSession.updated_at.desc())
-        .limit(limit)
-        .all()
-    )
+async def list_chat_sessions(request: Request, limit: int = Query(default=30, le=100), db=Depends(get_db)):
+    """List past chat sessions, most recent first. Filtered to current user."""
+    current_user_id = getattr(request.state, "user_id", None)
+    query = db.query(DBChatSession)
+    if current_user_id:
+        query = query.filter(
+            (DBChatSession.user_id == current_user_id) | (DBChatSession.user_id.is_(None))
+        )
+    sessions = query.order_by(DBChatSession.updated_at.desc()).limit(limit).all()
     return {
         "sessions": [
             {
@@ -1014,11 +1169,14 @@ async def list_chat_sessions(limit: int = Query(default=30, le=100), db=Depends(
 
 
 @app.get("/chat/sessions/{session_id}", dependencies=[Depends(verify_api_key)])
-async def get_chat_session(session_id: str, db=Depends(get_db)):
+async def get_chat_session(session_id: str, request: Request, db=Depends(get_db)):
     """Get full message history for a chat session."""
     session = db.query(DBChatSession).filter(DBChatSession.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
+    current_user_id = getattr(request.state, "user_id", None)
+    if current_user_id and session.user_id and session.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="You do not own this chat session")
     return {
         "id": session.id,
         "title": session.title,
@@ -1037,11 +1195,14 @@ async def get_chat_session(session_id: str, db=Depends(get_db)):
 
 
 @app.delete("/chat/sessions/{session_id}", dependencies=[Depends(verify_api_key)])
-async def delete_chat_session(session_id: str, db=Depends(get_db)):
+async def delete_chat_session(session_id: str, request: Request, db=Depends(get_db)):
     """Delete a chat session and all its messages."""
     session = db.query(DBChatSession).filter(DBChatSession.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
+    current_user_id = getattr(request.state, "user_id", None)
+    if current_user_id and session.user_id and session.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="You do not own this chat session")
     db.delete(session)
     db.commit()
     return {"deleted": session_id}
