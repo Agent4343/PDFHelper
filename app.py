@@ -32,11 +32,11 @@ except ImportError:
     pass  # python-dotenv not installed; env vars must be set directly
 
 from fastapi import (
-    BackgroundTasks, FastAPI, File, UploadFile, Depends, HTTPException, Query, Request,
+    BackgroundTasks, FastAPI, File, Form, UploadFile, Depends, HTTPException, Query, Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -1925,3 +1925,259 @@ async def delete_isolation(isolation_id: str, db=Depends(get_db)):
     db.delete(pkg)
     db.commit()
     return {"deleted": isolation_id}
+
+
+# ---------------------------------------------------------------------------
+# PDF Tools — Download, Merge, Split, Annotate
+# ---------------------------------------------------------------------------
+
+def _load_pdf_bytes(doc) -> bytes:
+    """Load and decrypt a stored PDF, returning raw bytes."""
+    filepath = Path(doc.filepath)
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found on disk")
+    if ENCRYPTION_KEY:
+        from encryption import decrypt_file
+        return decrypt_file(str(filepath))
+    return filepath.read_bytes()
+
+
+@app.get("/documents/{doc_id}/download", dependencies=[Depends(verify_api_key)])
+async def download_document(doc_id: str, db=Depends(get_db)):
+    """Download the original PDF file."""
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    pdf_bytes = _load_pdf_bytes(doc)
+    filename = _decrypt_text(doc.filename)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+class MergeRequest(BaseModel):
+    doc_ids: list[str] = Field(..., min_length=2, description="IDs of documents to merge (in order)")
+    output_filename: str = Field(default="merged.pdf", max_length=255)
+
+
+@app.post("/documents/merge", dependencies=[Depends(verify_api_key)])
+async def merge_documents(body: MergeRequest, request: Request, db=Depends(get_db)):
+    """Merge multiple PDFs into a single new document."""
+    import fitz  # PyMuPDF
+
+    docs_db = []
+    for did in body.doc_ids:
+        doc = db.query(DBDocument).filter(DBDocument.id == did).first()
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Document {did} not found")
+        docs_db.append(doc)
+
+    merged = fitz.open()
+    try:
+        for doc in docs_db:
+            pdf_bytes = _load_pdf_bytes(doc)
+            src = fitz.open(stream=pdf_bytes, filetype="pdf")
+            merged.insert_pdf(src)
+            src.close()
+
+        merged_bytes = merged.tobytes()
+    finally:
+        merged.close()
+
+    # Save the merged PDF as a new document
+    clean_name = _sanitize_filename(body.output_filename)
+    if not clean_name.lower().endswith(".pdf"):
+        clean_name += ".pdf"
+
+    doc_id = str(uuid.uuid4())
+    save_path = UPLOAD_DIR / f"{doc_id}.pdf.enc"
+    _encrypt_and_save(merged_bytes, save_path)
+
+    pages = extract_text_from_bytes(merged_bytes)
+    content_hash = hashlib.sha256(merged_bytes).hexdigest()
+
+    db_doc = DBDocument(
+        id=doc_id,
+        filename=_encrypt_text(clean_name),
+        filepath=str(save_path),
+        page_count=len(pages),
+        text_content=_encrypt_text(json.dumps(pages)),
+        content_hash=content_hash,
+        uploaded_at=datetime.now(timezone.utc),
+    )
+    db.add(db_doc)
+    db.commit()
+
+    log_upload(_get_client_ip(request), clean_name, doc_id, len(pages))
+
+    return {
+        "id": doc_id,
+        "filename": clean_name,
+        "pages": len(pages),
+        "merged_from": body.doc_ids,
+    }
+
+
+class SplitRequest(BaseModel):
+    pages: list[int] = Field(..., min_length=1, description="Page numbers to extract (1-based)")
+    output_filename: str = Field(default="split.pdf", max_length=255)
+
+
+@app.post("/documents/{doc_id}/split", dependencies=[Depends(verify_api_key)])
+async def split_document(doc_id: str, body: SplitRequest, request: Request, db=Depends(get_db)):
+    """Extract specific pages from a PDF into a new document."""
+    import fitz
+
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    pdf_bytes = _load_pdf_bytes(doc)
+    src = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+    # Validate page numbers (convert 1-based to 0-based)
+    total_pages = src.page_count
+    zero_based = []
+    for p in body.pages:
+        if p < 1 or p > total_pages:
+            src.close()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Page {p} out of range (document has {total_pages} pages)",
+            )
+        zero_based.append(p - 1)
+
+    new_pdf = fitz.open()
+    try:
+        new_pdf.insert_pdf(src, from_page=-1, to_page=-1)  # empty
+        for pg in zero_based:
+            new_pdf.insert_pdf(src, from_page=pg, to_page=pg)
+        split_bytes = new_pdf.tobytes()
+    finally:
+        new_pdf.close()
+        src.close()
+
+    clean_name = _sanitize_filename(body.output_filename)
+    if not clean_name.lower().endswith(".pdf"):
+        clean_name += ".pdf"
+
+    new_id = str(uuid.uuid4())
+    save_path = UPLOAD_DIR / f"{new_id}.pdf.enc"
+    _encrypt_and_save(split_bytes, save_path)
+
+    pages = extract_text_from_bytes(split_bytes)
+    content_hash = hashlib.sha256(split_bytes).hexdigest()
+
+    db_doc = DBDocument(
+        id=new_id,
+        filename=_encrypt_text(clean_name),
+        filepath=str(save_path),
+        page_count=len(pages),
+        text_content=_encrypt_text(json.dumps(pages)),
+        content_hash=content_hash,
+        uploaded_at=datetime.now(timezone.utc),
+    )
+    db.add(db_doc)
+    db.commit()
+
+    log_upload(_get_client_ip(request), clean_name, new_id, len(pages))
+
+    return {
+        "id": new_id,
+        "filename": clean_name,
+        "pages": len(pages),
+        "extracted_from": doc_id,
+        "page_numbers": body.pages,
+    }
+
+
+@app.post("/documents/{doc_id}/annotate", dependencies=[Depends(verify_api_key)])
+async def annotate_document(
+    doc_id: str,
+    request: Request,
+    db=Depends(get_db),
+    text: str = Form(..., description="Text to add"),
+    page: int = Form(default=1, description="Page number (1-based)"),
+    x: float = Form(default=72, description="X position in points from left"),
+    y: float = Form(default=72, description="Y position in points from top"),
+    font_size: float = Form(default=12, description="Font size"),
+    color: str = Form(default="0,0,0", description="RGB color as 'r,g,b' (0-1 range)"),
+    save_as_new: bool = Form(default=True, description="Save as new document instead of overwriting"),
+    output_filename: str = Form(default="", description="Output filename (only if save_as_new)"),
+):
+    """Add text annotation/watermark to a PDF page."""
+    import fitz
+
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    pdf_bytes = _load_pdf_bytes(doc)
+    pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+    if page < 1 or page > pdf.page_count:
+        pdf.close()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Page {page} out of range (document has {pdf.page_count} pages)",
+        )
+
+    # Parse color
+    try:
+        rgb = tuple(float(c.strip()) for c in color.split(","))
+        if len(rgb) != 3:
+            raise ValueError
+    except (ValueError, TypeError):
+        pdf.close()
+        raise HTTPException(status_code=400, detail="Color must be 'r,g,b' with values 0-1")
+
+    pg = pdf[page - 1]
+    pg.insert_text(
+        fitz.Point(x, y),
+        text,
+        fontsize=font_size,
+        color=rgb,
+    )
+
+    annotated_bytes = pdf.tobytes()
+    pdf.close()
+
+    client_ip = _get_client_ip(request)
+    original_name = _decrypt_text(doc.filename)
+
+    if save_as_new:
+        clean_name = _sanitize_filename(output_filename or f"annotated_{original_name}")
+        if not clean_name.lower().endswith(".pdf"):
+            clean_name += ".pdf"
+        new_id = str(uuid.uuid4())
+        save_path = UPLOAD_DIR / f"{new_id}.pdf.enc"
+        _encrypt_and_save(annotated_bytes, save_path)
+
+        pages_data = extract_text_from_bytes(annotated_bytes)
+        content_hash = hashlib.sha256(annotated_bytes).hexdigest()
+
+        db_doc = DBDocument(
+            id=new_id,
+            filename=_encrypt_text(clean_name),
+            filepath=str(save_path),
+            page_count=len(pages_data),
+            text_content=_encrypt_text(json.dumps(pages_data)),
+            content_hash=content_hash,
+            uploaded_at=datetime.now(timezone.utc),
+        )
+        db.add(db_doc)
+        db.commit()
+        log_upload(client_ip, clean_name, new_id, len(pages_data))
+        return {"id": new_id, "filename": clean_name, "pages": len(pages_data)}
+    else:
+        # Overwrite existing document
+        save_path = Path(doc.filepath)
+        _encrypt_and_save(annotated_bytes, save_path)
+        pages_data = extract_text_from_bytes(annotated_bytes)
+        doc.page_count = len(pages_data)
+        doc.text_content = _encrypt_text(json.dumps(pages_data))
+        doc.content_hash = hashlib.sha256(annotated_bytes).hexdigest()
+        db.commit()
+        return {"id": doc_id, "filename": original_name, "pages": len(pages_data), "updated": True}

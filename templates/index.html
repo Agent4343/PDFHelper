@@ -242,6 +242,10 @@ input[type=text],input[type=password],textarea{font-size:16px}
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <span>History</span>
       </button>
+      <button onclick="showPage('pdftools')" id="nav-pdftools">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+        <span>PDF Tools</span>
+      </button>
       <button onclick="showPage('isointel')" id="nav-isointel" style="border-top:1px solid var(--border)">
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         <span>IsoIntel</span>
@@ -264,6 +268,7 @@ input[type=text],input[type=password],textarea{font-size:16px}
       <button onclick="showPage('search')" id="tn-search">Search</button>
       <button onclick="showPage('analyze')" id="tn-analyze">Analyze</button>
       <button onclick="showPage('history')" id="tn-history">History</button>
+      <button onclick="showPage('pdftools')" id="tn-pdftools">PDF Tools</button>
       <button onclick="showPage('isointel')" id="tn-isointel">IsoIntel</button>
       <button onclick="showPage('bot')" id="tn-bot">AI Chat</button>
     </div>
@@ -414,6 +419,71 @@ input[type=text],input[type=password],textarea{font-size:16px}
       <div id="history-reports" style="display:none">
         <button class="btn btn-secondary" onclick="loadReports()" style="margin-bottom:0.75rem">Load Reports</button>
         <div id="reports-list"></div>
+      </div>
+    </div>
+
+    <!-- PDF Tools page -->
+    <div class="page" id="page-pdftools">
+      <h2>PDF Tools</h2>
+
+      <!-- Merge -->
+      <div class="card">
+        <h3>Merge PDFs</h3>
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Combine multiple documents into a single PDF. Select documents in order.</p>
+        <div id="merge-doc-select" style="margin-bottom:0.75rem;font-size:0.85rem;color:var(--muted)">Load documents from the Documents tab first</div>
+        <label for="merge-filename">Output filename</label>
+        <input type="text" id="merge-filename" placeholder="merged.pdf" style="margin-bottom:0.75rem">
+        <button class="btn btn-primary" id="merge-btn" onclick="mergePDFs()">Merge Selected</button>
+        <div id="merge-result" style="margin-top:0.75rem"></div>
+      </div>
+
+      <!-- Split -->
+      <div class="card">
+        <h3>Split / Extract Pages</h3>
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Extract specific pages from a document into a new PDF.</p>
+        <label for="split-doc">Source document</label>
+        <select id="split-doc" style="width:100%;padding:0.55rem 0.75rem;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.88rem;margin-bottom:0.5rem">
+          <option value="">-- Select a document --</option>
+        </select>
+        <label for="split-pages">Pages to extract (comma-separated, e.g. 1,3,5-8)</label>
+        <input type="text" id="split-pages" placeholder="1,2,5" style="margin-bottom:0.5rem">
+        <label for="split-filename">Output filename</label>
+        <input type="text" id="split-filename" placeholder="extracted.pdf" style="margin-bottom:0.75rem">
+        <button class="btn btn-primary" id="split-btn" onclick="splitPDF()">Extract Pages</button>
+        <div id="split-result" style="margin-top:0.75rem"></div>
+      </div>
+
+      <!-- Annotate -->
+      <div class="card">
+        <h3>Add Text / Watermark</h3>
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Stamp text onto a page of a PDF document.</p>
+        <label for="annot-doc">Document</label>
+        <select id="annot-doc" style="width:100%;padding:0.55rem 0.75rem;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.88rem;margin-bottom:0.5rem">
+          <option value="">-- Select a document --</option>
+        </select>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <label for="annot-text">Text to add</label>
+            <textarea id="annot-text" placeholder="e.g. DRAFT, CONFIDENTIAL, or any note" style="min-height:40px"></textarea>
+          </div>
+          <div style="min-width:80px">
+            <label for="annot-page">Page #</label>
+            <input type="text" id="annot-page" value="1">
+          </div>
+        </div>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.5rem">
+          <div><label for="annot-x">X pos</label><input type="text" id="annot-x" value="72" style="width:70px"></div>
+          <div><label for="annot-y">Y pos</label><input type="text" id="annot-y" value="72" style="width:70px"></div>
+          <div><label for="annot-size">Font size</label><input type="text" id="annot-size" value="24" style="width:70px"></div>
+          <div><label for="annot-color">Color (R,G,B)</label><input type="text" id="annot-color" value="1,0,0" style="width:90px"></div>
+        </div>
+        <div style="margin-top:0.75rem">
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;font-size:0.85rem">
+            <input type="checkbox" id="annot-new" checked style="accent-color:var(--accent)"> Save as new document
+          </label>
+        </div>
+        <button class="btn btn-primary" onclick="annotatePDF()" style="margin-top:0.75rem">Add Text</button>
+        <div id="annot-result" style="margin-top:0.75rem"></div>
       </div>
     </div>
 
@@ -803,6 +873,7 @@ function showPage(name){
   m.classList.toggle('chat-active',name==='bot');
   if(name==='documents') loadDocuments();
   if(name==='history') loadHistory();
+  if(name==='pdftools') loadDocuments();
   if(name==='isointel') initIsoIntel();
   if(name==='bot') initBot();
 }
@@ -885,20 +956,30 @@ async function loadDocuments(){
       '<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+esc(doc.filename)+
       '</div><div class="meta">'+doc.pages+' pages &middot; '+new Date(doc.uploaded_at).toLocaleString()+
       ' &middot; <code style="font-size:0.75rem">'+doc.id.slice(0,8)+'...</code></div></div>'+
+      '<button class="btn btn-secondary" style="font-size:0.75rem;padding:0.3rem 0.6rem;margin-right:0.4rem" onclick="downloadDoc(&apos;'+doc.id+'&apos;,&apos;'+esc(doc.filename).replace(/'/g,"\\'")+
+      '&apos;)">Download</button>'+
       '<button class="btn btn-danger" style="font-size:0.75rem;padding:0.3rem 0.6rem" onclick="deleteDoc(&apos;'+doc.id+'&apos;)">Delete</button></div>'
     ).join('');
     updateDocSelectors();
   }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
 }
 function updateDocSelectors(){
-  ['search-doc-select','analyze-doc-select'].forEach(id=>{
+  ['search-doc-select','analyze-doc-select','merge-doc-select'].forEach(id=>{
     const el=document.getElementById(id);
+    if(!el)return;
     if(!allDocs.length){el.innerHTML='<span style="color:var(--muted)">No documents available</span>';return;}
     el.innerHTML=allDocs.map(d=>
       '<label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem;cursor:pointer;font-size:0.85rem">'+
       '<input type="checkbox" class="doc-check" value="'+d.id+'"> '+esc(d.filename)+
       ' <span style="color:var(--muted);font-size:0.75rem">('+d.pages+' pg)</span></label>'
     ).join('');
+  });
+  // Populate split/annotate dropdowns
+  ['split-doc','annot-doc'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el)return;
+    el.innerHTML='<option value="">-- Select a document --</option>'+
+      allDocs.map(d=>'<option value="'+d.id+'">'+esc(d.filename)+' ('+d.pages+' pg)</option>').join('');
   });
 }
 async function deleteDoc(id){
@@ -908,6 +989,124 @@ async function deleteDoc(id){
     if(!r.ok){const d=await r.json();throw new Error(d.detail||'Failed');}
     toast('Document deleted');loadDocuments();
   }catch(e){toast(e.message,'error');}
+}
+
+/* ---- Download ---- */
+async function downloadDoc(id,filename){
+  if(!requireKey()) return;
+  try{
+    const r=await fetch(API+'/documents/'+id+'/download',{headers:headers()});
+    if(!r.ok){const d=await r.json();throw new Error(d.detail||'Download failed');}
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=filename||'document.pdf';
+    document.body.appendChild(a);a.click();a.remove();
+    URL.revokeObjectURL(url);
+    toast('Download started');
+  }catch(e){toast(e.message,'error');}
+}
+
+/* ---- Merge ---- */
+async function mergePDFs(){
+  if(!requireKey('merge-result')) return;
+  const sel=[...document.querySelectorAll('#merge-doc-select .doc-check:checked')].map(c=>c.value);
+  if(sel.length<2){toast('Select at least 2 documents to merge','error');return;}
+  const fname=document.getElementById('merge-filename').value.trim()||'merged.pdf';
+  const btn=document.getElementById('merge-btn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Merging...';
+  const res=document.getElementById('merge-result');
+  try{
+    const r=await fetch(API+'/documents/merge',{
+      method:'POST',headers:headers(true),
+      body:JSON.stringify({doc_ids:sel,output_filename:fname})
+    });
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Merge failed');
+    res.innerHTML='<div class="result-card"><div class="label">Merged Document</div><div class="text">'+
+      esc(d.filename)+' — '+d.pages+' pages<br><code>'+d.id+'</code></div></div>';
+    toast('Documents merged successfully');
+    loadDocuments();
+  }catch(e){res.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
+  finally{btn.disabled=false;btn.textContent='Merge Selected';}
+}
+
+/* ---- Split ---- */
+function parseSplitPages(str){
+  var pages=[];
+  str.split(',').forEach(function(part){
+    part=part.trim();
+    if(!part) return;
+    var range=part.split('-');
+    if(range.length===2){
+      var a=parseInt(range[0]),b=parseInt(range[1]);
+      if(!isNaN(a)&&!isNaN(b)) for(var i=a;i<=b;i++) pages.push(i);
+    } else {
+      var n=parseInt(part);
+      if(!isNaN(n)) pages.push(n);
+    }
+  });
+  return pages;
+}
+async function splitPDF(){
+  if(!requireKey('split-result')) return;
+  var docId=document.getElementById('split-doc').value;
+  if(!docId){toast('Select a source document','error');return;}
+  var pagesStr=document.getElementById('split-pages').value;
+  var pages=parseSplitPages(pagesStr);
+  if(!pages.length){toast('Enter page numbers to extract','error');return;}
+  var fname=document.getElementById('split-filename').value.trim()||'extracted.pdf';
+  var btn=document.getElementById('split-btn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Extracting...';
+  var res=document.getElementById('split-result');
+  try{
+    var r=await fetch(API+'/documents/'+docId+'/split',{
+      method:'POST',headers:headers(true),
+      body:JSON.stringify({pages:pages,output_filename:fname})
+    });
+    var d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Split failed');
+    res.innerHTML='<div class="result-card"><div class="label">Extracted Document</div><div class="text">'+
+      esc(d.filename)+' — '+d.pages+' pages (from pages '+d.page_numbers.join(', ')+')<br><code>'+d.id+'</code></div></div>';
+    toast('Pages extracted successfully');
+    loadDocuments();
+  }catch(e){res.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
+  finally{btn.disabled=false;btn.textContent='Extract Pages';}
+}
+
+/* ---- Annotate ---- */
+async function annotatePDF(){
+  if(!requireKey('annot-result')) return;
+  var docId=document.getElementById('annot-doc').value;
+  if(!docId){toast('Select a document','error');return;}
+  var text=document.getElementById('annot-text').value;
+  if(!text.trim()){toast('Enter text to add','error');return;}
+  var fd=new FormData();
+  fd.append('text',text);
+  fd.append('page',document.getElementById('annot-page').value||'1');
+  fd.append('x',document.getElementById('annot-x').value||'72');
+  fd.append('y',document.getElementById('annot-y').value||'72');
+  fd.append('font_size',document.getElementById('annot-size').value||'24');
+  fd.append('color',document.getElementById('annot-color').value||'0,0,0');
+  fd.append('save_as_new',document.getElementById('annot-new').checked?'true':'false');
+  var res=document.getElementById('annot-result');
+  try{
+    // FormData — don't set Content-Type (browser sets boundary)
+    var h={};
+    var k=getKey();
+    if(authToken) h['Authorization']='Bearer '+authToken;
+    else if(k) h['X-API-Key']=k;
+    var r=await fetch(API+'/documents/'+docId+'/annotate',{
+      method:'POST',headers:h,body:fd
+    });
+    var d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Annotation failed');
+    var msg=d.updated?'Document updated':'New annotated document created';
+    res.innerHTML='<div class="result-card"><div class="label">'+msg+'</div><div class="text">'+
+      esc(d.filename)+' — '+d.pages+' pages<br><code>'+d.id+'</code></div></div>';
+    toast(msg);
+    loadDocuments();
+  }catch(e){res.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
 }
 
 /* ---- Search ---- */
