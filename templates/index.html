@@ -961,10 +961,12 @@ async function uploadFiles(){
   selectedFiles.forEach(f=>fd.append('files',f));
   try{
     /* Do NOT pass Content-Type for FormData — browser must set the boundary.
-       Only add headers if an API key is present. */
+       Add auth headers: JWT token if logged in, else API key if present. */
     var opts={method:'POST',body:fd};
-    var k=getKey();
-    if(k) opts.headers={'X-API-Key':k};
+    var h={};
+    if(authToken) h['Authorization']='Bearer '+authToken;
+    else { var k=getKey(); if(k) h['X-API-Key']=k; }
+    if(Object.keys(h).length) opts.headers=h;
     const r=await fetch(API+'/upload',opts);
     let d;
     try{ d=await r.json(); }catch(jsonErr){ throw new Error('Server returned invalid response (status '+r.status+'). The database may be down — check DATABASE_URL in your Railway variables.'); }
@@ -1746,7 +1748,9 @@ async function uploadDrawings(){
     if(tags) params.set('equipment_tags',tags);
     if(desc) params.set('description',desc);
 
-    var h={};var k=getKey();if(k) h['X-API-Key']=k;
+    var h={};
+    if(authToken) h['Authorization']='Bearer '+authToken;
+    else { var k=getKey(); if(k) h['X-API-Key']=k; }
     progressEl.textContent='Uploading '+files.length+' file'+(files.length>1?'s':'')+'...';
     var r=await fetch(API+'/drawings/upload-batch?'+params.toString(),{method:'POST',headers:h,body:fd});
     var d=await r.json();
