@@ -384,9 +384,16 @@ def _decode_jwt(token: str) -> dict | None:
 
 async def verify_auth(request: Request):
     """Authenticate via JWT Bearer token OR legacy API key."""
-    # Dev mode: skip auth if no API_KEY and no JWT_SECRET configured
+    # Dev mode: skip auth only if no API_KEY, no JWT_SECRET, AND no users exist
     if not API_KEY and os.getenv("JWT_SECRET", "").strip() == "":
-        return
+        try:
+            db = SessionLocal()
+            has_users = db.query(DBUser).first() is not None
+            db.close()
+            if not has_users:
+                return
+        except Exception:
+            return
 
     auth = request.headers.get("Authorization", "")
 
@@ -686,7 +693,7 @@ async def health_check():
     return {
         "status": status,
         "version": "1.0.0",
-        "api_key_required": bool(API_KEY),
+        "api_key_required": True,
         "warnings": warnings,
     }
 
