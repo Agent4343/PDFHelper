@@ -146,10 +146,30 @@ async def startup():
         logger.warning("Database init failed on first attempt: %s — retrying in background", exc)
         asyncio.create_task(_retry_db_init(logger))
 
-    # Auto-create admin account if ADMIN_USERNAME and ADMIN_PASSWORD are set
-    if ADMIN_USERNAME and ADMIN_PASSWORD:
-        try:
-            db = SessionLocal()
+    # Auto-create admin account on first run
+    try:
+        db = SessionLocal()
+        any_user = db.query(DBUser).first()
+        if not any_user:
+            username = ADMIN_USERNAME or "admin"
+            password = ADMIN_PASSWORD or secrets.token_urlsafe(16)
+            admin = DBUser(
+                id=str(uuid.uuid4()),
+                username=username,
+                password_hash=_hash_password(password),
+                is_admin=True,
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(admin)
+            db.commit()
+            logger.info("="*50)
+            logger.info("ADMIN ACCOUNT CREATED")
+            logger.info("  Username: %s", username)
+            if not ADMIN_PASSWORD:
+                logger.info("  Password: %s", password)
+                logger.info("  (Set ADMIN_PASSWORD env var to choose your own)")
+            logger.info("="*50)
+        elif ADMIN_USERNAME and ADMIN_PASSWORD:
             existing = db.query(DBUser).filter(DBUser.username == ADMIN_USERNAME).first()
             if not existing:
                 admin = DBUser(
@@ -162,9 +182,9 @@ async def startup():
                 db.add(admin)
                 db.commit()
                 logger.info("Admin account '%s' created.", ADMIN_USERNAME)
-            db.close()
-        except Exception as exc:
-            logger.warning("Failed to auto-create admin account: %s", exc)
+        db.close()
+    except Exception as exc:
+        logger.warning("Failed to auto-create admin account: %s", exc)
 
 
 # ---------------------------------------------------------------------------
