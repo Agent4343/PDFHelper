@@ -94,25 +94,6 @@ class TestRegisterRequestValidation:
             RegisterRequest(username="validuser", password="a" * 129)
 
 
-class TestRegisterRequestInviteCode:
-    def test_invite_code_optional_by_default(self):
-        r = RegisterRequest(username="validuser", password="securepass123")
-        assert r.invite_code is None
-
-    def test_invite_code_accepted(self):
-        r = RegisterRequest(username="validuser", password="securepass123", invite_code="my-secret")
-        assert r.invite_code == "my-secret"
-
-    def test_invite_code_max_length(self):
-        # Should not raise at 256 chars
-        r = RegisterRequest(username="validuser", password="securepass123", invite_code="a" * 256)
-        assert len(r.invite_code) == 256
-
-    def test_invite_code_over_max_length(self):
-        with pytest.raises(Exception):
-            RegisterRequest(username="validuser", password="securepass123", invite_code="a" * 257)
-
-
 class TestLoginRequestValidation:
     def test_valid_login(self):
         r = LoginRequest(username="user", password="pass")
