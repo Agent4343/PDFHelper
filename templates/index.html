@@ -333,6 +333,9 @@ input[type=text],input[type=password],textarea{font-size:16px}
     <!-- Upload page -->
     <div class="page active" id="page-upload">
       <h2>Upload PDFs</h2>
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> This is where you bring your PDF files into the app. Think of it like putting papers into a filing cabinet — once they're here, you can search them, read them, edit them, and ask the AI questions about them.</p>
+      </div>
       <div class="card">
         <input type="file" id="file-input" accept=".pdf" multiple style="display:none">
         <label class="drop-zone" id="drop-zone" for="file-input">
@@ -349,6 +352,9 @@ input[type=text],input[type=password],textarea{font-size:16px}
     <!-- Documents page -->
     <div class="page" id="page-documents">
       <h2>Documents</h2>
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> This is your file list — all the PDFs you've uploaded. You can see each file's name, how many pages it has, and when you uploaded it. You can <strong>download</strong> any file back to your computer, or <strong>delete</strong> ones you don't need anymore.</p>
+      </div>
       <div class="card">
         <button class="btn btn-secondary" onclick="loadDocuments()" style="margin-bottom:0.75rem">Refresh</button>
         <div id="doc-list"><p style="color:var(--muted);font-size:0.88rem">Click Refresh to load documents.</p></div>
@@ -358,6 +364,13 @@ input[type=text],input[type=password],textarea{font-size:16px}
     <!-- Search page -->
     <div class="page" id="page-search">
       <h2>Search Documents</h2>
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> Find things inside your PDFs — like using Ctrl+F but across ALL your documents at once. Two ways to search:</p>
+        <ul style="font-size:0.85rem;color:var(--muted);margin:0.4rem 0 0 1.2rem">
+          <li><strong>Keyword Search</strong> — Type exact words and it finds every place those words appear</li>
+          <li><strong>AI Search</strong> — Describe what you're looking for in everyday language (like "anything about safety rules") and the AI finds related content, even if it uses different words</li>
+        </ul>
+      </div>
       <div class="card">
         <h3>Keyword Search</h3>
         <label for="search-terms">Keywords (comma-separated)</label>
@@ -380,9 +393,18 @@ input[type=text],input[type=password],textarea{font-size:16px}
     <!-- Analyze page -->
     <div class="page" id="page-analyze">
       <h2>Multi-Agent Analysis</h2>
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> This sends your documents to 4 AI helpers that each check for different things:</p>
+        <ol style="font-size:0.85rem;color:var(--muted);margin:0.4rem 0 0 1.2rem">
+          <li><strong>Document Analyzer</strong> — Reads each document and figures out what it's about</li>
+          <li><strong>Cross-Reference Checker</strong> — Compares your documents to find things that disagree with each other</li>
+          <li><strong>Compliance Checker</strong> — Checks if anything is missing, outdated, or doesn't follow the rules</li>
+          <li><strong>Summary Report</strong> — Writes a final report telling you what needs to be fixed, starting with the most important things</li>
+        </ol>
+      </div>
       <div class="card">
         <p style="color:var(--muted);font-size:0.85rem;margin-bottom:1rem">
-          Runs 4 AI agents: Document Analyzer, Cross-Reference Checker, Compliance Checker, and Summary Report Generator.
+          Pick which documents to analyze, optionally enter a compliance standard, then click Run Analysis.
         </p>
         <label for="compliance-ctx">Compliance Standard (optional)</label>
         <input type="text" id="compliance-ctx" placeholder="e.g. OSHA 2024, HIPAA, FDA 21 CFR Part 11">
@@ -408,6 +430,9 @@ input[type=text],input[type=password],textarea{font-size:16px}
     <!-- History page -->
     <div class="page" id="page-history">
       <h2>History &amp; Reports</h2>
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> This saves everything you've done before — like a diary for the app. You can look back at old searches you ran and old analysis reports without having to run them again.</p>
+      </div>
       <div class="tabs">
         <button class="tab active" onclick="showHistoryTab('searches',this)">Searches</button>
         <button class="tab" onclick="showHistoryTab('reports',this)">Analysis Reports</button>
@@ -425,11 +450,19 @@ input[type=text],input[type=password],textarea{font-size:16px}
     <!-- PDF Tools page -->
     <div class="page" id="page-pdftools">
       <h2>PDF Tools</h2>
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> These are tools to change and edit your PDFs — like scissors, glue, and a marker for your documents:</p>
+        <ul style="font-size:0.85rem;color:var(--muted);margin:0.4rem 0 0 1.2rem">
+          <li><strong>Merge</strong> — Glue multiple PDFs together into one big file</li>
+          <li><strong>Split</strong> — Cut out specific pages and save them as a new file</li>
+          <li><strong>Add Text</strong> — Write words on top of a page (like stamping "DRAFT" or adding a note)</li>
+        </ul>
+      </div>
 
       <!-- Merge -->
       <div class="card">
         <h3>Merge PDFs</h3>
-        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Combine multiple documents into a single PDF. Select documents in order.</p>
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Pick 2 or more documents. They'll be glued together in the order shown.</p>
         <div id="merge-doc-select" style="margin-bottom:0.75rem;font-size:0.85rem;color:var(--muted)">Load documents from the Documents tab first</div>
         <label for="merge-filename">Output filename</label>
         <input type="text" id="merge-filename" placeholder="merged.pdf" style="margin-bottom:0.75rem">
@@ -440,7 +473,7 @@ input[type=text],input[type=password],textarea{font-size:16px}
       <!-- Split -->
       <div class="card">
         <h3>Split / Extract Pages</h3>
-        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Extract specific pages from a document into a new PDF.</p>
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Pick a document and choose which pages you want to pull out. They'll be saved as a brand new file. Use commas for individual pages (1,3,5) or dashes for ranges (1-5).</p>
         <label for="split-doc">Source document</label>
         <select id="split-doc" style="width:100%;padding:0.55rem 0.75rem;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.88rem;margin-bottom:0.5rem">
           <option value="">-- Select a document --</option>
@@ -456,7 +489,7 @@ input[type=text],input[type=password],textarea{font-size:16px}
       <!-- Annotate -->
       <div class="card">
         <h3>Add Text / Watermark</h3>
-        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Stamp text onto a page of a PDF document.</p>
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Write text on top of any page — like stamping "DRAFT" or "CONFIDENTIAL", or adding a note. Pick where on the page it goes, how big, and what color.</p>
         <label for="annot-doc">Document</label>
         <select id="annot-doc" style="width:100%;padding:0.55rem 0.75rem;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.88rem;margin-bottom:0.5rem">
           <option value="">-- Select a document --</option>
@@ -491,6 +524,15 @@ input[type=text],input[type=password],textarea{font-size:16px}
     <!-- IsoIntel page -->
     <div class="page" id="page-isointel">
       <h2>IsoIntel — Isolation Package Generator</h2>
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> This is a special tool for people who work on oil rigs, platforms, or industrial plants. When you need to shut down a piece of equipment safely (called "isolation"), this tool:</p>
+        <ol style="font-size:0.85rem;color:var(--muted);margin:0.4rem 0 0 1.2rem">
+          <li>Looks at your engineering drawings (P&ID diagrams)</li>
+          <li>Figures out all the pipes, valves, and energy sources connected to the equipment</li>
+          <li>Writes a step-by-step safety procedure telling workers exactly which valves to close, what to lock out, and in what order</li>
+        </ol>
+        <p style="font-size:0.85rem;color:var(--muted);margin-top:0.4rem">If you don't work in this industry, you can skip this tab entirely.</p>
+      </div>
 
       <!-- Drawing Management -->
       <div class="card">
@@ -573,6 +615,9 @@ input[type=text],input[type=password],textarea{font-size:16px}
     </div>
 
     <div class="page" id="page-bot">
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> Talk to an AI that has read all your documents. Ask it questions in plain English like "What does section 5 say about training?" or "Summarize the safety rules" — and it answers based on what's actually in your files. It's like having a helper who has memorized all your paperwork.</p>
+      </div>
       <div class="chat-layout">
         <div class="chat-sessions">
           <div class="sess-header">
