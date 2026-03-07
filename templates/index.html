@@ -194,25 +194,60 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 /* Responsive */
 @media(max-width:768px){
 .sidebar{display:none}
-.sidebar .logo span,.sidebar nav button span,.sidebar .status span{display:none}
-.sidebar nav button{justify-content:center;padding:0.75rem}
-.main{padding:1rem 0.75rem;height:100%}
-.api-bar{flex-direction:column;align-items:stretch}
-.api-bar .field{width:100%}
+.main{padding:0.75rem 0.5rem;height:100%}
+.main h2{font-size:1.15rem;margin-bottom:0.75rem}
+/* Top nav: horizontal scroll on mobile */
+.top-nav{overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap;
+  margin:0 -0.5rem 0.75rem;padding:0 0.5rem;scrollbar-width:none;gap:0}
+.top-nav::-webkit-scrollbar{display:none}
+.top-nav button{padding:0.55rem 0.7rem;font-size:0.78rem;flex-shrink:0}
+/* Auth bar */
+.api-bar{flex-direction:column;align-items:stretch;gap:0.5rem}
+.api-bar .field{width:100%;display:block!important;margin-right:0!important}
+.api-bar .field input{width:100%!important}
 .api-bar .btn{width:100%;justify-content:center}
-input[type=text],input[type=password],textarea{font-size:16px}
-.btn{padding:0.65rem 1rem;font-size:0.9rem}
+#auth-user-form,#auth-apikey-form{display:flex;flex-direction:column;gap:0.5rem}
+/* Forms */
+input[type=text],input[type=password],textarea,select{font-size:16px!important}
+.btn{padding:0.7rem 1rem;font-size:0.9rem;min-height:44px}
+/* Cards */
+.card{padding:1rem;border-radius:8px}
+.card h3{font-size:0.9rem}
 .drop-zone{padding:1.25rem}
 .stat{min-width:80px}
+.stats{gap:0.5rem}
+/* Grids stack on mobile */
+.iso-grid{grid-template-columns:1fr!important}
+/* Inline fixed-width inputs: let them flow */
+input[style*="width:70px"],input[style*="width:90px"],input[style*="width:140px"]{
+  width:100%!important;min-width:0}
+/* Doc rows */
+.doc-row{font-size:0.82rem;gap:0.5rem;padding:0.5rem 0}
+/* Result cards */
+.result-card{padding:0.7rem 0.85rem;font-size:0.82rem}
+/* Chat */
 .main.chat-active{padding:0}
+.main.chat-active .top-nav{margin:0;padding:0 0.5rem}
 .chat-doc-bar{padding:8px 10px;gap:4px}
 .chat-msgs{padding:14px 10px}
 .chat-input-bar{padding:10px;gap:8px}
 .chat-input-bar textarea{font-size:16px;padding:8px 12px}
-.chat-bbl{max-width:90%}
+.chat-bbl{max-width:92%}
 .chat-sugs{flex-direction:column;align-items:center}
-.chat-sug{width:100%;max-width:260px;text-align:center}
+.chat-sug{width:100%;max-width:280px;text-align:center}
 .chat-sessions{display:none}
+/* Setup overlay */
+#setup-overlay .card{margin:0.75rem;max-width:100%!important}
+/* Tables */
+table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0.82rem}
+/* Toast */
+.toast{max-width:92%;font-size:0.85rem;padding:0.7rem 1rem}
+}
+/* Small phones */
+@media(max-width:380px){
+.top-nav button{padding:0.5rem 0.55rem;font-size:0.72rem}
+.main{padding:0.5rem 0.35rem}
+.card{padding:0.75rem 0.65rem}
 }
 </style>
 </head>
@@ -557,7 +592,7 @@ input[type=text],input[type=password],textarea{font-size:16px}
       <!-- Generate Isolation -->
       <div class="card">
         <h3>Generate Isolation Package</h3>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+        <div class="iso-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
           <div>
             <label for="iso-equip">Equipment / Tag</label>
             <input type="text" id="iso-equip" placeholder="e.g. HB-P-1001A">
