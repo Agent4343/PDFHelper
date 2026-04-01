@@ -539,7 +539,7 @@ class AnalyzeRequest(BaseModel):
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"] = Field(description="'user' or 'assistant'")
-    content: str = Field(max_length=50000)
+    content: str = Field(max_length=200000)
 
 
 class ChatRequest(BaseModel):
@@ -1116,19 +1116,6 @@ async def chat_with_documents(
 
     procedure_context = "\n\n".join(procedure_parts)
 
-    system_prompt = f"""You are a Procedure Knowledge Assistant. You ONLY answer questions based on the procedure documents provided below.
-
-RULES:
-1. ONLY use information from the provided procedure documents to answer questions.
-2. ALWAYS cite which procedure document your answer comes from by name and section if possible.
-3. If the answer cannot be found in the provided procedures, say "I couldn't find information about that in the selected procedures." and suggest which type of document might contain the answer.
-4. Be precise and direct. Quote relevant sections when helpful.
-5. If a question spans multiple procedures, reference all relevant ones.
-6. Format your answers clearly with procedure references in bold.
-
-LOADED PROCEDURES:
-{procedure_context}"""
-
     # Build conversation from DB history (prefer DB over client-sent history)
     db_messages = (
         db.query(DBChatMessage)
@@ -1149,6 +1136,38 @@ LOADED PROCEDURES:
             if m.role in ("user", "assistant")
         ]
     conversation.append({"role": "user", "content": body.message})
+
+    # Budget the total context to stay within the model's context window.
+    # Reserve chars for the system prompt template, response tokens, and safety margin.
+    # Approximate: 1 token ≈ 4 chars.  Model context ≈ 200K tokens ≈ 800K chars.
+    MAX_TOTAL_CHARS = 600000  # leave headroom for response + system template
+    conv_chars = sum(len(m["content"]) for m in conversation)
+
+    # If conversation history alone is too large, trim older messages (keep latest)
+    while conv_chars > 200000 and len(conversation) > 1:
+        removed = conversation.pop(0)
+        conv_chars -= len(removed["content"])
+
+    budget_for_procedures = MAX_TOTAL_CHARS - conv_chars
+    if budget_for_procedures < 10000:
+        budget_for_procedures = 10000  # always keep at least some procedure context
+
+    # Truncate procedure context if it exceeds budget
+    if len(procedure_context) > budget_for_procedures:
+        procedure_context = procedure_context[:budget_for_procedures] + "\n\n[... procedures truncated to fit context window ...]"
+
+    system_prompt = f"""You are a Procedure Knowledge Assistant. You ONLY answer questions based on the procedure documents provided below.
+
+RULES:
+1. ONLY use information from the provided procedure documents to answer questions.
+2. ALWAYS cite which procedure document your answer comes from by name and section if possible.
+3. If the answer cannot be found in the provided procedures, say "I couldn't find information about that in the selected procedures." and suggest which type of document might contain the answer.
+4. Be precise and direct. Quote relevant sections when helpful.
+5. If a question spans multiple procedures, reference all relevant ones.
+6. Format your answers clearly with procedure references in bold.
+
+LOADED PROCEDURES:
+{procedure_context}"""
 
     from anthropic import Anthropic
     client = Anthropic(api_key=api_key)
