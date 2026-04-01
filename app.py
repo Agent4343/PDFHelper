@@ -327,10 +327,48 @@ def _safe_unlink(filepath: Path) -> None:
 
 PDF_MAGIC_BYTES = b"%PDF-"
 
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"}
+
 
 def _verify_pdf_content(data: bytes) -> bool:
     """Check that the file actually starts with the PDF magic bytes."""
     return data[:5] == PDF_MAGIC_BYTES
+
+
+def _is_image_file(filename: str) -> bool:
+    """Check if a filename has an image extension."""
+    return any(filename.lower().endswith(ext) for ext in ALLOWED_IMAGE_EXTENSIONS)
+
+
+def _image_to_pdf(image_bytes: bytes) -> bytes:
+    """Convert an image file to a single-page PDF."""
+    from PIL import Image
+    import io
+    img = Image.open(io.BytesIO(image_bytes))
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PDF", resolution=200)
+    return buf.getvalue()
+
+
+def _extract_image_base64(image_bytes: bytes) -> str:
+    """Return a base64-encoded version of the image for Claude vision."""
+    import base64
+    return base64.b64encode(image_bytes).decode("ascii")
+
+
+def _detect_image_media_type(image_bytes: bytes) -> str:
+    """Detect image MIME type from bytes."""
+    if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+        return "image/png"
+    if image_bytes[:2] == b'\xff\xd8':
+        return "image/jpeg"
+    if image_bytes[:4] in (b'II*\x00', b'MM\x00*'):
+        return "image/tiff"
+    if image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
+        return "image/webp"
+    return "image/png"  # fallback
 
 
 # ---------------------------------------------------------------------------
@@ -590,26 +628,42 @@ class IsolationRequest(BaseModel):
 # Validation
 # ---------------------------------------------------------------------------
 
-def validate_pdf(file: UploadFile, content: bytes) -> str:
-    """Validate an uploaded PDF file. Returns sanitized filename."""
+def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool]:
+    """Validate an uploaded file (PDF or image). Returns (sanitized_name, file_bytes, is_image).
+
+    Images are converted to PDF for text extraction. The original image bytes
+    are returned alongside so they can be stored for Claude vision.
+    """
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
 
     clean_name = _sanitize_filename(file.filename)
-    if not clean_name.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400,
-                            detail=f"Only PDF files allowed, got: {clean_name}")
+    is_image = _is_image_file(clean_name)
 
-    # Verify actual file content — not just the extension
-    if not _verify_pdf_content(content):
+    if not clean_name.lower().endswith(".pdf") and not is_image:
         raise HTTPException(status_code=400,
-                            detail="File does not appear to be a valid PDF")
+                            detail=f"Only PDF and image files allowed, got: {clean_name}")
 
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
             detail=f"{clean_name} exceeds max size of {MAX_FILE_SIZE // (1024*1024)} MB",
         )
+
+    if is_image:
+        # Convert image to PDF for text extraction pipeline
+        try:
+            pdf_bytes = _image_to_pdf(content)
+        except Exception as exc:
+            raise HTTPException(status_code=400,
+                                detail=f"Could not process image {clean_name}: {exc}")
+        return clean_name, pdf_bytes, True
+    else:
+        # Verify actual PDF content
+        if not _verify_pdf_content(content):
+            raise HTTPException(status_code=400,
+                                detail="File does not appear to be a valid PDF")
+        return clean_name, content, False
 
     return clean_name
 
@@ -832,7 +886,12 @@ async def upload_pdfs(
     background_tasks: BackgroundTasks = None,
     db=Depends(get_db),
 ):
-    """Upload one or more PDFs for later searching."""
+    """Upload one or more PDFs or images for later searching.
+
+    Supported formats: PDF, JPG, PNG, TIFF, BMP, WebP.
+    Images are automatically converted to PDF and OCR'd for text extraction.
+    Original images are also stored so Claude vision can analyze them in chat.
+    """
     if len(files) > MAX_FILES_PER_REQUEST:
         raise HTTPException(status_code=400,
                             detail=f"Max {MAX_FILES_PER_REQUEST} files per request")
@@ -845,19 +904,24 @@ async def upload_pdfs(
 
     uploaded = []
     for file in files:
-        content = await file.read()
-        clean_name = validate_pdf(file, content)
+        raw_content = await file.read()
+        clean_name, pdf_bytes, is_image = validate_upload(file, raw_content)
 
-        # Extract text from raw bytes (never written unencrypted to disk)
-        pages = extract_text_from_bytes(content)
+        # Extract text from PDF bytes (images were converted to PDF above)
+        pages = extract_text_from_bytes(pdf_bytes)
 
         doc_id = str(uuid.uuid4())
         save_path = UPLOAD_DIR / f"{doc_id}.pdf.enc"
 
-        # Encrypt and save
-        _encrypt_and_save(content, save_path)
+        # Encrypt and save the PDF version
+        _encrypt_and_save(pdf_bytes, save_path)
 
-        content_hash = hashlib.sha256(content).hexdigest()
+        # If it was an image, also save the original for Claude vision
+        if is_image:
+            img_save_path = UPLOAD_DIR / f"{doc_id}.img.enc"
+            _encrypt_and_save(raw_content, img_save_path)
+
+        content_hash = hashlib.sha256(raw_content).hexdigest()
 
         db_doc = DBDocument(
             id=doc_id,
@@ -877,6 +941,7 @@ async def upload_pdfs(
             "id": doc_id,
             "filename": clean_name,
             "pages": len(pages),
+            "type": "image" if is_image else "pdf",
         })
 
     return {"uploaded": uploaded, "count": len(uploaded)}
@@ -1105,6 +1170,7 @@ async def chat_with_documents(
 
     # Build procedure context from selected documents
     procedure_parts = []
+    image_content_blocks = []  # Claude vision blocks for uploaded images
     for doc in documents:
         decrypted_name = _decrypt_text(doc.filename)
         pages = json.loads(_decrypt_text(doc.text_content))
@@ -1114,6 +1180,28 @@ async def chat_with_documents(
         procedure_parts.append(
             f'--- PROCEDURE: "{decrypted_name}" ---\n{full_text}\n--- END OF "{decrypted_name}" ---'
         )
+
+        # Check if this document has an associated image file for vision
+        img_path = Path(doc.filepath.replace(".pdf.enc", ".img.enc"))
+        if img_path.exists() and len(image_content_blocks) < 10:  # max 10 images
+            try:
+                img_bytes = _decrypt_and_load(img_path)
+                media_type = _detect_image_media_type(img_bytes)
+                b64 = _extract_image_base64(img_bytes)
+                image_content_blocks.append({
+                    "type": "text",
+                    "text": f"[Image: {decrypted_name}]"
+                })
+                image_content_blocks.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": b64,
+                    }
+                })
+            except Exception:
+                pass  # skip if image can't be loaded
 
     procedure_context = "\n\n".join(procedure_parts)
 
@@ -1136,18 +1224,36 @@ async def chat_with_documents(
             for m in body.conversation_history[-10:]
             if m.role in ("user", "assistant")
         ]
-    conversation.append({"role": "user", "content": body.message})
+    # Build the user message — include images via Claude vision if available
+    if image_content_blocks:
+        user_content = list(image_content_blocks)  # copy
+        user_content.append({"type": "text", "text": body.message})
+        conversation.append({"role": "user", "content": user_content})
+    else:
+        conversation.append({"role": "user", "content": body.message})
 
     # Budget the total context to stay within the model's context window.
     # Reserve chars for the system prompt template, response tokens, and safety margin.
     # Approximate: 1 token ≈ 4 chars.  Model context ≈ 200K tokens ≈ 800K chars.
+    # Each image ≈ 1600 tokens, so subtract from budget.
     MAX_TOTAL_CHARS = 600000  # leave headroom for response + system template
-    conv_chars = sum(len(m["content"]) for m in conversation)
+    image_char_budget = len(image_content_blocks) // 2 * 6400  # ~1600 tokens * 4 chars per image
+    MAX_TOTAL_CHARS -= image_char_budget
+
+    def _msg_text_len(m):
+        c = m["content"]
+        if isinstance(c, str):
+            return len(c)
+        if isinstance(c, list):
+            return sum(len(b.get("text", "")) for b in c if isinstance(b, dict) and b.get("type") == "text")
+        return 0
+
+    conv_chars = sum(_msg_text_len(m) for m in conversation)
 
     # If conversation history alone is too large, trim older messages (keep latest)
     while conv_chars > 200000 and len(conversation) > 1:
         removed = conversation.pop(0)
-        conv_chars -= len(removed["content"])
+        conv_chars -= _msg_text_len(removed)
 
     budget_for_procedures = MAX_TOTAL_CHARS - conv_chars
     if budget_for_procedures < 10000:
@@ -1805,16 +1911,22 @@ async def upload_drawing(
     else:
         dest.write_bytes(content)
 
-    # Extract text if PDF
+    # Extract text — convert images to PDF first for OCR
     text_content = "[]"
     page_count = 1
-    if ext == "pdf":
-        try:
+    try:
+        if ext == "pdf":
             pages = extract_text_from_bytes(content)
+        elif ext in ("jpg", "jpeg", "png", "tiff", "tif", "bmp", "webp"):
+            pdf_bytes = _image_to_pdf(content)
+            pages = extract_text_from_bytes(pdf_bytes)
+        else:
+            pages = []
+        if pages:
             text_content = json.dumps(pages)
             page_count = len(pages)
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     drawing = DBDrawing(
         id=drawing_id,
@@ -2254,15 +2366,22 @@ async def delete_isolation(isolation_id: str, db=Depends(get_db)):
 # PDF Tools — Download, Merge, Split, Annotate
 # ---------------------------------------------------------------------------
 
+def _decrypt_and_load(filepath: Path) -> bytes:
+    """Load and decrypt any encrypted file, returning raw bytes."""
+    if not filepath.exists():
+        raise FileNotFoundError(f"File not found: {filepath}")
+    if ENCRYPTION_KEY:
+        from encryption import decrypt_file
+        return decrypt_file(str(filepath))
+    return filepath.read_bytes()
+
+
 def _load_pdf_bytes(doc) -> bytes:
     """Load and decrypt a stored PDF, returning raw bytes."""
     filepath = Path(doc.filepath)
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="PDF file not found on disk")
-    if ENCRYPTION_KEY:
-        from encryption import decrypt_file
-        return decrypt_file(str(filepath))
-    return filepath.read_bytes()
+    return _decrypt_and_load(filepath)
 
 
 @app.get("/documents/{doc_id}/download", dependencies=[Depends(verify_api_key)])

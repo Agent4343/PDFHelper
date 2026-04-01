@@ -400,16 +400,16 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
 
     <!-- Upload page -->
     <div class="page active" id="page-upload">
-      <h2>Upload PDFs</h2>
+      <h2>Upload Files</h2>
       <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
         <p style="font-size:0.9rem"><strong>What does this do?</strong> This is where you bring your PDF files into the app. Think of it like putting papers into a filing cabinet — once they're here, you can search them, read them, edit them, and ask the AI questions about them.</p>
       </div>
       <div class="card">
-        <input type="file" id="file-input" accept=".pdf" multiple style="display:none">
+        <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif,.bmp,.webp" multiple style="display:none">
         <label class="drop-zone" id="drop-zone" for="file-input">
           <div class="icon">&#128196;</div>
-          <p>Click or drag PDF files here</p>
-          <p style="font-size:0.78rem;color:var(--muted)">Max 20 files, 20 MB each</p>
+          <p>Click or drag PDF / image files here</p>
+          <p style="font-size:0.78rem;color:var(--muted)">PDF, JPG, PNG, TIFF, BMP, WebP — Max 20 files, 20 MB each</p>
           <div class="selected" id="file-list"></div>
         </label>
         <button class="btn btn-primary" id="upload-btn" onclick="uploadFiles()">Upload</button>
@@ -1044,7 +1044,8 @@ dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover
 dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
 dz.addEventListener('drop',e=>{
   e.preventDefault();dz.classList.remove('dragover');
-  selectedFiles=[...e.dataTransfer.files].filter(f=>f.name.toLowerCase().endsWith('.pdf'));
+  var allowedExts=['.pdf','.jpg','.jpeg','.png','.tiff','.tif','.bmp','.webp'];
+  selectedFiles=[...e.dataTransfer.files].filter(f=>allowedExts.some(ext=>f.name.toLowerCase().endsWith(ext)));
   showFileNames();
 });
 function showFileNames(){
