@@ -1762,7 +1762,7 @@ async function exportChatToWord(){
     var blob=await r.blob();
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
-    a.href=url;a.download=(r.headers.get('content-disposition')||'').split('filename="')[1]?.replace('"','')||'chat-export.docx';
+    a.href=url;var cd=r.headers.get('content-disposition')||'';var m=cd.match(/filename="([^"]+)"/);a.download=m?m[1]:'chat-export.docx';
     document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
     toast('Word document downloaded','success');
   }catch(e){toast(e.message,'error');}
@@ -1790,7 +1790,7 @@ async function generateDoc(){
     var blob=await r.blob();
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
-    a.href=url;a.download=(r.headers.get('content-disposition')||'').split('filename="')[1]?.replace('"','')||title+'.docx';
+    a.href=url;var cd2=r.headers.get('content-disposition')||'';var m2=cd2.match(/filename="([^"]+)"/);a.download=m2?m2[1]:(title+'.docx');
     document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
     toast('Document generated and downloaded','success');
     hideGenDocModal();

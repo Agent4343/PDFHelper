@@ -1298,58 +1298,36 @@ LOADED PROCEDURES:
     async def stream_chat():
         """Stream the AI response as Server-Sent Events.
 
-        Supports multi-turn tool use: if the model invokes web_search,
-        we feed the results back and continue until we get a final text
-        response.
+        When CHAT_WEB_SEARCH is enabled, the Anthropic API's server-side
+        web_search connector automatically searches and returns results
+        within a single request — no multi-turn loop needed.
         """
         full_reply = ""
-        msgs = list(conversation)  # local copy we may extend with tool results
-        max_rounds = 5  # prevent infinite tool-use loops
 
         try:
             # Send session metadata first
             yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'documents_used': doc_info})}\n\n"
 
-            for _round in range(max_rounds):
-                create_kwargs = dict(
-                    model=CHAT_MODEL,
-                    max_tokens=CHAT_MAX_TOKENS,
-                    system=system_prompt,
-                    messages=msgs,
-                )
-                if chat_tools:
-                    create_kwargs["tools"] = chat_tools
+            create_kwargs = dict(
+                model=CHAT_MODEL,
+                max_tokens=CHAT_MAX_TOKENS,
+                system=system_prompt,
+                messages=conversation,
+            )
+            if chat_tools:
+                create_kwargs["tools"] = chat_tools
 
-                with client.messages.stream(**create_kwargs) as stream:
-                    for text in stream.text_stream:
-                        full_reply += text
-                        yield f"data: {json.dumps({'type': 'chunk', 'text': text})}\n\n"
-
-                    response = stream.get_final_message()
-
-                # If the model didn't request tool use, we're done
-                if response.stop_reason != "tool_use":
-                    break
-
-                # Collect tool use blocks and build tool results
-                tool_results = []
-                for block in response.content:
-                    if block.type == "server_tool_use" and block.name == "web_search":
-                        yield f"data: {json.dumps({'type': 'status', 'message': 'Searching the web...'})}\n\n"
-                # Append assistant response and tool results for next round
-                msgs.append({"role": "assistant", "content": response.content})
-                # Find all server_tool_result blocks from response content
-                # The API returns server_tool_result blocks automatically for
-                # server-side tools — we just need to keep going.
-                # For server-side connectors like web_search, the results are
-                # included automatically. We need to pass them back.
-                tool_result_blocks = []
-                for block in response.content:
-                    if block.type == "server_tool_use":
-                        tool_result_blocks.append(block)
-                # Server-side tools: the API handles results internally.
-                # We just need to send back the full content to continue.
-                # The next iteration will include the search results automatically.
+            with client.messages.stream(**create_kwargs) as stream:
+                for event in stream:
+                    # Stream text chunks to the client
+                    if hasattr(event, 'type'):
+                        if event.type == 'content_block_start':
+                            if hasattr(event.content_block, 'type') and event.content_block.type == 'server_tool_use':
+                                yield f"data: {json.dumps({'type': 'status', 'message': 'Searching the web...'})}\n\n"
+                        elif event.type == 'content_block_delta':
+                            if hasattr(event.delta, 'text'):
+                                full_reply += event.delta.text
+                                yield f"data: {json.dumps({'type': 'chunk', 'text': event.delta.text})}\n\n"
 
             # Signal completion
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -1660,27 +1638,20 @@ INSTRUCTIONS:
 - Structure the document logically with clear sections
 - The document should be complete and ready to use — not a draft or outline"""
 
-    generate_kwargs = dict(
+    create_kwargs = dict(
         model=CHAT_MODEL,
         max_tokens=CHAT_MAX_TOKENS * 2,  # allow longer output for documents
         system=system,
         messages=[{"role": "user", "content": body.instructions}],
     )
     if CHAT_WEB_SEARCH:
-        generate_kwargs["tools"] = [{"type": "web_search_20250305"}]
+        create_kwargs["tools"] = [{"type": "web_search_20250305"}]
 
-    # Multi-round for tool use (web search)
-    all_messages = [{"role": "user", "content": body.instructions}]
+    response = client.messages.create(**create_kwargs)
     full_text = ""
-    for _round in range(5):
-        generate_kwargs["messages"] = all_messages
-        response = client.messages.create(**generate_kwargs)
-        for block in response.content:
-            if hasattr(block, "text"):
-                full_text += block.text
-        if response.stop_reason != "tool_use":
-            break
-        all_messages.append({"role": "assistant", "content": response.content})
+    for block in response.content:
+        if hasattr(block, "text"):
+            full_text += block.text
 
     if not full_text.strip():
         raise HTTPException(status_code=500, detail="AI failed to generate document content")
