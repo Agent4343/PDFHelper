@@ -744,7 +744,7 @@ async function doSetup(){
       toast('Admin account created — welcome, '+d.username+'!');
     } else {
       const d=await r.json().catch(()=>({}));
-      st.textContent=d.detail||'Setup failed'; st.className='api-status disconnected';
+      st.textContent=detailStr(d.detail)||'Setup failed'; st.className='api-status disconnected';
     }
   }catch(e){ st.textContent='Cannot reach server'; st.className='api-status disconnected'; }
 }
@@ -765,8 +765,8 @@ async function doLogin(){
       toast('Logged in as '+d.username);
     } else {
       const d=await r.json().catch(()=>({}));
-      setAuthStatus(d.detail||'Login failed','disconnected');
-      toast(d.detail||'Login failed','error');
+      setAuthStatus(detailStr(d.detail)||'Login failed','disconnected');
+      toast(detailStr(d.detail)||'Login failed','error');
     }
   }catch(e){ setAuthStatus('Cannot reach server','disconnected'); toast('Cannot reach server','error'); }
 }
@@ -788,8 +788,8 @@ async function doRegister(){
       toast('Account created — logged in as '+d.username);
     } else {
       const d=await r.json().catch(()=>({}));
-      setAuthStatus(d.detail||'Registration failed','disconnected');
-      toast(d.detail||'Registration failed','error');
+      setAuthStatus(detailStr(d.detail)||'Registration failed','disconnected');
+      toast(detailStr(d.detail)||'Registration failed','error');
     }
   }catch(e){ setAuthStatus('Cannot reach server','disconnected'); toast('Cannot reach server','error'); }
 }
@@ -908,6 +908,7 @@ function headers(json){
   if(json) h['Content-Type']='application/json';
   return h;
 }
+function detailStr(d){if(!d)return'';if(typeof d==='string')return d;if(Array.isArray(d))return d.map(function(e){return e&&e.msg?e.msg:JSON.stringify(e)}).join('; ');return JSON.stringify(d);}
 function toast(msg,type='success'){
   const t=document.getElementById('toast');
   t.textContent=msg; t.className='toast '+type+' show';
@@ -944,8 +945,8 @@ async function testConnection(){
         toast('Key mismatch — enter the exact PDF_HELPER_API_KEY value from your Railway environment variables','error');
       } else {
         const d=await r.json().catch(()=>({}));
-        setApiStatus('Connection failed: '+(d.detail||r.status),'disconnected');
-        toast(d.detail||'Connection failed','error');
+        setApiStatus('Connection failed: '+(detailStr(d.detail)||r.status),'disconnected');
+        toast(detailStr(d.detail)||'Connection failed','error');
       }
     }
   }catch(e){
@@ -1037,10 +1038,10 @@ async function uploadFiles(){
       authToken=null; apiConnected=false;
       localStorage.removeItem('pdfhelper_jwt');
       showLoginMode();
-      throw new Error(d.detail||'Your session has expired. Please log in again.');
+      throw new Error(detailStr(d.detail)||'Your session has expired. Please log in again.');
     }
     if(r.status===503) throw new Error('Database is unavailable. Check that DATABASE_URL is set in your Railway service variables.');
-    if(!r.ok) throw new Error(d.detail||'Upload failed (status '+r.status+')');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Upload failed (status '+r.status+')');
     apiConnected=true;
     res.innerHTML='<div class="card"><h3>Uploaded '+d.count+' file(s)</h3>'+
       d.uploaded.map(u=>'<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+
@@ -1063,7 +1064,7 @@ async function loadDocuments(){
     const r=await fetch(API+'/documents',{headers:headers()});
     if(r.status===401){ el.innerHTML='<p style="color:var(--red)">API key required. Enter your key above and click Connect.</p>'; return; }
     const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Failed');
     apiConnected=true;
     allDocs=d.documents||[];
     if(!allDocs.length){el.innerHTML='<p style="color:var(--muted)">No documents uploaded yet.</p>';updateDocSelectors();return;}
@@ -1101,7 +1102,7 @@ async function deleteDoc(id){
   if(!confirm('Delete this document permanently?'))return;
   try{
     const r=await fetch(API+'/documents/'+id,{method:'DELETE',headers:headers()});
-    if(!r.ok){const d=await r.json();throw new Error(d.detail||'Failed');}
+    if(!r.ok){const d=await r.json();throw new Error(detailStr(d.detail)||'Failed');}
     toast('Document deleted');loadDocuments();
   }catch(e){toast(e.message,'error');}
 }
@@ -1111,7 +1112,7 @@ async function downloadDoc(id,filename){
   if(!requireKey()) return;
   try{
     const r=await fetch(API+'/documents/'+id+'/download',{headers:headers()});
-    if(!r.ok){const d=await r.json();throw new Error(d.detail||'Download failed');}
+    if(!r.ok){const d=await r.json();throw new Error(detailStr(d.detail)||'Download failed');}
     const blob=await r.blob();
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
@@ -1137,7 +1138,7 @@ async function mergePDFs(){
       body:JSON.stringify({doc_ids:sel,output_filename:fname})
     });
     const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Merge failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Merge failed');
     res.innerHTML='<div class="result-card"><div class="label">Merged Document</div><div class="text">'+
       esc(d.filename)+' — '+d.pages+' pages<br><code>'+d.id+'</code></div></div>';
     toast('Documents merged successfully');
@@ -1180,7 +1181,7 @@ async function splitPDF(){
       body:JSON.stringify({pages:pages,output_filename:fname})
     });
     var d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Split failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Split failed');
     res.innerHTML='<div class="result-card"><div class="label">Extracted Document</div><div class="text">'+
       esc(d.filename)+' — '+d.pages+' pages (from pages '+d.page_numbers.join(', ')+')<br><code>'+d.id+'</code></div></div>';
     toast('Pages extracted successfully');
@@ -1215,7 +1216,7 @@ async function annotatePDF(){
       method:'POST',headers:h,body:fd
     });
     var d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Annotation failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Annotation failed');
     var msg=d.updated?'Document updated':'New annotated document created';
     res.innerHTML='<div class="result-card"><div class="label">'+msg+'</div><div class="text">'+
       esc(d.filename)+' — '+d.pages+' pages<br><code>'+d.id+'</code></div></div>';
@@ -1242,7 +1243,7 @@ async function runSearch(){
     if(aiQ) body.ai_query=aiQ;
     const r=await fetch(url,{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Search failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Search failed');
     renderSearchResults(d,res);
     toast('Search complete');
   }catch(e){res.innerHTML='<div class="card" style="color:var(--red)">'+esc(e.message)+'</div>';}
@@ -1299,7 +1300,7 @@ async function runAnalysis(){
     if(selDocs.length) url+='?'+selDocs.map(id=>'doc_ids='+id).join('&');
     const r=await fetch(url,{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Analysis failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Analysis failed');
     renderAnalysis(d,res);
     toast('Analysis complete');
   }catch(e){res.innerHTML='<div class="card" style="color:var(--red)">'+esc(e.message)+'</div>';}
@@ -1362,7 +1363,7 @@ async function loadHistory(){
   try{
     const r=await fetch(API+'/history?limit=50',{headers:headers()});
     const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Failed');
     const items=d.searches||[];
     if(!items.length){el.innerHTML='<p style="color:var(--muted)">No search history.</p>';return;}
     el.innerHTML=items.map(s=>
@@ -1383,7 +1384,7 @@ async function viewSearch(id){
   try{
     const r=await fetch(API+'/history/'+id,{headers:headers()});
     const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Failed');
     let html='<button class="btn btn-secondary" onclick="loadHistory()" style="margin-bottom:0.75rem">&larr; Back</button>';
     const wrap=document.createElement('div');wrap.id='history-list';
     el.parentNode.replaceChild(wrap,el);
@@ -1398,7 +1399,7 @@ async function loadReports(){
   try{
     const r=await fetch(API+'/reports?limit=50',{headers:headers()});
     const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Failed');
     const items=d.reports||[];
     if(!items.length){el.innerHTML='<p style="color:var(--muted)">No reports yet.</p>';return;}
     el.innerHTML=items.map(rp=>{
@@ -1416,7 +1417,7 @@ async function viewReport(id){
   try{
     const r=await fetch(API+'/reports/'+id,{headers:headers()});
     const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Failed');
     let html='<button class="btn btn-secondary" onclick="loadReports()" style="margin-bottom:0.75rem">&larr; Back</button>';
     const wrap=document.createElement('div');wrap.id='reports-list';
     el.parentNode.replaceChild(wrap,el);
@@ -1657,7 +1658,7 @@ async function botSend(){
 
     if(!r.ok){
       var errData=await r.json().catch(function(){return {};});
-      throw new Error(errData.detail||'Request failed ('+r.status+')');
+      throw new Error(detailStr(errData.detail)||'Request failed ('+r.status+')');
     }
 
     /* Read the SSE stream */
@@ -1683,7 +1684,7 @@ async function botSend(){
             botMessages[assistantIdx].content+=evt.text;
             renderBotMessages();
           } else if(evt.type==='error'){
-            botMessages[assistantIdx].content+=(botMessages[assistantIdx].content?'\n\n':'')+'Error: '+evt.detail;
+            botMessages[assistantIdx].content+=(botMessages[assistantIdx].content?'\n\n':'')+'Error: '+detailStr(evt.detail);
           }
         }catch(parseErr){}
       }
@@ -1822,7 +1823,7 @@ async function uploadDrawings(){
     progressEl.textContent='Uploading '+files.length+' file'+(files.length>1?'s':'')+'...';
     var r=await fetch(API+'/drawings/upload-batch?'+params.toString(),{method:'POST',headers:h,body:fd});
     var d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Upload failed');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Upload failed');
     var msg=d.total_uploaded+' drawing'+(d.total_uploaded!==1?'s':'')+' uploaded';
     if(d.total_errors>0) msg+=', '+d.total_errors+' failed';
     toast(msg,d.total_errors>0?'var(--orange)':'var(--green)');
@@ -1886,7 +1887,7 @@ async function generateIsolation(){
     var r=await fetch(API+'/isolations/generate',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     if(!r.ok){
       var errData=await r.json().catch(function(){return {};});
-      throw new Error(errData.detail||'Request failed ('+r.status+')');
+      throw new Error(detailStr(errData.detail)||'Request failed ('+r.status+')');
     }
 
     var reader=r.body.getReader();
@@ -1925,7 +1926,7 @@ async function generateIsolation(){
               document.getElementById('iso-output').textContent=JSON.stringify(parsed,null,2);
             }catch(pe){}
           } else if(evt.type==='error'){
-            document.getElementById('iso-status').innerHTML='<span style="color:var(--red)">Error: '+esc(evt.detail)+'</span>';
+            document.getElementById('iso-status').innerHTML='<span style="color:var(--red)">Error: '+esc(detailStr(evt.detail))+'</span>';
           }
         }catch(pe){}
       }
@@ -1971,7 +1972,7 @@ async function viewIsolation(id){
   try{
     var r=await fetch(API+'/isolations/'+id,{headers:headers()});
     var d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'Not found');
+    if(!r.ok) throw new Error(detailStr(d.detail)||'Not found');
 
     var outCard=document.getElementById('iso-output-card');
     outCard.style.display='';
