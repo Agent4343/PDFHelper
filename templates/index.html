@@ -1680,6 +1680,10 @@ async function botSend(){
           var evt=JSON.parse(line.substring(6));
           if(evt.type==='meta'){
             if(evt.session_id) currentSessionId=evt.session_id;
+          } else if(evt.type==='status'){
+            /* Show a temporary status like "Searching the web..." */
+            var typing=document.querySelector('.chat-typing-bbl');
+            if(typing) typing.textContent=evt.message||'Thinking...';
           } else if(evt.type==='chunk'){
             botMessages[assistantIdx].content+=evt.text;
             renderBotMessages();

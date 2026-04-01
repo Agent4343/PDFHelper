@@ -62,6 +62,7 @@ MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-4-5-20250929")
 CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "8192"))
+CHAT_WEB_SEARCH = os.getenv("CHAT_WEB_SEARCH", "true").lower() == "true"
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/pdfhelper_uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1156,15 +1157,16 @@ async def chat_with_documents(
     if len(procedure_context) > budget_for_procedures:
         procedure_context = procedure_context[:budget_for_procedures] + "\n\n[... procedures truncated to fit context window ...]"
 
-    system_prompt = f"""You are a Procedure Knowledge Assistant. You ONLY answer questions based on the procedure documents provided below.
+    system_prompt = f"""You are a Procedure Knowledge Assistant. You answer questions based on the procedure documents provided below, and when needed you can also search the web for additional information.
 
 RULES:
-1. ONLY use information from the provided procedure documents to answer questions.
+1. FIRST check the provided procedure documents for relevant information.
 2. ALWAYS cite which procedure document your answer comes from by name and section if possible.
-3. If the answer cannot be found in the provided procedures, say "I couldn't find information about that in the selected procedures." and suggest which type of document might contain the answer.
-4. Be precise and direct. Quote relevant sections when helpful.
-5. If a question spans multiple procedures, reference all relevant ones.
-6. Format your answers clearly with procedure references in bold.
+3. If the answer cannot be found in the provided procedures, use web search to find relevant information from the internet.
+4. When using web search results, clearly indicate which information came from the web vs. from the loaded procedures.
+5. Be precise and direct. Quote relevant sections when helpful.
+6. If a question spans multiple procedures, reference all relevant ones.
+7. Format your answers clearly with procedure references in bold.
 
 LOADED PROCEDURES:
 {procedure_context}"""
@@ -1182,22 +1184,66 @@ LOADED PROCEDURES:
     session_id = session.id
     doc_info = [{"id": d.id, "filename": _decrypt_text(d.filename)} for d in documents]
 
+    # Configure tools — optionally include web search
+    chat_tools = []
+    if CHAT_WEB_SEARCH:
+        chat_tools.append({"type": "web_search_20250305"})
+
     async def stream_chat():
-        """Stream the AI response as Server-Sent Events."""
+        """Stream the AI response as Server-Sent Events.
+
+        Supports multi-turn tool use: if the model invokes web_search,
+        we feed the results back and continue until we get a final text
+        response.
+        """
         full_reply = ""
+        msgs = list(conversation)  # local copy we may extend with tool results
+        max_rounds = 5  # prevent infinite tool-use loops
+
         try:
             # Send session metadata first
             yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'documents_used': doc_info})}\n\n"
 
-            with client.messages.stream(
-                model=CHAT_MODEL,
-                max_tokens=CHAT_MAX_TOKENS,
-                system=system_prompt,
-                messages=conversation,
-            ) as stream:
-                for text in stream.text_stream:
-                    full_reply += text
-                    yield f"data: {json.dumps({'type': 'chunk', 'text': text})}\n\n"
+            for _round in range(max_rounds):
+                create_kwargs = dict(
+                    model=CHAT_MODEL,
+                    max_tokens=CHAT_MAX_TOKENS,
+                    system=system_prompt,
+                    messages=msgs,
+                )
+                if chat_tools:
+                    create_kwargs["tools"] = chat_tools
+
+                with client.messages.stream(**create_kwargs) as stream:
+                    for text in stream.text_stream:
+                        full_reply += text
+                        yield f"data: {json.dumps({'type': 'chunk', 'text': text})}\n\n"
+
+                    response = stream.get_final_message()
+
+                # If the model didn't request tool use, we're done
+                if response.stop_reason != "tool_use":
+                    break
+
+                # Collect tool use blocks and build tool results
+                tool_results = []
+                for block in response.content:
+                    if block.type == "server_tool_use" and block.name == "web_search":
+                        yield f"data: {json.dumps({'type': 'status', 'message': 'Searching the web...'})}\n\n"
+                # Append assistant response and tool results for next round
+                msgs.append({"role": "assistant", "content": response.content})
+                # Find all server_tool_result blocks from response content
+                # The API returns server_tool_result blocks automatically for
+                # server-side tools — we just need to keep going.
+                # For server-side connectors like web_search, the results are
+                # included automatically. We need to pass them back.
+                tool_result_blocks = []
+                for block in response.content:
+                    if block.type == "server_tool_use":
+                        tool_result_blocks.append(block)
+                # Server-side tools: the API handles results internally.
+                # We just need to send back the full content to continue.
+                # The next iteration will include the search results automatically.
 
             # Signal completion
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
