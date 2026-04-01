@@ -1345,6 +1345,253 @@ async def delete_chat_session(session_id: str, request: Request, db=Depends(get_
 
 
 # ---------------------------------------------------------------------------
+# Chat → Word Document Export
+# ---------------------------------------------------------------------------
+
+class ExportChatRequest(BaseModel):
+    session_id: str = Field(max_length=100, description="Chat session to export")
+    format: str = Field(default="docx", pattern=r"^docx$", description="Export format (docx)")
+
+
+class GenerateDocRequest(BaseModel):
+    session_id: str = Field(max_length=100, description="Chat session for context")
+    instructions: str = Field(max_length=10000, description="What the document should contain, e.g. 'Create a safety procedure for valve isolation'")
+    doc_ids: list[str] = Field(default=[], max_length=100, description="Document IDs to reference")
+    title: str = Field(default="Generated Document", max_length=255)
+
+
+def _markdown_to_docx(text: str, title: str = "Document") -> bytes:
+    """Convert markdown-ish AI text to a formatted Word document."""
+    from docx import Document as DocxDocument
+    from docx.shared import Pt, Inches, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    import re
+    import io
+
+    doc = DocxDocument()
+
+    # Set default font
+    style = doc.styles["Normal"]
+    font = style.font
+    font.name = "Calibri"
+    font.size = Pt(11)
+
+    # Add title
+    t = doc.add_heading(title, level=0)
+    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Add generation date
+    from datetime import datetime, timezone
+    date_para = doc.add_paragraph()
+    date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = date_para.add_run(f"Generated: {datetime.now(timezone.utc).strftime('%B %d, %Y at %H:%M UTC')}")
+    run.font.size = Pt(9)
+    run.font.color.rgb = RGBColor(128, 128, 128)
+    doc.add_paragraph()  # spacer
+
+    # Parse markdown-like content into Word elements
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Headings
+        if stripped.startswith("### "):
+            doc.add_heading(stripped[4:], level=3)
+        elif stripped.startswith("## "):
+            doc.add_heading(stripped[3:], level=2)
+        elif stripped.startswith("# "):
+            doc.add_heading(stripped[2:], level=1)
+        # Bullet points
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            p = doc.add_paragraph(stripped[2:], style="List Bullet")
+        # Numbered list
+        elif re.match(r"^\d+[\.\)]\s", stripped):
+            text_content = re.sub(r"^\d+[\.\)]\s", "", stripped)
+            p = doc.add_paragraph(text_content, style="List Number")
+        # Bold line (like **Section Title**)
+        elif stripped.startswith("**") and stripped.endswith("**") and len(stripped) > 4:
+            p = doc.add_paragraph()
+            run = p.add_run(stripped[2:-2])
+            run.bold = True
+            run.font.size = Pt(12)
+        # Horizontal rule
+        elif stripped in ("---", "***", "___"):
+            doc.add_paragraph("_" * 50)
+        # Empty line
+        elif not stripped:
+            pass  # skip blank lines (natural spacing from paragraphs)
+        # Normal paragraph — handle inline bold/italic
+        else:
+            p = doc.add_paragraph()
+            # Split on **bold** and *italic* markers
+            parts = re.split(r"(\*\*.*?\*\*|\*.*?\*)", stripped)
+            for part in parts:
+                if part.startswith("**") and part.endswith("**"):
+                    run = p.add_run(part[2:-2])
+                    run.bold = True
+                elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+                    run = p.add_run(part[1:-1])
+                    run.italic = True
+                else:
+                    p.add_run(part)
+        i += 1
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+@app.post("/chat/export", dependencies=[Depends(verify_api_key)])
+async def export_chat_to_docx(body: ExportChatRequest, request: Request, db=Depends(get_db)):
+    """Export a chat session's AI responses as a Word document.
+
+    Collects all assistant messages from the session and formats them
+    into a downloadable .docx file.
+    """
+    session = db.query(DBChatSession).filter(DBChatSession.id == body.session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    current_user_id = getattr(request.state, "user_id", None)
+    if current_user_id and session.user_id and session.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="You do not own this chat session")
+
+    messages = (
+        db.query(DBChatMessage)
+        .filter(DBChatMessage.session_id == session.id)
+        .order_by(DBChatMessage.created_at)
+        .all()
+    )
+
+    # Build document content from the conversation
+    parts = []
+    for m in messages:
+        content = _decrypt_text(m.content)
+        if m.role == "user":
+            parts.append(f"**Question:** {content}")
+        else:
+            parts.append(content)
+        parts.append("")  # blank line separator
+
+    full_text = "\n".join(parts)
+    title = session.title or "Chat Export"
+    docx_bytes = _markdown_to_docx(full_text, title)
+
+    safe_title = re.sub(r'[^\w\s-]', '', title)[:50].strip() or "chat-export"
+    filename = f"{safe_title}.docx"
+
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/chat/generate-doc", dependencies=[Depends(verify_api_key)])
+async def generate_document_from_chat(body: GenerateDocRequest, request: Request, db=Depends(get_db)):
+    """Use AI to generate a Word document based on chat context and instructions.
+
+    The AI writes a complete document (procedure, report, summary, etc.)
+    using the uploaded procedures and conversation history as context,
+    then returns it as a downloadable .docx file.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    # Load session history for context
+    session = db.query(DBChatSession).filter(DBChatSession.id == body.session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    current_user_id = getattr(request.state, "user_id", None)
+    if current_user_id and session.user_id and session.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="You do not own this chat session")
+
+    # Get conversation context
+    db_messages = (
+        db.query(DBChatMessage)
+        .filter(DBChatMessage.session_id == session.id)
+        .order_by(DBChatMessage.created_at)
+        .all()
+    )
+    chat_context = "\n\n".join(
+        f"{'User' if m.role == 'user' else 'Assistant'}: {_decrypt_text(m.content)}"
+        for m in db_messages[-10:]
+    )
+
+    # Get procedure context from selected documents
+    query = db.query(DBDocument)
+    if body.doc_ids:
+        query = query.filter(DBDocument.id.in_(body.doc_ids))
+    documents = query.all()
+
+    procedure_parts = []
+    for doc in documents:
+        decrypted_name = _decrypt_text(doc.filename)
+        pages = json.loads(_decrypt_text(doc.text_content))
+        full_text = "\n".join(p["text"] for p in pages if p.get("text"))
+        if len(full_text) > 40000:
+            full_text = full_text[:40000] + "\n[... truncated ...]"
+        procedure_parts.append(f'--- "{decrypted_name}" ---\n{full_text}')
+    procedure_context = "\n\n".join(procedure_parts) if procedure_parts else "(No procedures loaded)"
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    system = f"""You are a professional document writer. You create well-structured, detailed documents based on the user's instructions and the reference materials provided.
+
+REFERENCE PROCEDURES:
+{procedure_context[:200000]}
+
+RECENT CHAT CONTEXT:
+{chat_context[:50000]}
+
+INSTRUCTIONS:
+- Write the document in clean, professional language
+- Use markdown headings (#, ##, ###), bold (**text**), bullet points (- item), and numbered lists (1. item)
+- Include all relevant details from the reference procedures
+- Structure the document logically with clear sections
+- The document should be complete and ready to use — not a draft or outline"""
+
+    generate_kwargs = dict(
+        model=CHAT_MODEL,
+        max_tokens=CHAT_MAX_TOKENS * 2,  # allow longer output for documents
+        system=system,
+        messages=[{"role": "user", "content": body.instructions}],
+    )
+    if CHAT_WEB_SEARCH:
+        generate_kwargs["tools"] = [{"type": "web_search_20250305"}]
+
+    # Multi-round for tool use (web search)
+    all_messages = [{"role": "user", "content": body.instructions}]
+    full_text = ""
+    for _round in range(5):
+        generate_kwargs["messages"] = all_messages
+        response = client.messages.create(**generate_kwargs)
+        for block in response.content:
+            if hasattr(block, "text"):
+                full_text += block.text
+        if response.stop_reason != "tool_use":
+            break
+        all_messages.append({"role": "assistant", "content": response.content})
+
+    if not full_text.strip():
+        raise HTTPException(status_code=500, detail="AI failed to generate document content")
+
+    docx_bytes = _markdown_to_docx(full_text, body.title)
+
+    safe_title = re.sub(r'[^\w\s-]', '', body.title)[:50].strip() or "generated-document"
+    filename = f"{safe_title}.docx"
+
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Full Analysis Pipeline (multi-agent)
 # ---------------------------------------------------------------------------
 

@@ -154,6 +154,28 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .chat-send{padding:10px 18px;background:var(--accent);color:#fff;border:none;border-radius:10px;
   font-size:14px;font-weight:600;cursor:pointer;flex-shrink:0;transition:opacity .15s}
 .chat-send:disabled{opacity:0.4;cursor:not-allowed}
+.chat-actions{display:flex;gap:6px;flex-shrink:0}
+.chat-action-btn{padding:8px 12px;background:transparent;border:1px solid var(--border);
+  border-radius:8px;color:var(--muted);font-size:12px;cursor:pointer;transition:all .15s;white-space:nowrap}
+.chat-action-btn:hover{border-color:var(--accent);color:var(--accent)}
+.chat-action-btn:disabled{opacity:0.4;cursor:not-allowed}
+.doc-gen-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);
+  z-index:1000;display:flex;align-items:center;justify-content:center}
+.doc-gen-modal.hidden{display:none}
+.doc-gen-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:24px;width:90%;max-width:540px;max-height:80vh;overflow-y:auto}
+.doc-gen-box h3{margin:0 0 16px;font-size:18px;font-weight:600}
+.doc-gen-box label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+.doc-gen-box input,.doc-gen-box textarea{width:100%;padding:10px 14px;background:#1a2236;
+  border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;
+  font-family:inherit;outline:none;box-sizing:border-box}
+.doc-gen-box textarea{resize:vertical;min-height:100px}
+.doc-gen-box input:focus,.doc-gen-box textarea:focus{border-color:var(--accent)}
+.doc-gen-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.doc-gen-btns button{padding:10px 20px;border-radius:10px;font-size:14px;font-weight:600;
+  cursor:pointer;border:none}
+.doc-gen-cancel{background:transparent;border:1px solid var(--border) !important;color:var(--text)}
+.doc-gen-submit{background:var(--accent);color:#fff}
 .chat-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;
   height:100%;gap:14px;opacity:0.8}
 .chat-empty h3{font-size:18px;font-weight:600;margin-bottom:4px}
@@ -682,6 +704,10 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
             <textarea id="chat-input" rows="1" placeholder="Ask about your procedures..."
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();botSend()}"
               oninput="chatAutoResize(this)"></textarea>
+            <div class="chat-actions">
+              <button class="chat-action-btn" id="chat-export-btn" onclick="exportChatToWord()" title="Export this conversation to Word">Export .docx</button>
+              <button class="chat-action-btn" id="chat-gendoc-btn" onclick="showGenDocModal()" title="Ask AI to write a new Word document">Generate Doc</button>
+            </div>
             <button class="chat-send" id="chat-send-btn" onclick="botSend()">Send</button>
           </div>
         </div>
@@ -692,6 +718,22 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- Generate Document Modal -->
+<div class="doc-gen-modal hidden" id="doc-gen-modal" onclick="if(event.target===this)hideGenDocModal()">
+  <div class="doc-gen-box">
+    <h3>Generate Word Document</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">The AI will write a complete document based on your instructions and the selected procedures.</p>
+    <label for="gen-doc-title">Document Title</label>
+    <input id="gen-doc-title" type="text" placeholder="e.g. Valve Isolation Procedure" value="">
+    <label for="gen-doc-instructions">Instructions — tell the AI what to write</label>
+    <textarea id="gen-doc-instructions" placeholder="e.g. Write a step-by-step safety procedure for isolating valve HB-V-1001 based on the uploaded P&amp;ID drawings. Include required PPE, lock-out/tag-out steps, and verification checklist."></textarea>
+    <div class="doc-gen-btns">
+      <button class="doc-gen-cancel" onclick="hideGenDocModal()">Cancel</button>
+      <button class="doc-gen-submit" id="gen-doc-submit" onclick="generateDoc()">Generate &amp; Download</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const API = window.location.origin;
@@ -1705,6 +1747,54 @@ async function botSend(){
   botSending=false;
   document.getElementById('chat-send-btn').disabled=false;
   renderBotMessages();
+}
+
+/* ---- Export chat to Word ---- */
+async function exportChatToWord(){
+  if(!currentSessionId){toast('No active chat session to export','error');return;}
+  var btn=document.getElementById('chat-export-btn');
+  btn.disabled=true;btn.textContent='Exporting...';
+  try{
+    var r=await fetch(API+'/chat/export',{method:'POST',headers:headers(true),
+      body:JSON.stringify({session_id:currentSessionId})});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Export failed');}
+    var blob=await r.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.download=(r.headers.get('content-disposition')||'').split('filename="')[1]?.replace('"','')||'chat-export.docx';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+    toast('Word document downloaded','success');
+  }catch(e){toast(e.message,'error');}
+  btn.disabled=false;btn.textContent='Export .docx';
+}
+
+/* ---- Generate Document Modal ---- */
+function showGenDocModal(){
+  if(!currentSessionId){toast('Start a chat first, then generate a document','error');return;}
+  document.getElementById('doc-gen-modal').classList.remove('hidden');
+  document.getElementById('gen-doc-instructions').focus();
+}
+function hideGenDocModal(){document.getElementById('doc-gen-modal').classList.add('hidden');}
+
+async function generateDoc(){
+  var title=document.getElementById('gen-doc-title').value.trim()||'Generated Document';
+  var instructions=document.getElementById('gen-doc-instructions').value.trim();
+  if(!instructions){toast('Please enter instructions for the document','error');return;}
+  var btn=document.getElementById('gen-doc-submit');
+  btn.disabled=true;btn.textContent='Generating...';
+  try{
+    var body={session_id:currentSessionId,instructions:instructions,title:title,doc_ids:[...botSelectedIds]};
+    var r=await fetch(API+'/chat/generate-doc',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Generation failed');}
+    var blob=await r.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.download=(r.headers.get('content-disposition')||'').split('filename="')[1]?.replace('"','')||title+'.docx';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+    toast('Document generated and downloaded','success');
+    hideGenDocModal();
+  }catch(e){toast(e.message,'error');}
+  btn.disabled=false;btn.textContent='Generate & Download';
 }
 
 function botFmt(text){
