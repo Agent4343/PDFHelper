@@ -345,7 +345,7 @@ def _image_to_pdf(image_bytes: bytes) -> bytes:
     from PIL import Image
     import io
     img = Image.open(io.BytesIO(image_bytes))
-    if img.mode in ("RGBA", "P"):
+    if img.mode != "RGB":
         img = img.convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="PDF", resolution=200)
@@ -368,6 +368,8 @@ def _detect_image_media_type(image_bytes: bytes) -> str:
         return "image/tiff"
     if image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
         return "image/webp"
+    if image_bytes[:2] == b'BM':
+        return "image/bmp"
     return "image/png"  # fallback
 
 
@@ -664,8 +666,6 @@ def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool]
             raise HTTPException(status_code=400,
                                 detail="File does not appear to be a valid PDF")
         return clean_name, content, False
-
-    return clean_name
 
 
 # ---------------------------------------------------------------------------
@@ -1224,8 +1224,10 @@ async def chat_with_documents(
             for m in body.conversation_history[-10:]
             if m.role in ("user", "assistant")
         ]
-    # Build the user message — include images via Claude vision if available
-    if image_content_blocks:
+    # Build the user message — include images via Claude vision only on the
+    # first message of a session so they aren't re-sent on every turn.
+    include_images = image_content_blocks and not db_messages
+    if include_images:
         user_content = list(image_content_blocks)  # copy
         user_content.append({"type": "text", "text": body.message})
         conversation.append({"role": "user", "content": user_content})
@@ -1235,10 +1237,11 @@ async def chat_with_documents(
     # Budget the total context to stay within the model's context window.
     # Reserve chars for the system prompt template, response tokens, and safety margin.
     # Approximate: 1 token ≈ 4 chars.  Model context ≈ 200K tokens ≈ 800K chars.
-    # Each image ≈ 1600 tokens, so subtract from budget.
+    # Each image ≈ 1600 tokens, so subtract from budget when included.
     MAX_TOTAL_CHARS = 600000  # leave headroom for response + system template
-    image_char_budget = len(image_content_blocks) // 2 * 6400  # ~1600 tokens * 4 chars per image
-    MAX_TOTAL_CHARS -= image_char_budget
+    if include_images:
+        image_char_budget = len(image_content_blocks) // 2 * 6400  # ~1600 tokens * 4 chars per image
+        MAX_TOTAL_CHARS -= image_char_budget
 
     def _msg_text_len(m):
         c = m["content"]
