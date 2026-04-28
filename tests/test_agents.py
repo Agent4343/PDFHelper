@@ -7,8 +7,6 @@ from unittest.mock import patch, MagicMock
 from agents import (
     _build_page_text,
     _merge_analysis_results,
-    _parse_json_response,
-    _is_retryable_error,
     _CHUNK_PAGE_LIMIT,
     document_analysis_agent,
     cross_reference_agent,
@@ -16,6 +14,7 @@ from agents import (
     summary_report_agent,
     run_full_analysis,
 )
+from utils import parse_json_response as _parse_json_response, is_retryable_error as _is_retryable_error
 
 
 # ---------------------------------------------------------------------------

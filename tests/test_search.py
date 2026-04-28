@@ -4,7 +4,8 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 
-from search import keyword_search, _parse_json_response, _is_retryable_error
+from search import keyword_search
+from utils import parse_json_response as _parse_json_response, is_retryable_error as _is_retryable_error
 
 
 # ---------------------------------------------------------------------------

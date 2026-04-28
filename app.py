@@ -31,6 +31,8 @@ try:
 except ImportError:
     pass  # python-dotenv not installed; env vars must be set directly
 
+from contextlib import asynccontextmanager
+
 from fastapi import (
     BackgroundTasks, FastAPI, File, Form, UploadFile, Depends, HTTPException, Query, Request,
 )
@@ -85,14 +87,6 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 
 _startup_errors: list[str] = []
 
-app = FastAPI(
-    title="PDFHelper",
-    description="AI-powered PDF search and flagging tool",
-    version="1.0.0",
-    docs_url="/docs" if not IS_PRODUCTION else None,
-    redoc_url=None,
-)
-
 
 async def _retry_db_init(logger):
     """Retry database table creation in the background."""
@@ -108,9 +102,9 @@ async def _retry_db_init(logger):
     _startup_errors.append("WARNING: Database initialization failed after 5 attempts.")
 
 
-@app.on_event("startup")
-async def startup():
-    """Run safety checks and initialize DB — errors are logged, not fatal."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run safety checks and initialize DB on startup — errors are logged, not fatal."""
     import asyncio
     import logging
     logger = logging.getLogger("pdfhelper")
@@ -167,6 +161,18 @@ async def startup():
         except Exception as exc:
             logger.warning("Failed to auto-create admin account: %s", exc)
 
+    yield
+    # No shutdown logic needed
+
+
+app = FastAPI(
+    title="PDFHelper",
+    description="AI-powered PDF search and flagging tool",
+    version="1.0.0",
+    docs_url="/docs" if not IS_PRODUCTION else None,
+    redoc_url=None,
+    lifespan=lifespan,
+)
 
 # ---------------------------------------------------------------------------
 # Security middleware
@@ -2467,7 +2473,6 @@ async def split_document(doc_id: str, body: SplitRequest, request: Request, db=D
 
     new_pdf = fitz.open()
     try:
-        new_pdf.insert_pdf(src, from_page=-1, to_page=-1)  # empty
         for pg in zero_based:
             new_pdf.insert_pdf(src, from_page=pg, to_page=pg)
         split_bytes = new_pdf.tobytes()
@@ -2540,14 +2545,14 @@ async def annotate_document(
             detail=f"Page {page} out of range (document has {pdf.page_count} pages)",
         )
 
-    # Parse color
+    # Parse and validate color
     try:
         rgb = tuple(float(c.strip()) for c in color.split(","))
-        if len(rgb) != 3:
+        if len(rgb) != 3 or not all(0.0 <= v <= 1.0 for v in rgb):
             raise ValueError
     except (ValueError, TypeError):
         pdf.close()
-        raise HTTPException(status_code=400, detail="Color must be 'r,g,b' with values 0-1")
+        raise HTTPException(status_code=400, detail="Color must be three comma-separated floats between 0.0 and 1.0, e.g. '0,0,0' for black")
 
     pg = pdf[page - 1]
     pg.insert_text(
