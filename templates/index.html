@@ -1422,7 +1422,7 @@ async function loadHistory(){
   }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
 }
 async function viewSearch(id){
-  if(!getKey()) return;
+  if(!requireKey()) return;
   const el=document.getElementById('history-list');loading(el);
   try{
     const r=await fetch(API+'/history/'+id,{headers:headers()});
@@ -1455,7 +1455,7 @@ async function loadReports(){
   }catch(e){el.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';}
 }
 async function viewReport(id){
-  if(!getKey()) return;
+  if(!requireKey()) return;
   const el=document.getElementById('reports-list');loading(el);
   try{
     const r=await fetch(API+'/reports/'+id,{headers:headers()});
@@ -1896,7 +1896,7 @@ function updateIsoDrawingIds(){
 
 async function uploadDrawings(){
   var fileEl=document.getElementById('drawing-file');
-  if(!fileEl.files.length){toast('Select drawing files first','var(--red)');return;}
+  if(!fileEl.files.length){toast('Select drawing files first','error');return;}
   var files=fileEl.files;
   var tags=document.getElementById('drawing-tags').value.trim();
   var desc=document.getElementById('drawing-desc').value.trim();
@@ -1921,9 +1921,9 @@ async function uploadDrawings(){
     if(!r.ok) throw new Error(detailStr(d.detail)||'Upload failed');
     var msg=d.total_uploaded+' drawing'+(d.total_uploaded!==1?'s':'')+' uploaded';
     if(d.total_errors>0) msg+=', '+d.total_errors+' failed';
-    toast(msg,d.total_errors>0?'var(--orange)':'var(--green)');
+    toast(msg,d.total_errors>0?'error':'success');
     if(d.errors&&d.errors.length){
-      d.errors.forEach(function(e){toast(e.filename+': '+e.error,'var(--red)');});
+      d.errors.forEach(function(e){toast(e.filename+': '+e.error,'error');});
     }
     fileEl.value='';
     document.getElementById('drawing-file-name').textContent='';
@@ -1932,7 +1932,7 @@ async function uploadDrawings(){
     progressEl.textContent='';
     loadDrawings();
   }catch(e){
-    toast('Error: '+e.message,'var(--red)');
+    toast('Error: '+e.message,'error');
     progressEl.textContent='';
   }
   btn.disabled=false;btn.textContent='Upload Drawings';
@@ -1943,9 +1943,9 @@ async function deleteDrawing(id){
   try{
     var r=await fetch(API+'/drawings/'+id,{method:'DELETE',headers:headers()});
     if(!r.ok) throw new Error('Delete failed');
-    toast('Drawing deleted','var(--green)');
+    toast('Drawing deleted');
     loadDrawings();
-  }catch(e){toast('Error: '+e.message,'var(--red)');}
+  }catch(e){toast('Error: '+e.message,'error');}
 }
 
 var isoGenerating=false;
@@ -1954,8 +1954,8 @@ async function generateIsolation(){
   if(isoGenerating) return;
   var equip=document.getElementById('iso-equip').value.trim();
   var work=document.getElementById('iso-work').value.trim();
-  if(!equip||!work){toast('Enter equipment tag and work description','var(--red)');return;}
-  if(!isoDrawings.length){toast('Upload P&ID drawings first','var(--red)');return;}
+  if(!equip||!work){toast('Enter equipment tag and work description','error');return;}
+  if(!isoDrawings.length){toast('Upload P&ID drawings first','error');return;}
 
   isoGenerating=true;
   var btn=document.getElementById('iso-generate-btn');
@@ -2079,7 +2079,7 @@ async function viewIsolation(id){
       document.getElementById('iso-output').textContent=JSON.stringify(d,null,2);
     }
     outCard.scrollIntoView({behavior:'smooth'});
-  }catch(e){toast('Error: '+e.message,'var(--red)');}
+  }catch(e){toast('Error: '+e.message,'error');}
 }
 
 async function deleteIsolation(id){
@@ -2087,9 +2087,9 @@ async function deleteIsolation(id){
   try{
     var r=await fetch(API+'/isolations/'+id,{method:'DELETE',headers:headers()});
     if(!r.ok) throw new Error('Delete failed');
-    toast('Isolation deleted','var(--green)');
+    toast('Isolation deleted');
     loadIsolations();
-  }catch(e){toast('Error: '+e.message,'var(--red)');}
+  }catch(e){toast('Error: '+e.message,'error');}
 }
 </script>
 </body>

@@ -85,14 +85,6 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 
 _startup_errors: list[str] = []
 
-app = FastAPI(
-    title="PDFHelper",
-    description="AI-powered PDF search and flagging tool",
-    version="1.0.0",
-    docs_url="/docs" if not IS_PRODUCTION else None,
-    redoc_url=None,
-)
-
 
 async def _retry_db_init(logger):
     """Retry database table creation in the background."""
@@ -108,8 +100,7 @@ async def _retry_db_init(logger):
     _startup_errors.append("WARNING: Database initialization failed after 5 attempts.")
 
 
-@app.on_event("startup")
-async def startup():
+async def _run_startup():
     """Run safety checks and initialize DB — errors are logged, not fatal."""
     import asyncio
     import logging
@@ -166,6 +157,25 @@ async def startup():
             db.close()
         except Exception as exc:
             logger.warning("Failed to auto-create admin account: %s", exc)
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(app_: FastAPI):
+    await _run_startup()
+    yield
+
+
+app = FastAPI(
+    title="PDFHelper",
+    description="AI-powered PDF search and flagging tool",
+    version="1.0.0",
+    docs_url="/docs" if not IS_PRODUCTION else None,
+    redoc_url=None,
+    lifespan=_lifespan,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -2073,6 +2083,13 @@ async def generate_isolation(
     if not api_key:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
 
+    # Validate work_type against the allowed set
+    if body.work_type.upper() not in _VALID_WORK_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid work_type '{body.work_type}'. Must be one of: {', '.join(sorted(_VALID_WORK_TYPES))}",
+        )
+
     from anthropic import Anthropic
     client = Anthropic(api_key=api_key)
 
@@ -2353,9 +2370,13 @@ def _decrypt_and_load(filepath: Path) -> bytes:
 def _load_pdf_bytes(doc) -> bytes:
     """Load and decrypt a stored PDF, returning raw bytes."""
     filepath = Path(doc.filepath)
-    if not filepath.exists():
+    try:
+        validated = _validate_filepath(filepath)
+    except (ValueError, OSError):
         raise HTTPException(status_code=404, detail="PDF file not found on disk")
-    return _decrypt_and_load(filepath)
+    if not validated.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found on disk")
+    return _decrypt_and_load(validated)
 
 
 @app.get("/documents/{doc_id}/download", dependencies=[Depends(verify_api_key)])
