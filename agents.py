@@ -8,11 +8,12 @@ The orchestrator coordinates them and merges their results into a single report.
 import json
 import logging
 import os
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from anthropic import Anthropic
+
+from utils import is_retryable_error as _is_retryable_error, parse_json_response as _parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ def _get_client() -> Anthropic:
     return _client
 
 
-MODEL = "claude-sonnet-4-5-20250929"
+MODEL = os.getenv("AGENT_MODEL", "claude-sonnet-4-5-20250929")
 
 
 MAX_RETRIES = 3
@@ -61,22 +62,6 @@ def _call_ai(system_prompt: str, user_prompt: str, max_tokens: int = 4096) -> st
                 time.sleep(wait)
             else:
                 raise
-
-
-def _is_retryable_error(exc: Exception) -> bool:
-    """Check if an API error is transient and worth retrying."""
-    exc_str = str(exc).lower()
-    retryable_indicators = ["rate_limit", "overloaded", "529", "500", "502", "503", "timeout"]
-    return any(indicator in exc_str for indicator in retryable_indicators)
-
-
-def _parse_json_response(text: str) -> list | dict:
-    """Extract JSON from an AI response, handling markdown code blocks."""
-    cleaned = text
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\n?", "", cleaned)
-        cleaned = re.sub(r"\n?```$", "", cleaned)
-    return json.loads(cleaned)
 
 
 # ---------------------------------------------------------------------------
