@@ -1302,7 +1302,7 @@ LOADED PROCEDURES:
     # Configure tools — optionally include web search
     chat_tools = []
     if CHAT_WEB_SEARCH:
-        chat_tools.append({"type": "web_search_20250305"})
+        chat_tools.append({"type": "web_search_20250305", "name": "web_search"})
 
     async def stream_chat():
         """Stream the AI response as Server-Sent Events.
@@ -1654,7 +1654,7 @@ INSTRUCTIONS:
         messages=[{"role": "user", "content": body.instructions}],
     )
     if CHAT_WEB_SEARCH:
-        create_kwargs["tools"] = [{"type": "web_search_20250305"}]
+        create_kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
 
     response = client.messages.create(**create_kwargs)
     full_text = ""
