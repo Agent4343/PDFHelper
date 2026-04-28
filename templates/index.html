@@ -1943,7 +1943,7 @@ async function deleteDrawing(id){
   try{
     var r=await fetch(API+'/drawings/'+id,{method:'DELETE',headers:headers()});
     if(!r.ok) throw new Error('Delete failed');
-    toast('Drawing deleted');
+    toast('Drawing deleted','success');
     loadDrawings();
   }catch(e){toast('Error: '+e.message,'error');}
 }
@@ -2087,7 +2087,7 @@ async function deleteIsolation(id){
   try{
     var r=await fetch(API+'/isolations/'+id,{method:'DELETE',headers:headers()});
     if(!r.ok) throw new Error('Delete failed');
-    toast('Isolation deleted');
+    toast('Isolation deleted','success');
     loadIsolations();
   }catch(e){toast('Error: '+e.message,'error');}
 }
