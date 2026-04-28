@@ -2552,7 +2552,7 @@ async def annotate_document(
             raise ValueError
     except (ValueError, TypeError):
         pdf.close()
-        raise HTTPException(status_code=400, detail="Color must be 'r,g,b' with values 0-1")
+        raise HTTPException(status_code=400, detail="Color must be three comma-separated floats between 0.0 and 1.0, e.g. '0,0,0' for black")
 
     pg = pdf[page - 1]
     pg.insert_text(
