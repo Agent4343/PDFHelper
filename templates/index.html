@@ -722,12 +722,39 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
 <!-- Generate Document Modal -->
 <div class="doc-gen-modal hidden" id="doc-gen-modal" onclick="if(event.target===this)hideGenDocModal()">
   <div class="doc-gen-box">
-    <h3>Generate Word Document</h3>
-    <p style="font-size:13px;color:var(--muted);margin:0 0 12px">The AI will write a complete document based on your instructions and the selected procedures.</p>
+    <h3 id="gen-doc-heading">Generate Word Document</h3>
+    <p style="font-size:13px;color:var(--muted);margin:0 0 12px" id="gen-doc-desc">The AI will write a complete document based on your instructions and the selected procedures.</p>
+
+    <!-- Mode toggle -->
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <button class="chat-action-btn" id="gen-mode-write" onclick="setGenMode('write')" style="flex:1;border-color:var(--accent);color:var(--accent)">Write New</button>
+      <button class="chat-action-btn" id="gen-mode-improve" onclick="setGenMode('improve')" style="flex:1">Improve Procedure</button>
+    </div>
+
     <label for="gen-doc-title">Document Title</label>
     <input id="gen-doc-title" type="text" placeholder="e.g. Valve Isolation Procedure" value="">
-    <label for="gen-doc-instructions">Instructions — tell the AI what to write</label>
-    <textarea id="gen-doc-instructions" placeholder="e.g. Write a step-by-step safety procedure for isolating valve HB-V-1001 based on the uploaded P&amp;ID drawings. Include required PPE, lock-out/tag-out steps, and verification checklist."></textarea>
+
+    <!-- Improve mode: select procedure to improve -->
+    <div id="gen-improve-fields" style="display:none">
+      <label>Procedure to Improve (select one)</label>
+      <select id="gen-proc-doc" style="width:100%;padding:10px 14px;background:#1a2236;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px"></select>
+      <label style="margin-top:8px">Reference Documents (the selected chat docs will be used as references)</label>
+      <p style="font-size:12px;color:var(--muted);margin:2px 0 8px">The AI will cross-reference your procedure against the documents selected in the chat doc bar above.</p>
+      <label for="gen-focus">Focus Areas</label>
+      <input id="gen-focus" type="text" placeholder="e.g. safety steps, compliance, clarity, PPE requirements">
+    </div>
+
+    <div id="gen-write-fields">
+      <label for="gen-doc-instructions">Instructions — tell the AI what to write</label>
+      <textarea id="gen-doc-instructions" placeholder="e.g. Write a step-by-step safety procedure for isolating valve HB-V-1001 based on the uploaded P&amp;ID drawings. Include required PPE, lock-out/tag-out steps, and verification checklist."></textarea>
+    </div>
+
+    <!-- VBA toggle -->
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">
+      <input type="checkbox" id="gen-vba-toggle">
+      <span style="font-size:13px">Include Word VBA macros for auto-formatting (downloads as .zip)</span>
+    </label>
+
     <div class="doc-gen-btns">
       <button class="doc-gen-cancel" onclick="hideGenDocModal()">Cancel</button>
       <button class="doc-gen-submit" id="gen-doc-submit" onclick="generateDoc()">Generate &amp; Download</button>
@@ -1770,32 +1797,79 @@ async function exportChatToWord(){
 }
 
 /* ---- Generate Document Modal ---- */
+var genMode='write';  // 'write' or 'improve'
+
+function setGenMode(mode){
+  genMode=mode;
+  document.getElementById('gen-mode-write').style.borderColor=mode==='write'?'var(--accent)':'var(--border)';
+  document.getElementById('gen-mode-write').style.color=mode==='write'?'var(--accent)':'var(--muted)';
+  document.getElementById('gen-mode-improve').style.borderColor=mode==='improve'?'var(--accent)':'var(--border)';
+  document.getElementById('gen-mode-improve').style.color=mode==='improve'?'var(--accent)':'var(--muted)';
+  document.getElementById('gen-write-fields').style.display=mode==='write'?'':'none';
+  document.getElementById('gen-improve-fields').style.display=mode==='improve'?'':'none';
+  if(mode==='improve'){
+    document.getElementById('gen-doc-heading').textContent='Improve Procedure';
+    document.getElementById('gen-doc-desc').textContent='Select a procedure to improve. The AI will cross-reference it against your other documents to produce a better version.';
+    document.getElementById('gen-doc-submit').textContent='Improve & Download';
+    populateProcSelect();
+  } else {
+    document.getElementById('gen-doc-heading').textContent='Generate Word Document';
+    document.getElementById('gen-doc-desc').textContent='The AI will write a complete document based on your instructions and the selected procedures.';
+    document.getElementById('gen-doc-submit').textContent='Generate & Download';
+  }
+}
+
+function populateProcSelect(){
+  var sel=document.getElementById('gen-proc-doc');
+  sel.innerHTML='';
+  if(!allDocs||!allDocs.length){sel.innerHTML='<option value="">No documents uploaded</option>';return;}
+  allDocs.forEach(function(d){
+    var opt=document.createElement('option');
+    opt.value=d.id;opt.textContent=d.filename;
+    sel.appendChild(opt);
+  });
+}
+
 function showGenDocModal(){
   if(!currentSessionId){toast('Start a chat first, then generate a document','error');return;}
   document.getElementById('doc-gen-modal').classList.remove('hidden');
-  document.getElementById('gen-doc-instructions').focus();
+  setGenMode('write');
 }
 function hideGenDocModal(){document.getElementById('doc-gen-modal').classList.add('hidden');}
 
 async function generateDoc(){
   var title=document.getElementById('gen-doc-title').value.trim()||'Generated Document';
-  var instructions=document.getElementById('gen-doc-instructions').value.trim();
-  if(!instructions){toast('Please enter instructions for the document','error');return;}
+  var includeVba=document.getElementById('gen-vba-toggle').checked;
   var btn=document.getElementById('gen-doc-submit');
   btn.disabled=true;btn.textContent='Generating...';
+
   try{
-    var body={session_id:currentSessionId,instructions:instructions,title:title,doc_ids:[...botSelectedIds]};
-    var r=await fetch(API+'/chat/generate-doc',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
+    var r;
+    if(genMode==='improve'){
+      var procId=document.getElementById('gen-proc-doc').value;
+      if(!procId){toast('Select a procedure document to improve','error');btn.disabled=false;btn.textContent='Improve & Download';return;}
+      var refIds=[...botSelectedIds].filter(function(id){return id!==procId;});
+      var focus=document.getElementById('gen-focus').value.trim();
+      var body={session_id:currentSessionId,procedure_doc_id:procId,reference_doc_ids:refIds,focus_areas:focus,title:title,include_vba:includeVba};
+      r=await fetch(API+'/chat/improve-procedure',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
+    } else {
+      var instructions=document.getElementById('gen-doc-instructions').value.trim();
+      if(!instructions){toast('Please enter instructions for the document','error');btn.disabled=false;btn.textContent='Generate & Download';return;}
+      var body={session_id:currentSessionId,instructions:instructions,title:title,doc_ids:[...botSelectedIds],include_vba:includeVba};
+      r=await fetch(API+'/chat/generate-doc',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
+    }
+
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Generation failed');}
     var blob=await r.blob();
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
-    a.href=url;var cd2=r.headers.get('content-disposition')||'';var m2=cd2.match(/filename="([^"]+)"/);a.download=m2?m2[1]:(title+'.docx');
+    var cdh=r.headers.get('content-disposition')||'';var mh=cdh.match(/filename="([^"]+)"/);
+    a.href=url;a.download=mh?mh[1]:(title+(includeVba?'_package.zip':'.docx'));
     document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
-    toast('Document generated and downloaded','success');
+    toast(genMode==='improve'?'Improved procedure downloaded':'Document generated and downloaded','success');
     hideGenDocModal();
   }catch(e){toast(e.message,'error');}
-  btn.disabled=false;btn.textContent='Generate & Download';
+  btn.disabled=false;btn.textContent=genMode==='improve'?'Improve & Download':'Generate & Download';
 }
 
 function botFmt(text){
