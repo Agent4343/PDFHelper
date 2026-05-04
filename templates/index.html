@@ -2275,6 +2275,7 @@ function initUpdater(){
   populateUpdaterDocSelect();
 }
 
+var _updaterFetching=false;
 function populateUpdaterDocSelect(){
   var sel=document.getElementById('upd-doc-select');
   var cur=sel.value;
@@ -2283,13 +2284,15 @@ function populateUpdaterDocSelect(){
     opts+='<option value="'+d.id+'"'+(d.id===cur?' selected':'')+'>'+esc(d.filename)+'</option>';
   });
   sel.innerHTML=opts;
-  if(!allDocs.length){
+  if(!allDocs.length && !_updaterFetching){
+    _updaterFetching=true;
     fetch(API+'/documents',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
-      if(d.documents){
+      _updaterFetching=false;
+      if(d.documents && d.documents.length){
         allDocs=d.documents;
         populateUpdaterDocSelect();
       }
-    }).catch(function(){});
+    }).catch(function(){_updaterFetching=false;});
   }
 }
 
