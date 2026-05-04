@@ -1,8 +1,8 @@
 """
-OCR support for scanned PDFs.
+OCR and structured text extraction for PDFs.
 
-Uses PyMuPDF's built-in image extraction + Tesseract OCR to extract text
-from PDFs that contain scanned images instead of selectable text.
+Uses PyMuPDF's built-in text extraction + Tesseract OCR to extract text
+from PDFs, preserving document structure (headings, lists, tables).
 
 Performance optimizations:
 - Parallel OCR processing using ThreadPoolExecutor
@@ -13,6 +13,7 @@ Performance optimizations:
 import io
 import logging
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import fitz  # PyMuPDF
@@ -26,24 +27,16 @@ try:
 except ImportError:
     OCR_AVAILABLE = False
 
-# Configurable via environment variable. 200 is a good balance of speed vs accuracy.
-# 300 is higher quality but ~2x slower. 150 is fast but may miss small text.
 OCR_DPI = int(os.getenv("OCR_DPI", "200"))
-
-# Max threads for parallel OCR. Each page is OCR'd independently.
 OCR_WORKERS = int(os.getenv("OCR_WORKERS", "4"))
-
-# Pages with fewer than this many characters are considered "needs OCR"
 OCR_CHAR_THRESHOLD = 50
 
 
 def _page_needs_ocr(text: str) -> bool:
-    """Check if a single page has too little text and likely needs OCR."""
     return len(text.strip()) < OCR_CHAR_THRESHOLD
 
 
 def _ocr_single_page(page_png_bytes: bytes) -> str:
-    """Run Tesseract OCR on a single page image. Thread-safe."""
     try:
         image = Image.open(io.BytesIO(page_png_bytes))
         return pytesseract.image_to_string(image)
@@ -52,66 +45,148 @@ def _ocr_single_page(page_png_bytes: bytes) -> str:
         return ""
 
 
-def _extract_page_text(page) -> str:
-    """Extract text from a single page, using table-aware extraction when available.
+def _classify_block(block_text: str, font_size: float, is_bold: bool, avg_font_size: float) -> str:
+    """Classify a text block as heading, list_item, or paragraph."""
+    stripped = block_text.strip()
+    if not stripped:
+        return "empty"
 
-    PyMuPDF 1.23+ supports find_tables() which preserves tabular structure
-    that get_text() garbles (e.g. valve isolation tables, specification charts).
-    Falls back to plain get_text() on older versions.
+    # Numbered list items: "1.", "1)", "a.", "a)", "(a)", etc.
+    if re.match(r'^(\d+[\.\)]\s|[a-zA-Z][\.\)]\s|\([a-zA-Z]\)\s|\(\d+\)\s)', stripped):
+        return "list_item"
+
+    # Bullet points
+    if stripped[0] in ('-', '•', '‣', '◦', '⁃', '*') and len(stripped) > 2:
+        return "list_item"
+
+    # Headings: larger font size or all-caps short lines
+    if font_size > avg_font_size * 1.2 and len(stripped) < 200:
+        return "heading"
+    if is_bold and len(stripped) < 200 and not stripped.endswith('.'):
+        return "heading"
+    if stripped.isupper() and len(stripped) > 3 and len(stripped) < 120:
+        return "heading"
+
+    # Section number patterns: "1.0", "2.3", "Section 4"
+    if re.match(r'^(\d+\.(\d+\.?)*)\s+\S', stripped) and len(stripped) < 200:
+        return "heading"
+
+    return "paragraph"
+
+
+def _extract_structured_page(page) -> dict:
+    """Extract text from a page with structural annotations.
+
+    Returns {"page": N, "text": str, "blocks": [{"type": str, "text": str}, ...]}
+    where type is heading/paragraph/list_item/table.
     """
-    # Try table-aware extraction first (PyMuPDF 1.23+)
+    blocks_out = []
+
+    # Gather font size stats for relative heading detection
+    text_dict = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+    all_font_sizes = []
+    for block in text_dict.get("blocks", []):
+        if block.get("type") != 0:  # text blocks only
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                if span.get("text", "").strip():
+                    all_font_sizes.append(span["size"])
+
+    avg_font_size = sum(all_font_sizes) / len(all_font_sizes) if all_font_sizes else 11.0
+
+    # Process each text block
+    for block in text_dict.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+
+        block_text_parts = []
+        max_font_size = 0
+        has_bold = False
+
+        for line in block.get("lines", []):
+            line_text = ""
+            for span in line.get("spans", []):
+                line_text += span.get("text", "")
+                max_font_size = max(max_font_size, span.get("size", 0))
+                flags = span.get("flags", 0)
+                if flags & 2**4:  # bold flag
+                    has_bold = True
+            block_text_parts.append(line_text)
+
+        block_text = "\n".join(block_text_parts).strip()
+        if not block_text:
+            continue
+
+        block_type = _classify_block(block_text, max_font_size, has_bold, avg_font_size)
+        if block_type != "empty":
+            blocks_out.append({"type": block_type, "text": block_text})
+
+    # Extract tables separately
+    if hasattr(page, "find_tables"):
+        try:
+            tables = page.find_tables()
+            for table in tables.tables:
+                rows = table.extract()
+                if rows:
+                    table_lines = []
+                    for row in rows:
+                        cells = [str(c) if c is not None else "" for c in row]
+                        table_lines.append(" | ".join(cells))
+                    blocks_out.append({
+                        "type": "table",
+                        "text": "\n".join(table_lines),
+                        "rows": [[str(c) if c is not None else "" for c in row] for row in rows],
+                    })
+        except Exception:
+            logger.debug("Table extraction failed for page")
+
+    # Build a plain-text representation with structure markers
+    text_parts = []
+    for b in blocks_out:
+        if b["type"] == "heading":
+            text_parts.append(f"\n[HEADING] {b['text']}")
+        elif b["type"] == "list_item":
+            text_parts.append(f"[LIST] {b['text']}")
+        elif b["type"] == "table":
+            text_parts.append(f"\n[TABLE]\n{b['text']}\n[/TABLE]")
+        else:
+            text_parts.append(b["text"])
+
+    plain_text = "\n".join(text_parts)
+    return plain_text, blocks_out
+
+
+def _extract_page_text(page) -> str:
+    """Extract text from a page, preserving tables."""
     if hasattr(page, "find_tables"):
         try:
             tables = page.find_tables()
             if tables.tables:
-                # Extract non-table text and tables separately, then combine
-                # This preserves both flowing text and table structure
-                parts = []
-                plain_text = page.get_text()
-
-                # Add the plain text (which includes everything)
-                parts.append(plain_text)
-
-                # Append structured table representations
+                parts = [page.get_text()]
                 for table in tables:
                     try:
                         df = table.to_pandas()
-                        # Convert table to a readable format with column alignment
-                        table_str = "\n[TABLE]\n" + df.to_string(index=False) + "\n[/TABLE]\n"
-                        parts.append(table_str)
+                        parts.append("\n[TABLE]\n" + df.to_string(index=False) + "\n[/TABLE]\n")
                     except Exception:
-                        # Fallback: extract table as list of rows
                         rows = table.extract()
                         if rows:
-                            table_lines = []
-                            for row in rows:
-                                cells = [str(c) if c is not None else "" for c in row]
-                                table_lines.append(" | ".join(cells))
+                            table_lines = [" | ".join(str(c) if c is not None else "" for c in row) for row in rows]
                             parts.append("\n[TABLE]\n" + "\n".join(table_lines) + "\n[/TABLE]\n")
-
                 return "\n".join(parts)
         except Exception:
-            logger.debug("Table extraction failed for page, falling back to plain text")
-
+            logger.debug("Table extraction failed, falling back to plain text")
     return page.get_text()
 
 
 def extract_text_with_ocr_fallback(pdf_bytes: bytes) -> list[dict]:
     """Extract text from a PDF, using OCR only on pages that need it.
 
-    For mixed PDFs (some pages scanned, some with text), this only OCRs the
-    pages that have little or no extractable text — much faster than OCR'ing
-    the entire document.
-
-    Uses table-aware extraction when PyMuPDF supports it, preserving the
-    structure of specification tables, valve lists, and similar tabular data.
-
     Returns list of {"page": int, "text": str}.
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page_count = len(doc)
 
-    # Step 1: Extract text from all pages normally (fast)
     pages = []
     ocr_needed_indices = []
     for page_num in range(page_count):
@@ -121,13 +196,10 @@ def extract_text_with_ocr_fallback(pdf_bytes: bytes) -> list[dict]:
         if _page_needs_ocr(text):
             ocr_needed_indices.append(page_num)
 
-    # Step 2: If no pages need OCR, or OCR isn't available, return early
     if not ocr_needed_indices or not OCR_AVAILABLE:
         doc.close()
         return pages
 
-    # Step 3: Render only the pages that need OCR to PNG images
-    # (done in main thread because PyMuPDF isn't thread-safe)
     page_images = {}
     for page_num in ocr_needed_indices:
         try:
@@ -138,7 +210,6 @@ def extract_text_with_ocr_fallback(pdf_bytes: bytes) -> list[dict]:
 
     doc.close()
 
-    # Step 4: Run Tesseract in parallel across the pages that need OCR
     if page_images:
         with ThreadPoolExecutor(max_workers=min(OCR_WORKERS, len(page_images))) as pool:
             futures = {
@@ -150,4 +221,33 @@ def extract_text_with_ocr_fallback(pdf_bytes: bytes) -> list[dict]:
                 if ocr_text.strip():
                     pages[page_num]["text"] = ocr_text
 
+    return pages
+
+
+def extract_structured_text(pdf_bytes: bytes) -> list[dict]:
+    """Extract text from a PDF with structural annotations per block.
+
+    Returns list of {"page": int, "text": str, "blocks": [{"type": str, "text": str}, ...]}.
+    Blocks have type: heading, paragraph, list_item, or table.
+    """
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages = []
+
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        plain_text, blocks = _extract_structured_page(page)
+
+        if _page_needs_ocr(plain_text) and OCR_AVAILABLE:
+            try:
+                pix = page.get_pixmap(dpi=OCR_DPI)
+                ocr_text = _ocr_single_page(pix.tobytes("png"))
+                if ocr_text.strip():
+                    plain_text = ocr_text
+                    blocks = [{"type": "paragraph", "text": ocr_text}]
+            except Exception:
+                pass
+
+        pages.append({"page": page_num + 1, "text": plain_text, "blocks": blocks})
+
+    doc.close()
     return pages

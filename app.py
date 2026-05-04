@@ -48,7 +48,7 @@ from database import (
     DBChatSession, DBChatMessage, DBDrawing, DBIsolationPackage,
 )
 from audit import log_upload, log_search, log_delete, log_auth_failure, log_access
-from ocr import extract_text_with_ocr_fallback
+from ocr import extract_text_with_ocr_fallback, extract_structured_text
 from search import keyword_search, ai_search
 
 # ---------------------------------------------------------------------------
@@ -2992,3 +2992,370 @@ async def annotate_document(
         doc.content_hash = hashlib.sha256(annotated_bytes).hexdigest()
         db.commit()
         return {"id": doc_id, "filename": original_name, "pages": len(pages_data), "updated": True}
+
+
+# ---------------------------------------------------------------------------
+# Doc Updater — Structure, Regulation Search, Updates, Review
+# ---------------------------------------------------------------------------
+
+@app.get("/documents/{doc_id}/structure", dependencies=[Depends(verify_api_key)])
+async def get_document_structure(doc_id: str, db=Depends(get_db)):
+    """Return structured content extraction for a document (headings, paragraphs, lists, tables)."""
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    pdf_bytes = _load_pdf_bytes(doc)
+    structured = extract_structured_text(pdf_bytes)
+    return {"doc_id": doc_id, "filename": _decrypt_text(doc.filename), "pages": structured}
+
+
+@app.get("/documents/{doc_id}/html", dependencies=[Depends(verify_api_key)])
+async def get_document_html(doc_id: str, db=Depends(get_db)):
+    """Return an HTML rendering of a document's structured content for the in-browser viewer."""
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    pdf_bytes = _load_pdf_bytes(doc)
+    structured = extract_structured_text(pdf_bytes)
+
+    html_parts = []
+    for page_data in structured:
+        page_num = page_data["page"]
+        html_parts.append(f'<div class="doc-page" data-page="{page_num}">')
+        html_parts.append(f'<div class="page-header">Page {page_num}</div>')
+        for block in page_data.get("blocks", []):
+            btype = block["type"]
+            text = block["text"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            if btype == "heading":
+                html_parts.append(f'<h3 class="doc-heading" data-type="heading">{text}</h3>')
+            elif btype == "list_item":
+                html_parts.append(f'<p class="doc-list-item" data-type="list_item">{text}</p>')
+            elif btype == "table":
+                rows = block.get("rows", [])
+                if rows:
+                    html_parts.append('<table class="doc-table" data-type="table"><tbody>')
+                    for ri, row in enumerate(rows):
+                        tag = "th" if ri == 0 else "td"
+                        cells = "".join(
+                            f"<{tag}>{str(c).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')}</{tag}>"
+                            for c in row
+                        )
+                        html_parts.append(f"<tr>{cells}</tr>")
+                    html_parts.append("</tbody></table>")
+                else:
+                    html_parts.append(f'<pre class="doc-table-text" data-type="table">{text}</pre>')
+            else:
+                html_parts.append(f'<p class="doc-para" data-type="paragraph">{text}</p>')
+        html_parts.append("</div>")
+
+    return HTMLResponse("\n".join(html_parts))
+
+
+class RegulationSearchRequest(BaseModel):
+    query: str = Field(max_length=2000)
+    doc_id: str | None = Field(default=None)
+    context: str = Field(default="", max_length=5000)
+
+
+@app.post("/regulations/search", dependencies=[Depends(verify_api_key)])
+async def search_regulations(body: RegulationSearchRequest, db=Depends(get_db)):
+    """Search the web for current regulations relevant to a query or document."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    doc_context = ""
+    if body.doc_id:
+        doc = db.query(DBDocument).filter(DBDocument.id == body.doc_id).first()
+        if doc:
+            pages = json.loads(_decrypt_text(doc.text_content))
+            full_text = "\n".join(p["text"] for p in pages if p.get("text"))
+            if len(full_text) > 30000:
+                full_text = full_text[:30000] + "\n[... truncated ...]"
+            doc_context = f"\n\nDOCUMENT CONTENT TO CHECK AGAINST:\n{full_text}"
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    system = f"""You are a regulatory compliance researcher. Search the web for current regulations, standards, and requirements related to the user's query.{doc_context}
+
+Return your findings as a structured analysis with these sections:
+1. **Regulations Found** — list each regulation/standard with its current version and source
+2. **Key Requirements** — summarize the main requirements from each regulation
+3. **Relevance to Document** — if a document was provided, explain how each regulation applies
+4. **Recommended Updates** — specific changes the document should make for compliance
+
+Use markdown formatting. Cite sources with URLs when available."""
+
+    create_kwargs = dict(
+        model=CHAT_MODEL,
+        max_tokens=CHAT_MAX_TOKENS,
+        system=system,
+        messages=[{"role": "user", "content": body.query + (f"\n\nAdditional context: {body.context}" if body.context else "")}],
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+    )
+
+    async def stream_search():
+        full_reply = ""
+        try:
+            with client.messages.stream(**create_kwargs) as stream:
+                for event in stream:
+                    if hasattr(event, 'type'):
+                        if event.type == 'content_block_start':
+                            if hasattr(event.content_block, 'type') and event.content_block.type == 'server_tool_use':
+                                yield f"data: {json.dumps({'type': 'status', 'message': 'Searching the web for regulations...'})}\n\n"
+                        elif event.type == 'content_block_delta':
+                            if hasattr(event.delta, 'text'):
+                                full_reply += event.delta.text
+                                yield f"data: {json.dumps({'type': 'chunk', 'text': event.delta.text})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'full_text': full_reply})}\n\n"
+        except Exception as e:
+            import logging
+            logging.getLogger("pdfhelper").error("Regulation search failed: %s", e)
+            err_msg = "Search failed" if IS_PRODUCTION else f"Search failed: {str(e)}"
+            yield f"data: {json.dumps({'type': 'error', 'detail': err_msg})}\n\n"
+
+    return StreamingResponse(stream_search(), media_type="text/event-stream")
+
+
+class GenerateUpdatesRequest(BaseModel):
+    doc_id: str = Field(max_length=100)
+    regulation_text: str = Field(max_length=100000)
+    additional_instructions: str = Field(default="", max_length=5000)
+
+
+@app.post("/documents/{doc_id}/generate-updates", dependencies=[Depends(verify_api_key)])
+async def generate_updates(doc_id: str, body: GenerateUpdatesRequest, db=Depends(get_db)):
+    """Generate proposed updates for a document based on regulation findings."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    pdf_bytes = _load_pdf_bytes(doc)
+    structured = extract_structured_text(pdf_bytes)
+    doc_content = ""
+    for page_data in structured:
+        doc_content += f"\n--- Page {page_data['page']} ---\n"
+        for block in page_data.get("blocks", []):
+            prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
+            doc_content += f"{prefix}{block['text']}\n"
+    if len(doc_content) > 80000:
+        doc_content = doc_content[:80000] + "\n[... truncated ...]"
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    system = f"""You are a document update specialist. You have the original document structure and regulation findings. Generate specific, localized updates.
+
+ORIGINAL DOCUMENT:
+{doc_content}
+
+REGULATION FINDINGS:
+{body.regulation_text[:50000]}
+
+{('ADDITIONAL INSTRUCTIONS: ' + body.additional_instructions) if body.additional_instructions else ''}
+
+For each section that needs updating, provide your response as a series of update blocks in this exact format:
+
+### UPDATE: [section name or heading]
+**Change type:** [replace/insert/delete]
+**Original text:** [quote the exact original text being changed]
+**Proposed text:** [the new text to replace it with]
+**Rationale:** [why this change is needed, citing the regulation]
+
+Be specific and precise. Only propose changes where the regulations require them. Preserve the document's tone and formatting style."""
+
+    create_kwargs = dict(
+        model=CHAT_MODEL,
+        max_tokens=CHAT_MAX_TOKENS * 2,
+        system=system,
+        messages=[{"role": "user", "content": "Please analyze the document and generate all necessary updates based on the regulation findings."}],
+    )
+    if CHAT_WEB_SEARCH:
+        create_kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
+
+    async def stream_updates():
+        full_reply = ""
+        try:
+            with client.messages.stream(**create_kwargs) as stream:
+                for event in stream:
+                    if hasattr(event, 'type'):
+                        if event.type == 'content_block_start':
+                            if hasattr(event.content_block, 'type') and event.content_block.type == 'server_tool_use':
+                                yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing document against regulations...'})}\n\n"
+                        elif event.type == 'content_block_delta':
+                            if hasattr(event.delta, 'text'):
+                                full_reply += event.delta.text
+                                yield f"data: {json.dumps({'type': 'chunk', 'text': event.delta.text})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'full_text': full_reply})}\n\n"
+        except Exception as e:
+            import logging
+            logging.getLogger("pdfhelper").error("Update generation failed: %s", e)
+            err_msg = "Update generation failed" if IS_PRODUCTION else f"Failed: {str(e)}"
+            yield f"data: {json.dumps({'type': 'error', 'detail': err_msg})}\n\n"
+
+    return StreamingResponse(stream_updates(), media_type="text/event-stream")
+
+
+class ReviewSectionRequest(BaseModel):
+    highlighted_text: str = Field(max_length=10000)
+    context: str = Field(default="", max_length=5000)
+    focus: str = Field(default="compliance,clarity,completeness", max_length=500)
+
+
+@app.post("/documents/{doc_id}/review-section", dependencies=[Depends(verify_api_key)])
+async def review_section(doc_id: str, body: ReviewSectionRequest, db=Depends(get_db)):
+    """AI-review a highlighted section of a document for compliance and improvements."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    pages = json.loads(_decrypt_text(doc.text_content))
+    full_text = "\n".join(p["text"] for p in pages if p.get("text"))
+    if len(full_text) > 40000:
+        full_text = full_text[:40000] + "\n[... truncated ...]"
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    focus_areas = [f.strip() for f in body.focus.split(",") if f.strip()]
+    focus_str = ", ".join(focus_areas) if focus_areas else "compliance, clarity, completeness"
+
+    system = f"""You are a document review specialist. The user has highlighted a section of a procedure document for review.
+
+FULL DOCUMENT CONTEXT:
+{full_text}
+
+Review the highlighted section focusing on: {focus_str}
+
+Provide your review in this format:
+1. **Issues Found** — list any problems (compliance gaps, unclear language, missing steps, etc.)
+2. **Suggested Replacement** — rewrite the section with improvements
+3. **Rationale** — explain why each change was made
+4. **Regulation References** — cite any relevant standards or regulations
+
+If using web search, clearly indicate which information came from web sources."""
+
+    create_kwargs = dict(
+        model=CHAT_MODEL,
+        max_tokens=CHAT_MAX_TOKENS,
+        system=system,
+        messages=[{"role": "user", "content": f"Please review this highlighted section:\n\n{body.highlighted_text}" + (f"\n\nAdditional context: {body.context}" if body.context else "")}],
+    )
+    if CHAT_WEB_SEARCH:
+        create_kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
+
+    async def stream_review():
+        full_reply = ""
+        try:
+            with client.messages.stream(**create_kwargs) as stream:
+                for event in stream:
+                    if hasattr(event, 'type'):
+                        if event.type == 'content_block_start':
+                            if hasattr(event.content_block, 'type') and event.content_block.type == 'server_tool_use':
+                                yield f"data: {json.dumps({'type': 'status', 'message': 'Searching regulations...'})}\n\n"
+                        elif event.type == 'content_block_delta':
+                            if hasattr(event.delta, 'text'):
+                                full_reply += event.delta.text
+                                yield f"data: {json.dumps({'type': 'chunk', 'text': event.delta.text})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'full_text': full_reply})}\n\n"
+        except Exception as e:
+            import logging
+            logging.getLogger("pdfhelper").error("Section review failed: %s", e)
+            err_msg = "Review failed" if IS_PRODUCTION else f"Review failed: {str(e)}"
+            yield f"data: {json.dumps({'type': 'error', 'detail': err_msg})}\n\n"
+
+    return StreamingResponse(stream_review(), media_type="text/event-stream")
+
+
+class ApplyUpdatesRequest(BaseModel):
+    updates_markdown: str = Field(max_length=200000, description="The full AI-generated updates text to apply")
+    title: str = Field(default="Updated Document", max_length=255)
+    include_vba: bool = Field(default=False)
+
+
+@app.post("/documents/{doc_id}/apply-updates", dependencies=[Depends(verify_api_key)])
+async def apply_updates_to_document(doc_id: str, body: ApplyUpdatesRequest, db=Depends(get_db)):
+    """Generate a Word document with the proposed updates applied."""
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    pages = json.loads(_decrypt_text(doc.text_content))
+    full_text = "\n".join(p["text"] for p in pages if p.get("text"))
+    if len(full_text) > 80000:
+        full_text = full_text[:80000] + "\n[... truncated ...]"
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    system = f"""You are a professional document writer. You have the original document and a set of proposed updates. Write the COMPLETE updated document incorporating all the accepted changes.
+
+ORIGINAL DOCUMENT:
+{full_text}
+
+PROPOSED UPDATES:
+{body.updates_markdown[:80000]}
+
+Write the complete updated document using markdown formatting:
+- Use # for main title, ## for sections, ### for subsections
+- Use **bold** for emphasis
+- Use numbered lists (1. 2. 3.) and bullet lists (- item)
+- Preserve the original document structure and tone
+- Incorporate all the proposed changes
+- The output should be the FULL document, not just the changed sections"""
+
+    response = client.messages.create(
+        model=CHAT_MODEL,
+        max_tokens=CHAT_MAX_TOKENS * 2,
+        system=system,
+        messages=[{"role": "user", "content": f"Please write the complete updated document titled '{body.title}'."}],
+    )
+    full_doc_text = ""
+    for block in response.content:
+        if hasattr(block, "text"):
+            full_doc_text += block.text
+
+    if not full_doc_text.strip():
+        raise HTTPException(status_code=500, detail="AI failed to generate document")
+
+    docx_bytes = _markdown_to_docx(full_doc_text, body.title)
+    safe_title = re.sub(r'[^\w\s-]', '', body.title)[:50].strip() or "updated-document"
+
+    if body.include_vba:
+        import zipfile
+        zip_buf = io.BytesIO()
+        vba_code = _build_vba_module(body.title)
+        with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"{safe_title}.docx", docx_bytes)
+            zf.writestr(f"{safe_title}_macros.bas", vba_code)
+            zf.writestr("README.txt",
+                f"UPDATED DOCUMENT PACKAGE\n"
+                f"========================\n\n"
+                f"1. {safe_title}.docx - The updated document\n"
+                f"2. {safe_title}_macros.bas - VBA macros for formatting\n\n"
+                f"To use macros: Open .docx in Word, Alt+F11, File > Import File\n"
+            )
+        return Response(
+            content=zip_buf.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}_package.zip"'},
+        )
+
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{safe_title}.docx"'},
+    )
