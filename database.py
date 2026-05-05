@@ -152,3 +152,24 @@ class DBIsolationPackage(Base):
     status = Column(String, default="draft")                    # draft / approved / closed
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# Doc Updater — Update Sessions
+# ---------------------------------------------------------------------------
+
+class DBUpdateSession(Base):
+    """A saved Doc Updater session with regulation findings and proposed updates."""
+    __tablename__ = "update_sessions"
+
+    id = Column(String, primary_key=True)
+    doc_id = Column(String, ForeignKey("documents.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    title = Column(String, nullable=True)
+    regulation_query = Column(Text, nullable=True)
+    regulation_results = Column(Text, nullable=True)       # encrypted
+    updates_json = Column(Text, nullable=True)             # encrypted JSON array of update blocks
+    accepted_ids = Column(Text, nullable=True)             # JSON array of accepted update IDs
+    status = Column(String, default="draft")               # draft / applied
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)

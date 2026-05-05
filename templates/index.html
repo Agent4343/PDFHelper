@@ -307,19 +307,50 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
 .doc-table{border-collapse:collapse;width:100%;margin:0.5rem 0;font-size:13px}
 .doc-table th,.doc-table td{border:1px solid #ccc;padding:4px 8px;text-align:left}
 .doc-table th{background:#f0f0f0;font-weight:600}
+.doc-block{transition:background 0.2s}
+.doc-block:hover{background:#f0f4ff}
+.doc-block.changed-add{background:#dcfce7;border-left:3px solid #22c55e}
+.doc-block.changed-del{background:#fef2f2;border-left:3px solid #ef4444;text-decoration:line-through;opacity:0.7}
+.doc-block.changed-replace{background:#fef9c3;border-left:3px solid #f59e0b}
 .updater-viewer ::selection{background:#3b82f666}
 .highlight-action{position:absolute;background:var(--accent);color:#fff;padding:6px 14px;
   border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;z-index:10;
   box-shadow:0 2px 10px rgba(0,0,0,0.3);white-space:nowrap}
+.upd-block{background:var(--card);border:1px solid var(--border);border-radius:8px;
+  padding:0.75rem;margin-bottom:0.5rem;font-size:0.82rem}
+.upd-block.accepted{border-color:#22c55e;background:#22c55e0a}
+.upd-block.rejected{border-color:#ef4444;opacity:0.5}
+.upd-block-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem}
+.upd-block-title{font-weight:600;color:var(--accent);font-size:0.85rem}
+.upd-block-type{font-size:0.72rem;padding:2px 8px;border-radius:4px;font-weight:600;text-transform:uppercase}
+.upd-block-type.replace{background:#f59e0b22;color:var(--orange)}
+.upd-block-type.insert{background:#22c55e22;color:var(--green)}
+.upd-block-type.delete{background:#ef444422;color:var(--red)}
+.upd-diff{display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin:0.5rem 0}
+.upd-diff-col{padding:6px 8px;border-radius:4px;font-size:0.78rem;line-height:1.5;max-height:120px;overflow-y:auto}
+.upd-diff-old{background:#fef2f2;color:#7f1d1d;border:1px solid #fca5a5}
+.upd-diff-new{background:#f0fdf4;color:#14532d;border:1px solid #86efac}
+.upd-diff-label{font-size:0.68rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:2px}
+.upd-block-actions{display:flex;gap:0.4rem;margin-top:0.5rem}
+.upd-block-actions .btn{font-size:0.75rem;padding:0.3rem 0.6rem}
+.upd-rationale{font-size:0.78rem;color:var(--muted);margin-top:0.4rem;font-style:italic}
 .review-result{background:var(--card);border:1px solid var(--border);border-radius:8px;
   padding:1rem;font-size:0.85rem;line-height:1.6}
 .review-result h4{color:var(--accent);margin-bottom:0.5rem}
 .review-actions{display:flex;gap:0.5rem;margin-top:0.75rem}
 .review-actions .btn{font-size:0.78rem;padding:0.4rem 0.8rem}
+.sess-bar{display:flex;gap:0.5rem;align-items:center;font-size:0.82rem;margin-bottom:0.5rem}
+.sess-bar select{padding:0.35rem 0.5rem;background:var(--code);border:1px solid var(--border);
+  border-radius:4px;color:var(--text);font-size:0.8rem;max-width:200px}
+.detected-regs{display:flex;gap:4px;flex-wrap:wrap;margin-top:0.4rem}
+.detected-reg{font-size:0.72rem;padding:2px 8px;border-radius:4px;background:#3b82f618;
+  color:var(--accent);border:1px solid #3b82f640;cursor:pointer}
+.detected-reg:hover{background:#3b82f630}
 #updater-stream{white-space:pre-wrap;font-family:inherit;line-height:1.6;max-height:50vh;overflow-y:auto}
 @media(max-width:768px){
 .updater-layout{flex-direction:column;height:auto}
 .updater-viewer{max-height:50vh}
+.upd-diff{grid-template-columns:1fr}
 }
 </style>
 </head>
@@ -729,7 +760,16 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
     <div class="page" id="page-updater">
       <h2>Doc Updater</h2>
       <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
-        <p style="font-size:0.9rem"><strong>What does this do?</strong> View your documents in the browser, search for updated regulations, generate proposed changes, and highlight sections for AI review. When you're done, download the updated document as a Word file.</p>
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> View your documents, auto-detect regulation references, search for updates, review individual changes with accept/reject, highlight sections for AI review, and download the updated Word document.</p>
+      </div>
+
+      <!-- Session bar -->
+      <div class="sess-bar">
+        <select id="upd-session-select" onchange="updaterLoadSession()">
+          <option value="">-- New Session --</option>
+        </select>
+        <button class="btn btn-secondary" onclick="updaterSaveSession()" style="font-size:0.78rem;padding:0.3rem 0.6rem">Save Session</button>
+        <button class="btn btn-secondary" onclick="updaterDeleteSession()" style="font-size:0.78rem;padding:0.3rem 0.6rem">Delete</button>
       </div>
 
       <!-- Toolbar -->
@@ -749,26 +789,31 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
       <div class="updater-layout">
         <div class="updater-viewer" id="upd-viewer"></div>
         <div class="updater-panel">
-          <!-- Step 1: Search query -->
+          <!-- Step 1: Search query with auto-detect -->
           <div class="updater-step">
             <h4><span class="step-num">1</span>Search Regulations</h4>
+            <div id="upd-detected-regs"></div>
             <textarea id="upd-search-query" rows="2" placeholder="e.g. OSHA fall protection 2024, API 570 piping inspection updates" style="width:100%;margin-top:0.5rem"></textarea>
             <input type="text" id="upd-search-context" placeholder="Additional context (industry, region, etc.)" style="width:100%;margin-top:0.5rem">
             <button class="btn btn-primary" onclick="updaterSearchRegs()" style="margin-top:0.5rem;width:100%">Search</button>
           </div>
 
-          <!-- Step 2: Regulation results / update output -->
+          <!-- Step 2: Regulation results -->
           <div class="updater-step">
-            <h4><span class="step-num">2</span>Results &amp; Updates</h4>
-            <div id="upd-stream-container" style="margin-top:0.5rem">
-              <div id="updater-stream" style="color:var(--muted);font-size:0.82rem">Results will appear here after searching...</div>
-            </div>
+            <h4><span class="step-num">2</span>Regulation Results</h4>
+            <div id="updater-stream" style="color:var(--muted);font-size:0.82rem;margin-top:0.5rem">Results will appear here after searching...</div>
           </div>
 
-          <!-- Step 3: Highlight review results -->
+          <!-- Step 3: Parsed update blocks with accept/reject -->
           <div class="updater-step">
-            <h4><span class="step-num">3</span>Highlight &amp; Review</h4>
-            <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.5rem">Select text in the document viewer on the left, then click the review button that appears to get AI suggestions.</p>
+            <h4><span class="step-num">3</span>Proposed Updates <span id="upd-count-badge" style="font-size:0.72rem;background:var(--border);padding:1px 8px;border-radius:10px;margin-left:4px"></span></h4>
+            <div id="upd-blocks-container"></div>
+          </div>
+
+          <!-- Step 4: Highlight review results -->
+          <div class="updater-step">
+            <h4><span class="step-num">4</span>Highlight &amp; Review</h4>
+            <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.5rem">Select text in the viewer, then click "Review with AI" to get suggestions.</p>
             <div id="upd-review-results"></div>
           </div>
         </div>
@@ -2263,18 +2308,19 @@ async function deleteIsolation(id){
 /* ---- Doc Updater ---- */
 var updaterDocId=null;
 var updaterRegText='';
-var updaterUpdatesText='';
+var updaterUpdates=[];  // parsed update blocks [{id,section,change_type,original_text,proposed_text,rationale,status}]
 var updaterInited=false;
 
 function initUpdater(){
   if(!updaterInited){
     updaterInited=true;
-    var viewer=document.getElementById('upd-viewer');
-    viewer.addEventListener('mouseup',updaterHandleSelection);
+    document.getElementById('upd-viewer').addEventListener('mouseup',updaterHandleSelection);
   }
   populateUpdaterDocSelect();
+  updaterLoadSessionList();
 }
 
+var _updaterFetching=false;
 function populateUpdaterDocSelect(){
   var sel=document.getElementById('upd-doc-select');
   var cur=sel.value;
@@ -2283,13 +2329,15 @@ function populateUpdaterDocSelect(){
     opts+='<option value="'+d.id+'"'+(d.id===cur?' selected':'')+'>'+esc(d.filename)+'</option>';
   });
   sel.innerHTML=opts;
-  if(!allDocs.length){
+  if(!allDocs.length && !_updaterFetching){
+    _updaterFetching=true;
     fetch(API+'/documents',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
-      if(d.documents){
+      _updaterFetching=false;
+      if(d.documents && d.documents.length){
         allDocs=d.documents;
         populateUpdaterDocSelect();
       }
-    }).catch(function(){});
+    }).catch(function(){_updaterFetching=false;});
   }
 }
 
@@ -2297,18 +2345,49 @@ async function updaterLoadDoc(){
   var sel=document.getElementById('upd-doc-select');
   updaterDocId=sel.value;
   var viewer=document.getElementById('upd-viewer');
-  if(!updaterDocId){viewer.innerHTML='';return;}
+  if(!updaterDocId){viewer.innerHTML='';document.getElementById('upd-detected-regs').innerHTML='';return;}
   viewer.innerHTML='<div class="loading-overlay"><div class="spinner"></div><span>Loading document...</span></div>';
   try{
     var r=await fetch(API+'/documents/'+updaterDocId+'/html',{headers:headers()});
     if(!r.ok) throw new Error('Failed to load document');
-    var html=await r.text();
-    viewer.innerHTML=html;
+    viewer.innerHTML=await r.text();
     document.getElementById('upd-gen-btn').disabled=false;
+    updaterDetectRegs();
   }catch(e){
     viewer.innerHTML='<p style="color:red">'+esc(e.message)+'</p>';
     toast(e.message,'error');
   }
+}
+
+async function updaterDetectRegs(){
+  if(!updaterDocId) return;
+  var container=document.getElementById('upd-detected-regs');
+  container.innerHTML='<span style="font-size:0.78rem;color:var(--muted)">Scanning for regulation references...</span>';
+  try{
+    var r=await fetch(API+'/documents/'+updaterDocId+'/detect-regulations',{headers:headers()});
+    if(!r.ok) throw new Error('Detection failed');
+    var d=await r.json();
+    if(!d.regulations_found.length){container.innerHTML='<span style="font-size:0.78rem;color:var(--muted)">No regulation references detected in document.</span>';return;}
+    var html='<span style="font-size:0.78rem;color:var(--muted)">Detected ('+d.count+'): </span><div class="detected-regs">';
+    d.regulations_found.slice(0,15).forEach(function(ref){
+      html+='<span class="detected-reg" onclick="updaterAddRegRef(this)">'+esc(ref)+'</span>';
+    });
+    html+='</div>';
+    if(d.suggested_query){
+      html+='<button class="btn btn-secondary" onclick="document.getElementById(\'upd-search-query\').value='+JSON.stringify(d.suggested_query).replace(/'/g,"\\'")+';toast(\'Query filled\')" style="font-size:0.72rem;padding:2px 8px;margin-top:4px">Use suggested query</button>';
+    }
+    container.innerHTML=html;
+  }catch(e){
+    container.innerHTML='<span style="font-size:0.78rem;color:var(--muted)">Could not detect regulations.</span>';
+  }
+}
+
+function updaterAddRegRef(el){
+  var q=document.getElementById('upd-search-query');
+  var cur=q.value.trim();
+  var ref=el.textContent;
+  if(cur.indexOf(ref)===-1) q.value=cur?(cur+', '+ref):ref;
+  el.style.background='#22c55e30';el.style.borderColor='#22c55e';
 }
 
 async function updaterSearchRegs(){
@@ -2359,51 +2438,99 @@ async function updaterSearchRegs(){
 async function updaterGenUpdates(){
   if(!updaterDocId){toast('Select a document first','error');return;}
   if(!updaterRegText.trim()){toast('Search for regulations first','error');return;}
-  var stream=document.getElementById('updater-stream');
-  var extra=document.getElementById('upd-search-context').value.trim();
-  stream.textContent='Generating updates...';
+  var container=document.getElementById('upd-blocks-container');
+  container.innerHTML='<div class="loading-overlay"><div class="spinner"></div><span>Generating updates...</span></div>';
   var btn=document.getElementById('upd-gen-btn');
   btn.disabled=true;
-  updaterUpdatesText='';
+  var extra=document.getElementById('upd-search-context').value.trim();
   try{
     var body={doc_id:updaterDocId,regulation_text:updaterRegText,additional_instructions:extra};
     var r=await fetch(API+'/documents/'+updaterDocId+'/generate-updates',{method:'POST',headers:headers(),body:JSON.stringify(body)});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
-    var reader=r.body.getReader();
-    var decoder=new TextDecoder();
-    stream.textContent='';
-    var buf='';
-    while(true){
-      var result=await reader.read();
-      if(result.done) break;
-      buf+=decoder.decode(result.value,{stream:true});
-      var lines=buf.split('\n');
-      buf=lines.pop();
-      for(var i=0;i<lines.length;i++){
-        var line=lines[i];
-        if(!line.startsWith('data: ')) continue;
-        try{
-          var evt=JSON.parse(line.slice(6));
-          if(evt.type==='chunk'){updaterUpdatesText+=evt.text;stream.textContent=updaterUpdatesText;}
-          else if(evt.type==='status'){stream.textContent=evt.message+'\n'+updaterUpdatesText;}
-          else if(evt.type==='done'){if(evt.full_text) updaterUpdatesText=evt.full_text;}
-          else if(evt.type==='error'){toast(evt.detail,'error');}
-        }catch(pe){}
-      }
-    }
-    stream.innerHTML=renderMarkdown(updaterUpdatesText);
+    var d=await r.json();
+    updaterUpdates=(d.updates||[]).map(function(u){u.status='pending';return u;});
+    renderUpdateBlocks();
+    updaterApplyVisualTracking();
     document.getElementById('upd-apply-btn').disabled=false;
+    document.getElementById('upd-count-badge').textContent=updaterUpdates.length;
   }catch(e){
-    stream.textContent='Error: '+e.message;
+    container.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';
     toast(e.message,'error');
   }
   btn.disabled=false;
 }
 
+function renderUpdateBlocks(){
+  var container=document.getElementById('upd-blocks-container');
+  if(!updaterUpdates.length){container.innerHTML='<p style="color:var(--muted)">No updates generated yet.</p>';return;}
+  var html='';
+  updaterUpdates.forEach(function(u,i){
+    var cls='upd-block'+(u.status==='accepted'?' accepted':'')+(u.status==='rejected'?' rejected':'');
+    html+='<div class="'+cls+'" id="upd-block-'+i+'">';
+    html+='<div class="upd-block-header"><span class="upd-block-title">'+esc(u.section||'Update '+(i+1))+'</span>';
+    html+='<span class="upd-block-type '+esc(u.change_type||'replace')+'">'+esc(u.change_type||'replace')+'</span></div>';
+    if(u.original_text||u.proposed_text){
+      html+='<div class="upd-diff">';
+      html+='<div class="upd-diff-col upd-diff-old"><div class="upd-diff-label">Original</div>'+esc(u.original_text||'(none)')+'</div>';
+      html+='<div class="upd-diff-col upd-diff-new"><div class="upd-diff-label">Proposed</div>'+esc(u.proposed_text||'(delete)')+'</div>';
+      html+='</div>';
+    }
+    if(u.rationale) html+='<div class="upd-rationale">'+esc(u.rationale)+'</div>';
+    html+='<div class="upd-block-actions">';
+    if(u.status!=='accepted') html+='<button class="btn btn-primary" onclick="updaterSetBlockStatus('+i+',\'accepted\')">Accept</button>';
+    if(u.status!=='rejected') html+='<button class="btn btn-danger" onclick="updaterSetBlockStatus('+i+',\'rejected\')">Reject</button>';
+    if(u.status!=='pending') html+='<button class="btn btn-secondary" onclick="updaterSetBlockStatus('+i+',\'pending\')">Reset</button>';
+    html+='</div></div>';
+  });
+  var accepted=updaterUpdates.filter(function(u){return u.status==='accepted';}).length;
+  var total=updaterUpdates.length;
+  html+='<div style="font-size:0.78rem;color:var(--muted);margin-top:0.5rem">'+accepted+'/'+total+' accepted</div>';
+  html+='<div style="display:flex;gap:0.4rem;margin-top:0.4rem">';
+  html+='<button class="btn btn-primary" onclick="updaterAcceptAll()" style="font-size:0.75rem;padding:0.3rem 0.6rem">Accept All</button>';
+  html+='<button class="btn btn-danger" onclick="updaterRejectAll()" style="font-size:0.75rem;padding:0.3rem 0.6rem">Reject All</button>';
+  html+='</div>';
+  container.innerHTML=html;
+}
+
+function updaterSetBlockStatus(idx,status){
+  if(updaterUpdates[idx]) updaterUpdates[idx].status=status;
+  renderUpdateBlocks();
+  updaterApplyVisualTracking();
+}
+function updaterAcceptAll(){updaterUpdates.forEach(function(u){u.status='accepted';});renderUpdateBlocks();updaterApplyVisualTracking();}
+function updaterRejectAll(){updaterUpdates.forEach(function(u){u.status='rejected';});renderUpdateBlocks();updaterApplyVisualTracking();}
+
+function updaterApplyVisualTracking(){
+  document.querySelectorAll('.doc-block').forEach(function(el){
+    el.classList.remove('changed-add','changed-del','changed-replace');
+  });
+  updaterUpdates.forEach(function(u){
+    if(u.status!=='accepted') return;
+    var origLower=(u.original_text||'').toLowerCase().trim();
+    if(!origLower) return;
+    document.querySelectorAll('.doc-block').forEach(function(el){
+      var blockText=(el.textContent||'').toLowerCase().trim();
+      if(blockText.indexOf(origLower)!==-1 || origLower.indexOf(blockText)!==-1){
+        if(u.change_type==='delete') el.classList.add('changed-del');
+        else if(u.change_type==='insert') el.classList.add('changed-add');
+        else el.classList.add('changed-replace');
+      }
+    });
+  });
+}
+
 async function updaterApply(){
   if(!updaterDocId){toast('Select a document first','error');return;}
-  var content=updaterUpdatesText||updaterRegText;
-  if(!content.trim()){toast('No updates to apply — search regulations and generate updates first','error');return;}
+  var accepted=updaterUpdates.filter(function(u){return u.status==='accepted';});
+  var content='';
+  if(accepted.length){
+    content=accepted.map(function(u){
+      return '### UPDATE: '+u.section+'\n**Change type:** '+u.change_type+'\n**Original text:** '+u.original_text+'\n**Proposed text:** '+u.proposed_text+'\n**Rationale:** '+u.rationale;
+    }).join('\n\n');
+  } else if(updaterRegText){
+    content=updaterRegText;
+  }
+  if(!content.trim()){toast('No updates to apply — accept some updates or search regulations first','error');return;}
   var btn=document.getElementById('upd-apply-btn');
   btn.disabled=true;btn.textContent='Generating...';
   var vba=document.getElementById('upd-vba-toggle').checked;
@@ -2414,17 +2541,14 @@ async function updaterApply(){
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
     var blob=await r.blob();
     var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');
-    a.href=url;
+    var a=document.createElement('a');a.href=url;
     var cd=r.headers.get('content-disposition')||'';
     var m=cd.match(/filename="([^"]+)"/);
     a.download=m?m[1]:(vba?title+'_package.zip':title+'.docx');
     document.body.appendChild(a);a.click();a.remove();
     URL.revokeObjectURL(url);
     toast('Document downloaded');
-  }catch(e){
-    toast(e.message,'error');
-  }
+  }catch(e){toast(e.message,'error');}
   btn.disabled=false;btn.textContent='Download Updated .docx';
 }
 
@@ -2482,8 +2606,25 @@ async function updaterReviewSection(text){
         }catch(pe){}
       }
     }
-    results.innerHTML='<div class="review-result"><h4>AI Review</h4><div style="margin-bottom:0.75rem;padding:8px;background:#0d1117;border-radius:6px;font-size:12px"><strong>Reviewed:</strong> "'+esc(text.slice(0,100))+(text.length>100?'...':'')+'"</div>'+renderMarkdown(reviewText)+'<div class="review-actions"><button class="btn btn-primary" onclick="updaterAcceptReview()">Add to Updates</button><button class="btn btn-secondary" onclick="document.getElementById(\'upd-review-results\').innerHTML=\'\'">Dismiss</button></div></div>';
-    window._lastReviewText=reviewText;
+    // Try parse as JSON for structured review
+    var parsed=null;
+    try{var cleaned=reviewText.trim();if(cleaned.startsWith('```')){cleaned=cleaned.replace(/^```\w*\n?/,'').replace(/\n?```$/,'');}parsed=JSON.parse(cleaned);}catch(pe){}
+    if(parsed&&parsed.suggested_replacement){
+      var html='<div class="review-result"><h4>AI Review</h4>';
+      html+='<div style="margin-bottom:0.5rem;padding:6px 8px;background:#0d1117;border-radius:6px;font-size:0.78rem"><strong>Reviewed:</strong> "'+esc(text.slice(0,80))+(text.length>80?'...':'')+'"</div>';
+      if(parsed.issues&&parsed.issues.length){html+='<div style="margin-bottom:0.5rem"><strong>Issues:</strong><ul style="margin:4px 0 0 1rem">';parsed.issues.forEach(function(iss){html+='<li>'+esc(iss)+'</li>';});html+='</ul></div>';}
+      html+='<div class="upd-diff"><div class="upd-diff-col upd-diff-old"><div class="upd-diff-label">Original</div>'+esc(text)+'</div>';
+      html+='<div class="upd-diff-col upd-diff-new"><div class="upd-diff-label">Suggested</div>'+esc(parsed.suggested_replacement)+'</div></div>';
+      if(parsed.rationale) html+='<div class="upd-rationale">'+esc(parsed.rationale)+'</div>';
+      if(parsed.regulation_refs&&parsed.regulation_refs.length) html+='<div style="font-size:0.75rem;margin-top:0.3rem;color:var(--muted)">Refs: '+parsed.regulation_refs.map(esc).join(', ')+'</div>';
+      html+='<div class="review-actions"><button class="btn btn-primary" onclick="updaterAcceptReview()">Add as Update</button><button class="btn btn-secondary" onclick="document.getElementById(\'upd-review-results\').innerHTML=\'\'">Dismiss</button></div></div>';
+      results.innerHTML=html;
+      window._lastReview={original:text,parsed:parsed};
+    } else {
+      results.innerHTML='<div class="review-result"><h4>AI Review</h4><div style="margin-bottom:0.5rem;padding:6px 8px;background:#0d1117;border-radius:6px;font-size:0.78rem"><strong>Reviewed:</strong> "'+esc(text.slice(0,80))+(text.length>80?'...':'')+'"</div>'+renderMarkdown(reviewText)+'<div class="review-actions"><button class="btn btn-primary" onclick="updaterAcceptReviewRaw()">Add to Updates</button><button class="btn btn-secondary" onclick="document.getElementById(\'upd-review-results\').innerHTML=\'\'">Dismiss</button></div></div>';
+      window._lastReviewRaw=reviewText;
+      window._lastReviewOriginal=text;
+    }
   }catch(e){
     results.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';
     toast(e.message,'error');
@@ -2491,12 +2632,103 @@ async function updaterReviewSection(text){
 }
 
 function updaterAcceptReview(){
-  if(window._lastReviewText){
-    updaterUpdatesText+=(updaterUpdatesText?'\n\n':'')+window._lastReviewText;
-    document.getElementById('upd-apply-btn').disabled=false;
-    toast('Review added to updates');
-    document.getElementById('upd-review-results').innerHTML='<p style="color:var(--green)">Review added. You can highlight more sections or download the updated document.</p>';
-  }
+  if(!window._lastReview) return;
+  var p=window._lastReview.parsed;
+  var newUpd={id:'upd-r-'+(updaterUpdates.length+1),section:'Highlighted Section',change_type:'replace',
+    original_text:window._lastReview.original,proposed_text:p.suggested_replacement||'',
+    rationale:p.rationale||'',status:'accepted'};
+  updaterUpdates.push(newUpd);
+  renderUpdateBlocks();
+  updaterApplyVisualTracking();
+  document.getElementById('upd-apply-btn').disabled=false;
+  document.getElementById('upd-count-badge').textContent=updaterUpdates.length;
+  toast('Review added as accepted update');
+  document.getElementById('upd-review-results').innerHTML='<p style="color:var(--green)">Added. Highlight more sections or download.</p>';
+}
+
+function updaterAcceptReviewRaw(){
+  if(!window._lastReviewRaw) return;
+  var newUpd={id:'upd-r-'+(updaterUpdates.length+1),section:'Highlighted Section',change_type:'replace',
+    original_text:window._lastReviewOriginal||'',proposed_text:window._lastReviewRaw,
+    rationale:'AI review suggestion',status:'accepted'};
+  updaterUpdates.push(newUpd);
+  renderUpdateBlocks();
+  updaterApplyVisualTracking();
+  document.getElementById('upd-apply-btn').disabled=false;
+  document.getElementById('upd-count-badge').textContent=updaterUpdates.length;
+  toast('Review added as accepted update');
+  document.getElementById('upd-review-results').innerHTML='<p style="color:var(--green)">Added. Highlight more sections or download.</p>';
+}
+
+/* -- Session save/load -- */
+async function updaterLoadSessionList(){
+  try{
+    var r=await fetch(API+'/updater/sessions',{headers:headers()});
+    if(!r.ok) return;
+    var d=await r.json();
+    var sel=document.getElementById('upd-session-select');
+    var html='<option value="">-- New Session --</option>';
+    (d.sessions||[]).forEach(function(s){
+      html+='<option value="'+s.id+'">'+esc(s.title||s.regulation_query||'Session')+' ('+new Date(s.created_at).toLocaleDateString()+')</option>';
+    });
+    sel.innerHTML=html;
+  }catch(e){}
+}
+
+async function updaterSaveSession(){
+  if(!updaterDocId){toast('Select a document first','error');return;}
+  var query=document.getElementById('upd-search-query').value.trim();
+  try{
+    var body={doc_id:updaterDocId,title:query||'Update session',regulation_query:query,
+      regulation_results:updaterRegText,
+      updates_json:JSON.stringify(updaterUpdates),
+      accepted_ids:updaterUpdates.filter(function(u){return u.status==='accepted';}).map(function(u){return u.id;})};
+    var r=await fetch(API+'/updater/sessions',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Save failed');}
+    toast('Session saved');
+    updaterLoadSessionList();
+  }catch(e){toast(e.message,'error');}
+}
+
+async function updaterLoadSession(){
+  var sel=document.getElementById('upd-session-select');
+  var sid=sel.value;
+  if(!sid) return;
+  try{
+    var r=await fetch(API+'/updater/sessions/'+sid,{headers:headers()});
+    if(!r.ok) throw new Error('Failed to load session');
+    var d=await r.json();
+    // Set doc
+    document.getElementById('upd-doc-select').value=d.doc_id;
+    updaterDocId=d.doc_id;
+    await updaterLoadDoc();
+    // Restore state
+    document.getElementById('upd-search-query').value=d.regulation_query||'';
+    updaterRegText=d.regulation_results||'';
+    if(updaterRegText) document.getElementById('updater-stream').innerHTML=renderMarkdown(updaterRegText);
+    try{updaterUpdates=JSON.parse(d.updates_json||'[]');}catch(pe){updaterUpdates=[];}
+    var acceptedIds=d.accepted_ids||[];
+    updaterUpdates.forEach(function(u){if(acceptedIds.indexOf(u.id)!==-1) u.status='accepted';});
+    renderUpdateBlocks();
+    updaterApplyVisualTracking();
+    if(updaterUpdates.length) document.getElementById('upd-apply-btn').disabled=false;
+    document.getElementById('upd-count-badge').textContent=updaterUpdates.length||'';
+    toast('Session loaded');
+  }catch(e){toast(e.message,'error');}
+}
+
+async function updaterDeleteSession(){
+  var sel=document.getElementById('upd-session-select');
+  var sid=sel.value;
+  if(!sid){toast('Select a session to delete','error');return;}
+  if(!confirm('Delete this saved session?')) return;
+  try{
+    var r=await fetch(API+'/updater/sessions/'+sid,{method:'DELETE',headers:headers()});
+    if(!r.ok) throw new Error('Delete failed');
+    toast('Session deleted');
+    sel.value='';
+    updaterLoadSessionList();
+  }catch(e){toast(e.message,'error');}
 }
 
 function renderMarkdown(txt){

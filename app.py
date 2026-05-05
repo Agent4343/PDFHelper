@@ -45,7 +45,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from database import (
     SessionLocal, engine, Base, DBUser, DBDocument, DBSearchResult, DBAnalysisReport,
-    DBChatSession, DBChatMessage, DBDrawing, DBIsolationPackage,
+    DBChatSession, DBChatMessage, DBDrawing, DBIsolationPackage, DBUpdateSession,
 )
 from audit import log_upload, log_search, log_delete, log_auth_failure, log_access
 from ocr import extract_text_with_ocr_fallback, extract_structured_text
@@ -2995,7 +2995,7 @@ async def annotate_document(
 
 
 # ---------------------------------------------------------------------------
-# Doc Updater — Structure, Regulation Search, Updates, Review
+# Doc Updater — Structure, Regulation Search, Updates, Review, Sessions
 # ---------------------------------------------------------------------------
 
 @app.get("/documents/{doc_id}/structure", dependencies=[Depends(verify_api_key)])
@@ -3019,6 +3019,7 @@ async def get_document_html(doc_id: str, db=Depends(get_db)):
     structured = extract_structured_text(pdf_bytes)
 
     html_parts = []
+    block_idx = 0
     for page_data in structured:
         page_num = page_data["page"]
         html_parts.append(f'<div class="doc-page" data-page="{page_num}">')
@@ -3026,14 +3027,16 @@ async def get_document_html(doc_id: str, db=Depends(get_db)):
         for block in page_data.get("blocks", []):
             btype = block["type"]
             text = block["text"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            bid = f"blk-{block_idx}"
+            block_idx += 1
             if btype == "heading":
-                html_parts.append(f'<h3 class="doc-heading" data-type="heading">{text}</h3>')
+                html_parts.append(f'<h3 class="doc-heading doc-block" id="{bid}" data-type="heading" data-idx="{block_idx}">{text}</h3>')
             elif btype == "list_item":
-                html_parts.append(f'<p class="doc-list-item" data-type="list_item">{text}</p>')
+                html_parts.append(f'<p class="doc-list-item doc-block" id="{bid}" data-type="list_item" data-idx="{block_idx}">{text}</p>')
             elif btype == "table":
                 rows = block.get("rows", [])
                 if rows:
-                    html_parts.append('<table class="doc-table" data-type="table"><tbody>')
+                    html_parts.append(f'<table class="doc-table doc-block" id="{bid}" data-type="table" data-idx="{block_idx}"><tbody>')
                     for ri, row in enumerate(rows):
                         tag = "th" if ri == 0 else "td"
                         cells = "".join(
@@ -3043,12 +3046,51 @@ async def get_document_html(doc_id: str, db=Depends(get_db)):
                         html_parts.append(f"<tr>{cells}</tr>")
                     html_parts.append("</tbody></table>")
                 else:
-                    html_parts.append(f'<pre class="doc-table-text" data-type="table">{text}</pre>')
+                    html_parts.append(f'<pre class="doc-table-text doc-block" id="{bid}" data-type="table" data-idx="{block_idx}">{text}</pre>')
             else:
-                html_parts.append(f'<p class="doc-para" data-type="paragraph">{text}</p>')
+                html_parts.append(f'<p class="doc-para doc-block" id="{bid}" data-type="paragraph" data-idx="{block_idx}">{text}</p>')
         html_parts.append("</div>")
 
     return HTMLResponse("\n".join(html_parts))
+
+
+@app.get("/documents/{doc_id}/detect-regulations", dependencies=[Depends(verify_api_key)])
+async def detect_regulations(doc_id: str, db=Depends(get_db)):
+    """Scan a document and return detected regulation/standard references."""
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    pages = json.loads(_decrypt_text(doc.text_content))
+    full_text = "\n".join(p["text"] for p in pages if p.get("text"))
+
+    patterns = [
+        r'(?:OSHA|29\s*CFR)\s*[\d.]+(?:\([a-z]\))?',
+        r'(?:API|ASME|ANSI|NFPA|ISO|IEC|IEEE|ASTM|CSA|CGA|DOT|EPA|MSHA)\s*[\d][\w.\-]*',
+        r'(?:AS|BS|EN|DIN|JIS|NF|GB)\s*\d[\w.\-]*',
+        r'(?:NEC|NESC|CFR|USC|FR)\s*[\d.]+',
+        r'(?:Part|Section|Subpart)\s+\d[\w.\-]*',
+        r'(?:29|30|33|40|46|49)\s*CFR\s*[\d.]+',
+    ]
+    found = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, full_text, re.IGNORECASE):
+            ref = match.group(0).strip()
+            if len(ref) > 3:
+                found.add(ref)
+
+    refs = sorted(found)
+    suggested_query = ""
+    if refs:
+        top_refs = refs[:10]
+        suggested_query = "Current requirements for: " + ", ".join(top_refs)
+
+    return {
+        "doc_id": doc_id,
+        "regulations_found": refs,
+        "count": len(refs),
+        "suggested_query": suggested_query,
+    }
 
 
 class RegulationSearchRequest(BaseModel):
@@ -3159,46 +3201,49 @@ REGULATION FINDINGS:
 
 {('ADDITIONAL INSTRUCTIONS: ' + body.additional_instructions) if body.additional_instructions else ''}
 
-For each section that needs updating, provide your response as a series of update blocks in this exact format:
+You MUST respond with a JSON array of update objects. Each object has these fields:
+- "id": a unique short identifier like "upd-1", "upd-2", etc.
+- "section": the section name or heading this update applies to
+- "change_type": one of "replace", "insert", or "delete"
+- "original_text": the exact original text being changed (quote it precisely)
+- "proposed_text": the new text to replace it with (empty string for deletions)
+- "rationale": why this change is needed, citing the specific regulation
 
-### UPDATE: [section name or heading]
-**Change type:** [replace/insert/delete]
-**Original text:** [quote the exact original text being changed]
-**Proposed text:** [the new text to replace it with]
-**Rationale:** [why this change is needed, citing the regulation]
-
-Be specific and precise. Only propose changes where the regulations require them. Preserve the document's tone and formatting style."""
+Respond ONLY with a valid JSON array. No markdown, no explanation outside the JSON. Example:
+[
+  {{"id": "upd-1", "section": "PPE Requirements", "change_type": "replace", "original_text": "Hard hats required", "proposed_text": "Hard hats and safety glasses required per OSHA 1926.100", "rationale": "OSHA 1926.100 requires eye protection in addition to head protection"}}
+]"""
 
     create_kwargs = dict(
         model=CHAT_MODEL,
         max_tokens=CHAT_MAX_TOKENS * 2,
         system=system,
-        messages=[{"role": "user", "content": "Please analyze the document and generate all necessary updates based on the regulation findings."}],
+        messages=[{"role": "user", "content": "Analyze the document and generate all necessary updates as a JSON array."}],
     )
-    if CHAT_WEB_SEARCH:
-        create_kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
 
-    async def stream_updates():
-        full_reply = ""
-        try:
-            with client.messages.stream(**create_kwargs) as stream:
-                for event in stream:
-                    if hasattr(event, 'type'):
-                        if event.type == 'content_block_start':
-                            if hasattr(event.content_block, 'type') and event.content_block.type == 'server_tool_use':
-                                yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing document against regulations...'})}\n\n"
-                        elif event.type == 'content_block_delta':
-                            if hasattr(event.delta, 'text'):
-                                full_reply += event.delta.text
-                                yield f"data: {json.dumps({'type': 'chunk', 'text': event.delta.text})}\n\n"
-            yield f"data: {json.dumps({'type': 'done', 'full_text': full_reply})}\n\n"
-        except Exception as e:
-            import logging
-            logging.getLogger("pdfhelper").error("Update generation failed: %s", e)
-            err_msg = "Update generation failed" if IS_PRODUCTION else f"Failed: {str(e)}"
-            yield f"data: {json.dumps({'type': 'error', 'detail': err_msg})}\n\n"
+    response = client.messages.create(**create_kwargs)
+    full_text = ""
+    for block in response.content:
+        if hasattr(block, "text"):
+            full_text += block.text
 
-    return StreamingResponse(stream_updates(), media_type="text/event-stream")
+    # Try to parse as JSON array
+    updates = []
+    try:
+        # Strip markdown code fences if present
+        cleaned = full_text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r'^```\w*\n?', '', cleaned)
+            cleaned = re.sub(r'\n?```$', '', cleaned)
+        updates = json.loads(cleaned)
+        if not isinstance(updates, list):
+            updates = [updates]
+    except json.JSONDecodeError:
+        # Fallback: return as single raw text block
+        updates = [{"id": "upd-1", "section": "Full Document", "change_type": "replace",
+                     "original_text": "", "proposed_text": full_text, "rationale": "AI-generated update (could not parse structured blocks)"}]
+
+    return {"updates": updates, "raw_text": full_text}
 
 
 class ReviewSectionRequest(BaseModel):
@@ -3236,19 +3281,19 @@ FULL DOCUMENT CONTEXT:
 
 Review the highlighted section focusing on: {focus_str}
 
-Provide your review in this format:
-1. **Issues Found** — list any problems (compliance gaps, unclear language, missing steps, etc.)
-2. **Suggested Replacement** — rewrite the section with improvements
-3. **Rationale** — explain why each change was made
-4. **Regulation References** — cite any relevant standards or regulations
+You MUST respond with a JSON object containing:
+- "issues": array of strings describing problems found
+- "suggested_replacement": the rewritten section text
+- "rationale": explanation of why changes were made
+- "regulation_refs": array of relevant regulation references
 
-If using web search, clearly indicate which information came from web sources."""
+Respond ONLY with valid JSON. No markdown outside the JSON."""
 
     create_kwargs = dict(
         model=CHAT_MODEL,
         max_tokens=CHAT_MAX_TOKENS,
         system=system,
-        messages=[{"role": "user", "content": f"Please review this highlighted section:\n\n{body.highlighted_text}" + (f"\n\nAdditional context: {body.context}" if body.context else "")}],
+        messages=[{"role": "user", "content": f"Review this highlighted section:\n\n{body.highlighted_text}" + (f"\n\nAdditional context: {body.context}" if body.context else "")}],
     )
     if CHAT_WEB_SEARCH:
         create_kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
@@ -3359,3 +3404,85 @@ Write the complete updated document using markdown formatting:
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{safe_title}.docx"'},
     )
+
+
+# -- Update Sessions: save / load / list --
+
+class SaveSessionRequest(BaseModel):
+    doc_id: str = Field(max_length=100)
+    title: str = Field(default="", max_length=255)
+    regulation_query: str = Field(default="", max_length=2000)
+    regulation_results: str = Field(default="", max_length=200000)
+    updates_json: str = Field(default="[]", max_length=200000)
+    accepted_ids: list[str] = Field(default=[])
+
+
+@app.post("/updater/sessions", dependencies=[Depends(verify_api_key)])
+async def save_update_session(body: SaveSessionRequest, request: Request, db=Depends(get_db)):
+    """Save a Doc Updater session so the user can resume later."""
+    now = datetime.now(timezone.utc)
+    current_user_id = getattr(request.state, "user_id", None)
+    session = DBUpdateSession(
+        id=str(uuid.uuid4()),
+        doc_id=body.doc_id,
+        user_id=current_user_id,
+        title=body.title or f"Session {now.strftime('%b %d %H:%M')}",
+        regulation_query=body.regulation_query,
+        regulation_results=_encrypt_text(body.regulation_results) if body.regulation_results else None,
+        updates_json=_encrypt_text(body.updates_json) if body.updates_json else None,
+        accepted_ids=json.dumps(body.accepted_ids),
+        status="draft",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(session)
+    db.commit()
+    return {"id": session.id, "title": session.title, "created_at": now.isoformat()}
+
+
+@app.get("/updater/sessions", dependencies=[Depends(verify_api_key)])
+async def list_update_sessions(request: Request, db=Depends(get_db)):
+    """List saved Doc Updater sessions."""
+    current_user_id = getattr(request.state, "user_id", None)
+    query = db.query(DBUpdateSession).order_by(DBUpdateSession.updated_at.desc())
+    if current_user_id:
+        query = query.filter(DBUpdateSession.user_id == current_user_id)
+    sessions = query.limit(50).all()
+    return {"sessions": [{
+        "id": s.id, "doc_id": s.doc_id, "title": s.title,
+        "status": s.status, "regulation_query": s.regulation_query,
+        "created_at": s.created_at.isoformat(), "updated_at": s.updated_at.isoformat(),
+    } for s in sessions]}
+
+
+@app.get("/updater/sessions/{session_id}", dependencies=[Depends(verify_api_key)])
+async def get_update_session(session_id: str, request: Request, db=Depends(get_db)):
+    """Load a saved Doc Updater session."""
+    session = db.query(DBUpdateSession).filter(DBUpdateSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    current_user_id = getattr(request.state, "user_id", None)
+    if current_user_id and session.user_id and session.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="You do not own this session")
+    return {
+        "id": session.id, "doc_id": session.doc_id, "title": session.title,
+        "regulation_query": session.regulation_query,
+        "regulation_results": _decrypt_text(session.regulation_results) if session.regulation_results else "",
+        "updates_json": _decrypt_text(session.updates_json) if session.updates_json else "[]",
+        "accepted_ids": json.loads(session.accepted_ids) if session.accepted_ids else [],
+        "status": session.status,
+    }
+
+
+@app.delete("/updater/sessions/{session_id}", dependencies=[Depends(verify_api_key)])
+async def delete_update_session(session_id: str, request: Request, db=Depends(get_db)):
+    """Delete a saved Doc Updater session."""
+    session = db.query(DBUpdateSession).filter(DBUpdateSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    current_user_id = getattr(request.state, "user_id", None)
+    if current_user_id and session.user_id and session.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="You do not own this session")
+    db.delete(session)
+    db.commit()
+    return {"deleted": True}
