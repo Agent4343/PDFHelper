@@ -2402,7 +2402,7 @@ async function updaterSearchRegs(){
   try{
     var body={query:query,context:ctx};
     if(updaterDocId) body.doc_id=updaterDocId;
-    var r=await fetch(API+'/regulations/search',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+    var r=await fetch(API+'/regulations/search',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Search failed');}
     var reader=r.body.getReader();
     var decoder=new TextDecoder();
@@ -2445,7 +2445,7 @@ async function updaterGenUpdates(){
   var extra=document.getElementById('upd-search-context').value.trim();
   try{
     var body={doc_id:updaterDocId,regulation_text:updaterRegText,additional_instructions:extra};
-    var r=await fetch(API+'/documents/'+updaterDocId+'/generate-updates',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+    var r=await fetch(API+'/documents/'+updaterDocId+'/generate-updates',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
     var d=await r.json();
     updaterUpdates=(d.updates||[]).map(function(u){u.status='pending';return u;});
@@ -2537,7 +2537,7 @@ async function updaterApply(){
   var title=document.getElementById('upd-doc-select').selectedOptions[0].textContent||'Updated Document';
   try{
     var body={updates_markdown:content,title:title,include_vba:vba};
-    var r=await fetch(API+'/documents/'+updaterDocId+'/apply-updates',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+    var r=await fetch(API+'/documents/'+updaterDocId+'/apply-updates',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
     var blob=await r.blob();
     var url=URL.createObjectURL(blob);
@@ -2582,7 +2582,7 @@ async function updaterReviewSection(text){
   var reviewText='';
   try{
     var body={highlighted_text:text,context:'',focus:'compliance,clarity,completeness'};
-    var r=await fetch(API+'/documents/'+updaterDocId+'/review-section',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+    var r=await fetch(API+'/documents/'+updaterDocId+'/review-section',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Review failed');}
     var reader=r.body.getReader();
     var decoder=new TextDecoder();
@@ -2683,7 +2683,7 @@ async function updaterSaveSession(){
       regulation_results:updaterRegText,
       updates_json:JSON.stringify(updaterUpdates),
       accepted_ids:updaterUpdates.filter(function(u){return u.status==='accepted';}).map(function(u){return u.id;})};
-    var r=await fetch(API+'/updater/sessions',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+    var r=await fetch(API+'/updater/sessions',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Save failed');}
     toast('Session saved');
     updaterLoadSessionList();
