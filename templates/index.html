@@ -386,6 +386,53 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
 .updater-viewer{max-height:50vh}
 .upd-diff{grid-template-columns:1fr}
 }
+/* Dashboard */
+.dash-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.75rem;margin-bottom:1.25rem}
+.dash-stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:1rem 1.25rem;text-align:center;transition:border-color .15s}
+.dash-stat:hover{border-color:var(--accent)}
+.dash-stat .ds-num{font-size:2rem;font-weight:700;color:var(--accent)}
+.dash-stat .ds-label{font-size:0.78rem;color:var(--muted);margin-top:2px}
+.dash-section{margin-bottom:1.5rem}
+.dash-section h3{font-size:0.95rem;color:var(--accent);margin-bottom:0.6rem}
+.dash-list{list-style:none;padding:0}
+.dash-list li{display:flex;align-items:center;gap:0.75rem;padding:0.6rem 0.75rem;border-bottom:1px solid var(--border);font-size:0.85rem;cursor:pointer;transition:background .12s}
+.dash-list li:last-child{border-bottom:none}
+.dash-list li:hover{background:#ffffff06}
+.dash-list .dl-icon{font-size:1.1rem;flex-shrink:0}
+.dash-list .dl-info{flex:1;min-width:0}
+.dash-list .dl-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dash-list .dl-meta{font-size:0.75rem;color:var(--muted)}
+.dash-actions{display:flex;gap:0.75rem;flex-wrap:wrap}
+.dash-action{display:flex;align-items:center;gap:0.5rem;padding:0.75rem 1.25rem;background:var(--card);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:0.85rem;font-weight:500;color:var(--text);transition:all .15s}
+.dash-action:hover{border-color:var(--accent);color:var(--accent)}
+.dash-action svg{flex-shrink:0}
+.dash-empty{color:var(--muted);font-size:0.85rem;font-style:italic;padding:0.5rem 0}
+/* Bulk audit progress */
+.bulk-progress{margin-top:1rem}
+.bulk-bar{height:6px;background:var(--code);border-radius:3px;overflow:hidden;margin:0.5rem 0}
+.bulk-bar-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .3s}
+.bulk-item{display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;font-size:0.82rem;border-bottom:1px solid #ffffff08}
+.bulk-item .bi-status{width:18px;text-align:center;flex-shrink:0}
+.bulk-item .bi-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bulk-item.bi-ok .bi-status{color:var(--green)}
+.bulk-item.bi-err .bi-status{color:var(--red)}
+.bulk-item.bi-run .bi-status{color:var(--accent)}
+.bulk-item.bi-cached .bi-status{color:var(--orange)}
+/* PDF Viewer modal */
+.pdf-viewer-modal{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1001;display:flex;align-items:center;justify-content:center}
+.pdf-viewer-modal.hidden{display:none}
+.pdf-viewer-box{background:var(--card);border:1px solid var(--border);border-radius:12px;width:92%;height:90%;max-width:1000px;display:flex;flex-direction:column;overflow:hidden}
+.pdf-viewer-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
+.pdf-viewer-header h3{font-size:0.95rem;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.pdf-viewer-header button{background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:4px 8px}
+.pdf-viewer-header button:hover{color:var(--text)}
+.pdf-viewer-frame{flex:1;min-height:0}
+.pdf-viewer-frame iframe{width:100%;height:100%;border:none;background:#fff}
+@media(max-width:768px){
+.dash-stats{grid-template-columns:repeat(2,1fr)}
+.dash-actions{flex-direction:column}
+.pdf-viewer-box{width:100%;height:100%;border-radius:0}
+}
 </style>
 </head>
 <body>
@@ -394,7 +441,11 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
   <aside class="sidebar">
     <div class="logo"><span>PDF</span>Helper</div>
     <nav>
-      <button class="active" onclick="showPage('upload')" id="nav-upload">
+      <button class="active" onclick="showPage('dashboard')" id="nav-dashboard">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        <span>Dashboard</span>
+      </button>
+      <button onclick="showPage('upload')" id="nav-upload">
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         <span>Upload</span>
       </button>
@@ -439,7 +490,8 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
 
     <!-- Top navigation tabs -->
     <div class="top-nav" id="top-nav">
-      <button class="active" onclick="showPage('upload')" id="tn-upload">Upload</button>
+      <button class="active" onclick="showPage('dashboard')" id="tn-dashboard">Dashboard</button>
+      <button onclick="showPage('upload')" id="tn-upload">Upload</button>
       <button onclick="showPage('documents')" id="tn-documents">Documents</button>
       <button onclick="showPage('search')" id="tn-search">Search</button>
       <button onclick="showPage('analyze')" id="tn-analyze">Analyze</button>
@@ -507,8 +559,80 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
       </div>
     </div>
 
+    <!-- Dashboard page -->
+    <div class="page active" id="page-dashboard">
+      <h2>Dashboard</h2>
+      <div id="dash-loading" class="loading-overlay"><div class="spinner"></div><span>Loading stats...</span></div>
+      <div id="dash-content" style="display:none">
+        <div class="dash-stats" id="dash-stats"></div>
+
+        <div style="display:flex;gap:1rem;flex-wrap:wrap">
+          <div style="flex:1;min-width:280px">
+            <div class="dash-section">
+              <h3>Recent Documents</h3>
+              <div class="card" style="padding:0.5rem 0"><ul class="dash-list" id="dash-recent-docs"></ul></div>
+            </div>
+            <div class="dash-section">
+              <h3>Recent Chats</h3>
+              <div class="card" style="padding:0.5rem 0"><ul class="dash-list" id="dash-recent-chats"></ul></div>
+            </div>
+          </div>
+          <div style="flex:1;min-width:280px">
+            <div class="dash-section">
+              <h3>Recent Agent Results</h3>
+              <div class="card" style="padding:0.5rem 0"><ul class="dash-list" id="dash-recent-agents"></ul></div>
+            </div>
+            <div class="dash-section">
+              <h3>Quick Actions</h3>
+              <div class="dash-actions">
+                <button class="dash-action" onclick="showPage('upload')">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  Upload Documents
+                </button>
+                <button class="dash-action" onclick="showPage('bot')">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
+                  AI Chat
+                </button>
+                <button class="dash-action" onclick="showBulkAuditModal()">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  Bulk Audit All Docs
+                </button>
+                <button class="dash-action" onclick="showPage('search')">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  Search Documents
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bulk Audit Section -->
+        <div class="dash-section" id="bulk-audit-section" style="display:none">
+          <h3>Bulk Audit Progress</h3>
+          <div class="card">
+            <div id="bulk-audit-status" style="font-size:0.85rem;margin-bottom:0.5rem"></div>
+            <div class="bulk-bar"><div class="bulk-bar-fill" id="bulk-bar-fill" style="width:0%"></div></div>
+            <div id="bulk-audit-items"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PDF Viewer modal -->
+    <div class="pdf-viewer-modal hidden" id="pdf-viewer-modal" onclick="if(event.target===this)closePdfViewer()">
+      <div class="pdf-viewer-box">
+        <div class="pdf-viewer-header">
+          <h3 id="pdf-viewer-title">Document</h3>
+          <button onclick="closePdfViewer()" title="Close">&times;</button>
+        </div>
+        <div class="pdf-viewer-frame">
+          <iframe id="pdf-viewer-iframe" src="about:blank"></iframe>
+        </div>
+      </div>
+    </div>
+
     <!-- Upload page -->
-    <div class="page active" id="page-upload">
+    <div class="page" id="page-upload">
       <h2>Upload Files</h2>
       <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
         <p style="font-size:0.9rem"><strong>What does this do?</strong> This is where you bring your PDF files into the app. Think of it like putting papers into a filing cabinet — once they're here, you can search them, read them, edit them, and ask the AI questions about them.</p>
@@ -1243,6 +1367,7 @@ function showPage(name){
   /* Chat layout toggle */
   var m=document.querySelector('.main');
   m.classList.toggle('chat-active',name==='bot');
+  if(name==='dashboard') loadDashboardStats();
   if(name==='documents') loadDocuments();
   if(name==='history') loadHistory();
   if(name==='pdftools') loadDocuments();
@@ -1338,6 +1463,8 @@ async function loadDocuments(){
       '<div class="doc-row"><span class="doc-icon">&#128196;</span><div class="doc-info"><div class="name">'+esc(doc.filename)+
       '</div><div class="meta">'+doc.pages+' pages &middot; '+new Date(doc.uploaded_at).toLocaleString()+
       ' &middot; <code style="font-size:0.75rem">'+doc.id.slice(0,8)+'...</code></div></div>'+
+      '<button class="btn btn-secondary" style="font-size:0.75rem;padding:0.3rem 0.6rem;margin-right:0.4rem" onclick="openPdfViewer(&apos;'+doc.id+'&apos;,&apos;'+esc(doc.filename).replace(/'/g,"\\'")+
+      '&apos;)">View</button>'+
       '<button class="btn btn-secondary" style="font-size:0.75rem;padding:0.3rem 0.6rem;margin-right:0.4rem" onclick="downloadDoc(&apos;'+doc.id+'&apos;,&apos;'+esc(doc.filename).replace(/'/g,"\\'")+
       '&apos;)">Download</button>'+
       '<button class="btn btn-danger" style="font-size:0.75rem;padding:0.3rem 0.6rem" onclick="deleteDoc(&apos;'+doc.id+'&apos;)">Delete</button></div>'
@@ -1710,7 +1837,11 @@ checkHealth();setInterval(checkHealth,30000);
 function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
 
 /* ---- Load saved API key on startup ---- */
-loadKey();
+loadKey().then(function(){
+  if(apiConnected && document.getElementById('page-dashboard').classList.contains('active')){
+    loadDashboardStats();
+  }
+});
 
 /* ---- AI Chat (Bot) ---- */
 var botMessages=[];
@@ -3002,6 +3133,133 @@ async function updaterDeleteSession(){
     sel.value='';
     updaterLoadSessionList();
   }catch(e){toast(e.message,'error');}
+}
+
+/* ---- Dashboard ---- */
+async function loadDashboardStats(){
+  var ld=document.getElementById('dash-loading');
+  var ct=document.getElementById('dash-content');
+  ld.style.display='flex';ct.style.display='none';
+  try{
+    var r=await fetch(API+'/dashboard/stats',{headers:headers()});
+    if(!r.ok) throw new Error('Failed to load stats');
+    var d=await r.json();
+    var st=document.getElementById('dash-stats');
+    st.innerHTML=[
+      {n:d.documents,l:'Documents'},{n:d.chat_sessions,l:'Chat Sessions'},
+      {n:d.searches,l:'Searches'},{n:d.analyses,l:'Analyses'},{n:d.agent_cache,l:'Cached Results'}
+    ].map(function(s){return '<div class="dash-stat"><div class="ds-num">'+s.n+'</div><div class="ds-label">'+s.l+'</div></div>';}).join('');
+    var docs=document.getElementById('dash-recent-docs');
+    if(d.recent_documents&&d.recent_documents.length){
+      docs.innerHTML=d.recent_documents.map(function(doc){
+        return '<li onclick="openPdfViewer(\''+doc.id+'\',\''+esc(doc.filename).replace(/'/g,"\\'")+'\')"><span class="dl-icon">&#128196;</span><div class="dl-info"><div class="dl-title">'+esc(doc.filename)+'</div><div class="dl-meta">'+doc.page_count+' pages &middot; '+new Date(doc.uploaded_at).toLocaleDateString()+'</div></div></li>';
+      }).join('');
+    }else{docs.innerHTML='<li class="dash-empty">No documents yet</li>';}
+    var chats=document.getElementById('dash-recent-chats');
+    if(d.recent_chats&&d.recent_chats.length){
+      chats.innerHTML=d.recent_chats.map(function(c){
+        return '<li onclick="showPage(\'bot\')"><span class="dl-icon">&#128172;</span><div class="dl-info"><div class="dl-title">'+esc(c.title||'Chat session')+'</div><div class="dl-meta">'+new Date(c.updated_at).toLocaleDateString()+'</div></div></li>';
+      }).join('');
+    }else{chats.innerHTML='<li class="dash-empty">No chats yet</li>';}
+    var agents=document.getElementById('dash-recent-agents');
+    if(d.recent_agents&&d.recent_agents.length){
+      agents.innerHTML=d.recent_agents.map(function(a){
+        var typeLabel={audit:'Compliance Audit',compare:'Compare Docs',writer:'Procedure Writer'}[a.agent_type]||a.agent_type;
+        return '<li><span class="dl-icon">&#9889;</span><div class="dl-info"><div class="dl-title">'+esc(typeLabel)+' <span style="font-size:0.72rem;color:var(--muted)">('+esc(a.model_used.split('-').pop())+')</span></div><div class="dl-meta">'+(a.params_summary?esc(a.params_summary)+' &middot; ':'')+new Date(a.created_at).toLocaleDateString()+'</div></div></li>';
+      }).join('');
+    }else{agents.innerHTML='<li class="dash-empty">No agent results cached</li>';}
+    ld.style.display='none';ct.style.display='block';
+  }catch(e){
+    ld.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';
+  }
+}
+
+/* ---- PDF Viewer ---- */
+function openPdfViewer(docId,filename){
+  var modal=document.getElementById('pdf-viewer-modal');
+  var title=document.getElementById('pdf-viewer-title');
+  var iframe=document.getElementById('pdf-viewer-iframe');
+  title.textContent=filename||'Document';
+  var token=localStorage.getItem('jwt');
+  var key=localStorage.getItem('apiKey');
+  var sep='?';
+  var url=API+'/documents/'+docId+'/view';
+  if(token){url+=sep+'token='+encodeURIComponent(token);sep='&';}
+  else if(key){url+=sep+'key='+encodeURIComponent(key);sep='&';}
+  iframe.src=url;
+  modal.classList.remove('hidden');
+}
+function closePdfViewer(){
+  document.getElementById('pdf-viewer-modal').classList.add('hidden');
+  document.getElementById('pdf-viewer-iframe').src='about:blank';
+}
+
+/* ---- Bulk Audit ---- */
+function showBulkAuditModal(){
+  if(!requireKey('dash-content')) return;
+  var section=document.getElementById('bulk-audit-section');
+  section.style.display='block';
+  runBulkAudit();
+}
+async function runBulkAudit(){
+  var statusEl=document.getElementById('bulk-audit-status');
+  var barFill=document.getElementById('bulk-bar-fill');
+  var itemsEl=document.getElementById('bulk-audit-items');
+  statusEl.textContent='Starting bulk audit...';
+  barFill.style.width='0%';
+  itemsEl.innerHTML='';
+  try{
+    var r=await fetch(API+'/agents/bulk-audit',{method:'POST',headers:headers(true),body:JSON.stringify({doc_ids:[],focus_areas:'',model:'haiku'})});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Bulk audit failed');}
+    var reader=r.body.getReader();
+    var decoder=new TextDecoder();
+    var buf='';
+    while(true){
+      var chunk=await reader.read();
+      if(chunk.done) break;
+      buf+=decoder.decode(chunk.value,{stream:true});
+      var lines=buf.split('\n');
+      buf=lines.pop();
+      lines.forEach(function(line){
+        if(!line.startsWith('data: ')) return;
+        var raw=line.slice(6).trim();
+        if(raw==='[DONE]') return;
+        try{
+          var ev=JSON.parse(raw);
+          if(ev.type==='bulk_start'){
+            statusEl.textContent='Auditing '+ev.total+' document'+(ev.total!==1?'s':'')+'...';
+          }else if(ev.type==='bulk_progress'){
+            barFill.style.width=Math.round((ev.current-1)/ev.total*100)+'%';
+            statusEl.textContent='Auditing '+ev.current+'/'+ev.total+': '+ev.doc_name;
+            var existing=document.getElementById('bi-'+ev.current);
+            if(!existing){
+              itemsEl.innerHTML+='<div class="bulk-item bi-run" id="bi-'+ev.current+'"><span class="bi-status"><div class="spinner" style="width:14px;height:14px;border-width:2px"></div></span><span class="bi-name">'+esc(ev.doc_name)+'</span><span class="bi-result" style="font-size:0.75rem;color:var(--muted)">analyzing...</span></div>';
+            }
+          }else if(ev.type==='bulk_result'){
+            barFill.style.width=Math.round(ev.current/((parseInt(statusEl.textContent.match(/\d+/g)||[])[1])||ev.current)*100)+'%';
+            var el=document.getElementById('bi-'+ev.current);
+            if(el){
+              if(ev.error){
+                el.className='bulk-item bi-err';
+                el.querySelector('.bi-status').innerHTML='&#10007;';
+                el.querySelector('.bi-result').textContent=ev.error;
+                el.querySelector('.bi-result').style.color='var(--red)';
+              }else{
+                el.className=ev.cached?'bulk-item bi-cached':'bulk-item bi-ok';
+                el.querySelector('.bi-status').innerHTML=ev.cached?'&#9881;':'&#10003;';
+                el.querySelector('.bi-result').innerHTML=(ev.cached?'<span style="color:var(--orange)">cached</span> ':'')+'<a href="#" onclick="openPdfViewer(\''+ev.doc_id+'\',\''+esc(ev.doc_name).replace(/'/g,"\\'")+'\');return false" style="color:var(--accent);font-size:0.75rem">view</a>';
+              }
+            }
+          }else if(ev.type==='done'){
+            statusEl.textContent='Bulk audit complete!';
+            barFill.style.width='100%';
+          }
+        }catch(pe){}
+      });
+    }
+  }catch(e){
+    statusEl.innerHTML='<span style="color:var(--red)">'+esc(e.message)+'</span>';
+  }
 }
 
 function renderMarkdown(txt){
