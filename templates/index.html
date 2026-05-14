@@ -149,9 +149,9 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .chat-msg-actions button{background:none;border:1px solid var(--border);color:var(--muted);font-size:0.72rem;padding:3px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all 0.15s}
 .chat-msg-actions button:hover{color:var(--fg);border-color:var(--accent);background:var(--accent-bg)}
 .chat-status{font-size:0.78rem;color:var(--accent);font-style:italic;margin-bottom:4px}
-.agent-bar{display:flex;gap:6px;padding:8px 20px 0;border-top:1px solid var(--border)}
-.agent-btn{display:flex;align-items:center;gap:5px;padding:6px 12px;font-size:0.76rem;background:#1a2236;border:1px solid var(--border);color:var(--muted);border-radius:8px;cursor:pointer;transition:all 0.15s;white-space:nowrap}
-.agent-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-bg)}
+.agent-bar{display:flex;gap:6px;padding:8px 20px;border-top:1px solid var(--border);overflow-x:auto;flex-shrink:0}
+.agent-btn{display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:0.78rem;background:var(--accent-bg);border:1px solid var(--accent);color:var(--accent);border-radius:8px;cursor:pointer;transition:all 0.15s;white-space:nowrap;font-weight:500}
+.agent-btn:hover{color:#fff;background:var(--accent);border-color:var(--accent)}
 .agent-btn:disabled{opacity:0.4;cursor:not-allowed}
 .agent-btn svg{flex-shrink:0}
 .agent-steps{margin:8px 0;padding:8px 12px;background:#0d1117;border-radius:8px;font-size:0.8rem}
@@ -294,6 +294,9 @@ input[style*="width:70px"],input[style*="width:90px"],input[style*="width:140px"
   -webkit-overflow-scrolling:touch}
 .chat-input-bar{padding:8px;gap:8px;padding-bottom:max(8px,env(safe-area-inset-bottom))}
 .chat-input-bar textarea{font-size:16px;padding:8px 12px}
+.agent-bar{padding:6px 10px;gap:5px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.agent-bar::-webkit-scrollbar{display:none}
+.agent-btn{padding:6px 10px;font-size:0.72rem}
 .chat-bbl{max-width:92%;padding:10px 12px;font-size:13px}
 .chat-empty{padding:1rem}
 .chat-empty h3{font-size:16px}
