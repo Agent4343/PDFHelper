@@ -3601,9 +3601,14 @@ def _get_doc_hash(doc) -> str:
     return hashlib.sha256(pdf_bytes).hexdigest()
 
 
-def _check_agent_cache(db, cache_key: str):
-    """Look up a cached agent result. Returns decrypted text or None."""
-    cached = db.query(DBAgentCache).filter(DBAgentCache.cache_key == cache_key).first()
+def _check_agent_cache(db, cache_key: str, user_id: str | None = None):
+    """Look up a cached agent result scoped to user. Returns decrypted text or None."""
+    q = db.query(DBAgentCache).filter(DBAgentCache.cache_key == cache_key)
+    if user_id:
+        q = q.filter(DBAgentCache.user_id == user_id)
+    else:
+        q = q.filter(DBAgentCache.user_id.is_(None))
+    cached = q.first()
     if not cached:
         return None
     if cached.expires_at and cached.expires_at < datetime.now(timezone.utc):
@@ -3614,11 +3619,13 @@ def _check_agent_cache(db, cache_key: str):
 
 
 def _save_agent_cache(db, cache_key: str, agent_type: str, model: str,
-                      result: str, doc_ids: list[str], params_summary: str):
-    """Save an agent result to encrypted cache."""
+                      result: str, doc_ids: list[str], params_summary: str,
+                      user_id: str | None = None):
+    """Save an agent result to encrypted cache, scoped to user."""
     from datetime import timedelta
     db.add(DBAgentCache(
         id=str(uuid.uuid4()),
+        user_id=user_id,
         cache_key=cache_key,
         agent_type=agent_type,
         model_used=model,
@@ -3638,7 +3645,7 @@ class ComplianceAuditRequest(BaseModel):
 
 
 @app.post("/agents/compliance-audit", dependencies=[Depends(verify_api_key)])
-async def agent_compliance_audit(body: ComplianceAuditRequest, db=Depends(get_db)):
+async def agent_compliance_audit(body: ComplianceAuditRequest, request: Request, db=Depends(get_db)):
     """Multi-step compliance audit agent."""
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -3648,11 +3655,12 @@ async def agent_compliance_audit(body: ComplianceAuditRequest, db=Depends(get_db
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    current_user_id = getattr(request.state, "user_id", None)
     model = _resolve_agent_model(body.model)
     doc_hash = _get_doc_hash(doc)
     cache_key = _agent_cache_key("audit", model, [doc_hash], body.focus_areas)
 
-    cached = _check_agent_cache(db, cache_key)
+    cached = _check_agent_cache(db, cache_key, current_user_id)
     if cached:
         async def return_cached():
             yield f"data: {json.dumps({'type': 'cached', 'message': 'Returning cached result'})}\n\n"
@@ -3760,7 +3768,8 @@ Use markdown formatting with tables where appropriate.""",
             save_db = SessionLocal()
             try:
                 _save_agent_cache(save_db, cache_key, "audit", model,
-                                  full_report, [body.doc_id], f"focus: {focus}" if focus else "")
+                                  full_report, [body.doc_id], f"focus: {focus}" if focus else "",
+                                  user_id=current_user_id)
             finally:
                 save_db.close()
 
@@ -3783,7 +3792,7 @@ class CompareDocsRequest(BaseModel):
 
 
 @app.post("/agents/compare-docs", dependencies=[Depends(verify_api_key)])
-async def agent_compare_docs(body: CompareDocsRequest, db=Depends(get_db)):
+async def agent_compare_docs(body: CompareDocsRequest, request: Request, db=Depends(get_db)):
     """Multi-step document comparison agent."""
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -3794,11 +3803,12 @@ async def agent_compare_docs(body: CompareDocsRequest, db=Depends(get_db)):
     if not doc1 or not doc2:
         raise HTTPException(status_code=404, detail="One or both documents not found")
 
+    current_user_id = getattr(request.state, "user_id", None)
     model = _resolve_agent_model(body.model)
     h1, h2 = _get_doc_hash(doc1), _get_doc_hash(doc2)
     cache_key = _agent_cache_key("compare", model, [h1, h2], body.focus_areas)
 
-    cached = _check_agent_cache(db, cache_key)
+    cached = _check_agent_cache(db, cache_key, current_user_id)
     if cached:
         async def return_cached():
             yield f"data: {json.dumps({'type': 'cached', 'message': 'Returning cached result'})}\n\n"
@@ -3904,7 +3914,8 @@ Use markdown with tables.""",
             try:
                 _save_agent_cache(save_db, cache_key, "compare", model,
                                   full_report, [body.doc_id_1, body.doc_id_2],
-                                  f"focus: {focus}" if focus else "")
+                                  f"focus: {focus}" if focus else "",
+                                  user_id=current_user_id)
             finally:
                 save_db.close()
 
@@ -3927,12 +3938,13 @@ class ProcedureWriterRequest(BaseModel):
 
 
 @app.post("/agents/procedure-writer", dependencies=[Depends(verify_api_key)])
-async def agent_procedure_writer(body: ProcedureWriterRequest, db=Depends(get_db)):
+async def agent_procedure_writer(body: ProcedureWriterRequest, request: Request, db=Depends(get_db)):
     """Multi-step procedure writing agent."""
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
 
+    current_user_id = getattr(request.state, "user_id", None)
     model = _resolve_agent_model(body.model)
 
     ref_content = ""
@@ -3958,7 +3970,7 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, db=Depends(get_db
     cache_params = f"{body.description}|regs={body.include_regulations}"
     cache_key = _agent_cache_key("writer", model, doc_hashes or ["no-refs"], cache_params)
 
-    cached = _check_agent_cache(db, cache_key)
+    cached = _check_agent_cache(db, cache_key, current_user_id)
     if cached:
         async def return_cached():
             yield f"data: {json.dumps({'type': 'cached', 'message': 'Returning cached result'})}\n\n"
@@ -4047,7 +4059,8 @@ If issues are found, list them briefly. If the document is good, say so.""",
             try:
                 _save_agent_cache(save_db, cache_key, "writer", model,
                                   full_doc, body.reference_doc_ids,
-                                  body.description[:200])
+                                  body.description[:200],
+                                  user_id=current_user_id)
             finally:
                 save_db.close()
 
@@ -4067,9 +4080,15 @@ If issues are found, list them briefly. If the document is good, say so.""",
 # ---------------------------------------------------------------------------
 
 @app.get("/agents/cache", dependencies=[Depends(verify_api_key)])
-async def list_agent_cache(db=Depends(get_db)):
-    """List cached agent results (metadata only, no decrypted content)."""
-    entries = db.query(DBAgentCache).order_by(DBAgentCache.created_at.desc()).limit(50).all()
+async def list_agent_cache(request: Request, db=Depends(get_db)):
+    """List cached agent results for the current user (metadata only)."""
+    current_user_id = getattr(request.state, "user_id", None)
+    q = db.query(DBAgentCache)
+    if current_user_id:
+        q = q.filter(DBAgentCache.user_id == current_user_id)
+    else:
+        q = q.filter(DBAgentCache.user_id.is_(None))
+    entries = q.order_by(DBAgentCache.created_at.desc()).limit(50).all()
     return {
         "cache_entries": [
             {
@@ -4088,19 +4107,28 @@ async def list_agent_cache(db=Depends(get_db)):
 
 
 @app.delete("/agents/cache", dependencies=[Depends(verify_api_key)])
-async def clear_all_agent_cache(db=Depends(get_db)):
-    """Clear all cached agent results."""
-    count = db.query(DBAgentCache).delete()
+async def clear_all_agent_cache(request: Request, db=Depends(get_db)):
+    """Clear all cached agent results for the current user only."""
+    current_user_id = getattr(request.state, "user_id", None)
+    q = db.query(DBAgentCache)
+    if current_user_id:
+        q = q.filter(DBAgentCache.user_id == current_user_id)
+    else:
+        q = q.filter(DBAgentCache.user_id.is_(None))
+    count = q.delete()
     db.commit()
     return {"deleted": count}
 
 
 @app.delete("/agents/cache/{cache_id}", dependencies=[Depends(verify_api_key)])
-async def delete_agent_cache_entry(cache_id: str, db=Depends(get_db)):
-    """Delete a specific cached agent result."""
+async def delete_agent_cache_entry(cache_id: str, request: Request, db=Depends(get_db)):
+    """Delete a specific cached agent result, enforcing ownership."""
+    current_user_id = getattr(request.state, "user_id", None)
     entry = db.query(DBAgentCache).filter(DBAgentCache.id == cache_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Cache entry not found")
+    if current_user_id and entry.user_id and entry.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="You do not own this cache entry")
     db.delete(entry)
     db.commit()
     return {"deleted": True}
