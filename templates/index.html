@@ -880,6 +880,8 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="8" height="16" rx="1"/><rect x="14" y="4" width="8" height="16" rx="1"/><path d="M12 2v20"/></svg>Compare Docs</button>
             <button class="agent-btn" onclick="showAgentModal('writer')" id="agent-writer-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Write Procedure</button>
+            <button class="agent-btn" onclick="clearAgentCache()" id="agent-cache-btn" style="margin-left:auto;border-color:var(--border);color:var(--muted);background:transparent;font-weight:400">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Clear Cache</button>
           </div>
           <div class="chat-input-bar">
             <textarea id="chat-input" rows="1" placeholder="Ask about your procedures..."
@@ -1873,7 +1875,8 @@ function renderBotMessages(){
   var lastAssistantIdx=-1;
   botMessages.forEach(function(m,idx){if(m.role==='assistant') lastAssistantIdx=idx;});
   botMessages.forEach(function(m,idx){
-    var statusHtml=m._status?'<div class="chat-status">'+esc(m._status)+'</div>':'';
+    var cachedBadge=m._cached?'<div style="display:inline-block;font-size:0.7rem;background:#22c55e20;color:#22c55e;padding:2px 8px;border-radius:4px;margin-bottom:6px">Cached result (no API cost)</div>':'';
+    var statusHtml=m._status&&!m._cached?'<div class="chat-status">'+esc(m._status)+'</div>':'';
     var stepsHtml='';
     if(m._agentSteps&&m._agentSteps.length){
       stepsHtml='<div class="agent-steps">';
@@ -1884,7 +1887,7 @@ function renderBotMessages(){
       });
       stepsHtml+='</div>';
     }
-    var formatted=m.role==='assistant'?(statusHtml+stepsHtml+renderMarkdown(m.content)):botFmt(m.content);
+    var formatted=m.role==='assistant'?(cachedBadge+statusHtml+stepsHtml+renderMarkdown(m.content)):botFmt(m.content);
     var actions='';
     if(m.role==='assistant'&&m.content&&m.content.length>20&&!agentRunning){
       var btns='<button onclick="botCopyMsg('+idx+')" title="Copy to clipboard"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>';
@@ -2150,6 +2153,18 @@ function botRegenerate(){
 var activeAgentType='';
 var agentRunning=false;
 
+var modelSelect='<label>AI Model</label><select id="agent-model"><option value="sonnet">Sonnet (Better quality)</option><option value="haiku">Haiku (Faster &amp; cheaper)</option></select>';
+
+async function clearAgentCache(){
+  if(!confirm('Clear all cached agent results? Next agent run will make fresh API calls.')) return;
+  try{
+    var r=await fetch(API+'/agents/cache',{method:'DELETE',headers:headers()});
+    if(!r.ok) throw new Error('Failed to clear cache');
+    var d=await r.json();
+    toast('Cleared '+(d.deleted||0)+' cached results','success');
+  }catch(e){toast(e.message,'error');}
+}
+
 function showAgentModal(type){
   activeAgentType=type;
   var title='',body='';
@@ -2160,18 +2175,21 @@ function showAgentModal(type){
     body='<p style="font-size:0.82rem;color:var(--muted)">Analyzes a document against current regulations in 4 steps: structure analysis, regulation search, cross-referencing, and report generation.</p>';
     body+='<label>Document to audit</label><select id="agent-doc-1">'+docOpts+'</select>';
     body+='<label>Focus areas (optional)</label><textarea id="agent-focus" rows="2" placeholder="e.g. PPE requirements, confined space entry, fall protection..."></textarea>';
+    body+=modelSelect;
   } else if(type==='compare'){
     title='Document Comparison Agent';
     body='<p style="font-size:0.82rem;color:var(--muted)">Compares two documents to find differences, conflicts, and gaps in 3 steps.</p>';
     body+='<label>Document A</label><select id="agent-doc-1">'+docOpts+'</select>';
     body+='<label>Document B</label><select id="agent-doc-2">'+docOpts+'</select>';
     body+='<label>Focus areas (optional)</label><textarea id="agent-focus" rows="2" placeholder="e.g. safety procedures, isolation steps..."></textarea>';
+    body+=modelSelect;
   } else if(type==='writer'){
     title='Procedure Writer Agent';
     body='<p style="font-size:0.82rem;color:var(--muted)">Writes a complete procedure document from scratch: outline, regulation research, writing, and quality review.</p>';
     body+='<label>Describe the procedure to write</label><textarea id="agent-description" rows="3" placeholder="e.g. Hot work permit procedure for offshore platform, including safety requirements and emergency response..."></textarea>';
     body+='<label>Reference documents (optional)</label><select id="agent-refs" multiple style="height:80px">'+docOpts+'</select>';
     body+='<label style="margin-top:8px"><input type="checkbox" id="agent-regs" checked style="width:auto;margin-right:6px">Search for applicable regulations</label>';
+    body+=modelSelect;
   }
 
   if(!allDocs.length && type!=='writer'){
@@ -2194,14 +2212,15 @@ async function runAgent(){
   hideAgentModal();
   if(agentRunning){toast('An agent is already running','error');return;}
 
+  var agentModel=(document.getElementById('agent-model')||{}).value||'sonnet';
   var url='',body={};
   if(activeAgentType==='audit'){
     var docId=document.getElementById('agent-doc-1').value;
     if(!docId){toast('Select a document','error');return;}
     var docName=allDocs.find(function(d){return d.id===docId;});
     url=API+'/agents/compliance-audit';
-    body={doc_id:docId,focus_areas:(document.getElementById('agent-focus')||{}).value||''};
-    botMessages.push({role:'user',content:'Run a compliance audit on '+(docName?docName.filename:'this document')+(body.focus_areas?'. Focus: '+body.focus_areas:'')});
+    body={doc_id:docId,focus_areas:(document.getElementById('agent-focus')||{}).value||'',model:agentModel};
+    botMessages.push({role:'user',content:'Run a compliance audit on '+(docName?docName.filename:'this document')+(body.focus_areas?'. Focus: '+body.focus_areas:'')+' ['+agentModel+']'});
   } else if(activeAgentType==='compare'){
     var d1=document.getElementById('agent-doc-1').value;
     var d2=document.getElementById('agent-doc-2').value;
@@ -2210,8 +2229,8 @@ async function runAgent(){
     var n1=allDocs.find(function(d){return d.id===d1;});
     var n2=allDocs.find(function(d){return d.id===d2;});
     url=API+'/agents/compare-docs';
-    body={doc_id_1:d1,doc_id_2:d2,focus_areas:(document.getElementById('agent-focus')||{}).value||''};
-    botMessages.push({role:'user',content:'Compare '+(n1?n1.filename:'Doc A')+' vs '+(n2?n2.filename:'Doc B')+(body.focus_areas?'. Focus: '+body.focus_areas:'')});
+    body={doc_id_1:d1,doc_id_2:d2,focus_areas:(document.getElementById('agent-focus')||{}).value||'',model:agentModel};
+    botMessages.push({role:'user',content:'Compare '+(n1?n1.filename:'Doc A')+' vs '+(n2?n2.filename:'Doc B')+(body.focus_areas?'. Focus: '+body.focus_areas:'')+' ['+agentModel+']'});
   } else if(activeAgentType==='writer'){
     var desc=(document.getElementById('agent-description')||{}).value||'';
     if(!desc.trim()){toast('Describe what to write','error');return;}
@@ -2219,8 +2238,8 @@ async function runAgent(){
     var refIds=refs?Array.from(refs.selectedOptions).map(function(o){return o.value;}):[];
     var inclRegs=document.getElementById('agent-regs')?document.getElementById('agent-regs').checked:true;
     url=API+'/agents/procedure-writer';
-    body={description:desc,reference_doc_ids:refIds,include_regulations:inclRegs};
-    botMessages.push({role:'user',content:'Write a procedure: '+desc});
+    body={description:desc,reference_doc_ids:refIds,include_regulations:inclRegs,model:agentModel};
+    botMessages.push({role:'user',content:'Write a procedure: '+desc+' ['+agentModel+']'});
   }
 
   agentRunning=true;
@@ -2246,7 +2265,11 @@ async function runAgent(){
         if(!line.startsWith('data: ')) continue;
         try{
           var evt=JSON.parse(line.substring(6));
-          if(evt.type==='agent_step'){
+          if(evt.type==='cached'){
+            botMessages[assistantIdx]._cached=true;
+            botMessages[assistantIdx]._status=evt.message||'Cached result';
+            renderBotMessages();
+          } else if(evt.type==='agent_step'){
             var steps=botMessages[assistantIdx]._agentSteps;
             var existing=steps.findIndex(function(s){return s.step===evt.step;});
             if(existing>=0) steps[existing]=evt; else steps.push(evt);

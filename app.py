@@ -46,6 +46,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from database import (
     SessionLocal, engine, Base, DBUser, DBDocument, DBSearchResult, DBAnalysisReport,
     DBChatSession, DBChatMessage, DBDrawing, DBIsolationPackage, DBUpdateSession,
+    DBAgentCache,
 )
 from audit import log_upload, log_search, log_delete, log_auth_failure, log_access
 from ocr import extract_text_with_ocr_fallback, extract_structured_text
@@ -3540,10 +3541,23 @@ def _agent_error(msg: str):
     return f"data: {json.dumps({'type': 'error', 'detail': msg})}\n\n"
 
 
-def _call_claude(client, system: str, user_msg: str, tools=None, max_tokens=None):
+AGENT_MODELS = {
+    "sonnet": "claude-sonnet-4-5-20250929",
+    "haiku": "claude-haiku-4-5-20251001",
+}
+
+
+def _resolve_agent_model(model_choice: str) -> str:
+    """Resolve user's model choice to a valid model ID."""
+    if model_choice in AGENT_MODELS:
+        return AGENT_MODELS[model_choice]
+    return CHAT_MODEL
+
+
+def _call_claude(client, system: str, user_msg: str, tools=None, max_tokens=None, model=None):
     """Synchronous Claude call, returns the text content."""
     kwargs = dict(
-        model=CHAT_MODEL,
+        model=model or CHAT_MODEL,
         max_tokens=max_tokens or CHAT_MAX_TOKENS * 2,
         system=system,
         messages=[{"role": "user", "content": user_msg}],
@@ -3554,10 +3568,10 @@ def _call_claude(client, system: str, user_msg: str, tools=None, max_tokens=None
     return "".join(b.text for b in resp.content if hasattr(b, "text"))
 
 
-def _stream_claude(client, system: str, user_msg: str, tools=None, max_tokens=None):
+def _stream_claude(client, system: str, user_msg: str, tools=None, max_tokens=None, model=None):
     """Stream Claude response, yields text chunks."""
     kwargs = dict(
-        model=CHAT_MODEL,
+        model=model or CHAT_MODEL,
         max_tokens=max_tokens or CHAT_MAX_TOKENS * 2,
         system=system,
         messages=[{"role": "user", "content": user_msg}],
@@ -3571,9 +3585,56 @@ def _stream_claude(client, system: str, user_msg: str, tools=None, max_tokens=No
                     yield event.delta.text
 
 
+def _agent_cache_key(agent_type: str, model: str, doc_hashes: list[str], params: str) -> str:
+    """Generate a SHA-256 cache key from agent inputs."""
+    import hashlib
+    raw = f"{agent_type}|{model}|{'|'.join(sorted(doc_hashes))}|{params}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _get_doc_hash(doc) -> str:
+    """Get or compute a content hash for a document."""
+    if doc.content_hash:
+        return doc.content_hash
+    import hashlib
+    pdf_bytes = _load_pdf_bytes(doc)
+    return hashlib.sha256(pdf_bytes).hexdigest()
+
+
+def _check_agent_cache(db, cache_key: str):
+    """Look up a cached agent result. Returns decrypted text or None."""
+    cached = db.query(DBAgentCache).filter(DBAgentCache.cache_key == cache_key).first()
+    if not cached:
+        return None
+    if cached.expires_at and cached.expires_at < datetime.now(timezone.utc):
+        db.delete(cached)
+        db.commit()
+        return None
+    return _decrypt_text(cached.result_data)
+
+
+def _save_agent_cache(db, cache_key: str, agent_type: str, model: str,
+                      result: str, doc_ids: list[str], params_summary: str):
+    """Save an agent result to encrypted cache."""
+    from datetime import timedelta
+    db.add(DBAgentCache(
+        id=str(uuid.uuid4()),
+        cache_key=cache_key,
+        agent_type=agent_type,
+        model_used=model,
+        result_data=_encrypt_text(result),
+        doc_ids=json.dumps(doc_ids),
+        params_summary=params_summary[:200] if params_summary else "",
+        created_at=datetime.now(timezone.utc),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    ))
+    db.commit()
+
+
 class ComplianceAuditRequest(BaseModel):
     doc_id: str = Field(max_length=100)
     focus_areas: str = Field(default="", max_length=2000)
+    model: str = Field(default="sonnet", pattern=r"^(sonnet|haiku)$")
 
 
 @app.post("/agents/compliance-audit", dependencies=[Depends(verify_api_key)])
@@ -3586,6 +3647,18 @@ async def agent_compliance_audit(body: ComplianceAuditRequest, db=Depends(get_db
     doc = db.query(DBDocument).filter(DBDocument.id == body.doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    model = _resolve_agent_model(body.model)
+    doc_hash = _get_doc_hash(doc)
+    cache_key = _agent_cache_key("audit", model, [doc_hash], body.focus_areas)
+
+    cached = _check_agent_cache(db, cache_key)
+    if cached:
+        async def return_cached():
+            yield f"data: {json.dumps({'type': 'cached', 'message': 'Returning cached result'})}\n\n"
+            yield _agent_chunk(cached)
+            yield _agent_done()
+        return StreamingResponse(return_cached(), media_type="text/event-stream")
 
     pdf_bytes = _load_pdf_bytes(doc)
     structured = extract_structured_text(pdf_bytes)
@@ -3608,14 +3681,12 @@ async def agent_compliance_audit(body: ComplianceAuditRequest, db=Depends(get_db
     async def run_audit():
         full_report = ""
         try:
-            # Step 1: Analyze document structure
             yield _agent_step(1, 4, "Analyzing document structure")
             analysis = _call_claude(client,
                 "You are a document analyst. Identify the key sections, scope, and purpose of this procedure document. List each section with a one-line summary.",
-                f"Analyze this document:\n\nFILENAME: {doc_name}\n\n{doc_content}")
+                f"Analyze this document:\n\nFILENAME: {doc_name}\n\n{doc_content}", model=model)
             yield _agent_step(1, 4, "Analyzing document structure", "done")
 
-            # Step 2: Search current regulations
             yield _agent_step(2, 4, "Searching current regulations")
             reg_query = f"Current regulations and standards applicable to: {doc_name}."
             if focus:
@@ -3623,10 +3694,9 @@ async def agent_compliance_audit(body: ComplianceAuditRequest, db=Depends(get_db
             reg_query += f"\n\nDocument sections found:\n{analysis[:3000]}"
             regulations = _call_claude(client,
                 "You are a regulatory researcher. Search the web for current, applicable regulations, standards, and industry requirements. List each regulation with its full title, version/year, and key requirements.",
-                reg_query, tools=web_tools)
+                reg_query, tools=web_tools, model=model)
             yield _agent_step(2, 4, "Searching current regulations", "done")
 
-            # Step 3: Cross-reference sections
             yield _agent_step(3, 4, "Cross-referencing sections against regulations")
             cross_ref = _call_claude(client,
                 f"""You are a compliance auditor. You have:
@@ -3643,10 +3713,9 @@ For EACH section of the document, determine:
 - WARNING: Section is partially compliant or could be improved
 
 Be specific about what's missing or wrong. Cite the exact regulation.""",
-                "Perform the cross-reference audit for every section.")
+                "Perform the cross-reference audit for every section.", model=model)
             yield _agent_step(3, 4, "Cross-referencing sections against regulations", "done")
 
-            # Step 4: Generate final report (streamed)
             yield _agent_step(4, 4, "Generating audit report")
             for chunk in _stream_claude(client,
                 f"""You are a compliance audit report writer. Using the analysis below, write a complete, professional audit report.
@@ -3682,11 +3751,19 @@ List any FAIL items that need immediate attention.
 Prioritized list of changes to achieve full compliance.
 
 Use markdown formatting with tables where appropriate.""",
-                "Write the complete audit report.", max_tokens=CHAT_MAX_TOKENS * 3):
+                "Write the complete audit report.", max_tokens=CHAT_MAX_TOKENS * 3, model=model):
                 full_report += chunk
                 yield _agent_chunk(chunk)
 
             yield _agent_step(4, 4, "Generating audit report", "done")
+
+            save_db = SessionLocal()
+            try:
+                _save_agent_cache(save_db, cache_key, "audit", model,
+                                  full_report, [body.doc_id], f"focus: {focus}" if focus else "")
+            finally:
+                save_db.close()
+
             yield _agent_done()
 
         except Exception as e:
@@ -3702,6 +3779,7 @@ class CompareDocsRequest(BaseModel):
     doc_id_1: str = Field(max_length=100)
     doc_id_2: str = Field(max_length=100)
     focus_areas: str = Field(default="", max_length=2000)
+    model: str = Field(default="sonnet", pattern=r"^(sonnet|haiku)$")
 
 
 @app.post("/agents/compare-docs", dependencies=[Depends(verify_api_key)])
@@ -3715,6 +3793,18 @@ async def agent_compare_docs(body: CompareDocsRequest, db=Depends(get_db)):
     doc2 = db.query(DBDocument).filter(DBDocument.id == body.doc_id_2).first()
     if not doc1 or not doc2:
         raise HTTPException(status_code=404, detail="One or both documents not found")
+
+    model = _resolve_agent_model(body.model)
+    h1, h2 = _get_doc_hash(doc1), _get_doc_hash(doc2)
+    cache_key = _agent_cache_key("compare", model, [h1, h2], body.focus_areas)
+
+    cached = _check_agent_cache(db, cache_key)
+    if cached:
+        async def return_cached():
+            yield f"data: {json.dumps({'type': 'cached', 'message': 'Returning cached result'})}\n\n"
+            yield _agent_chunk(cached)
+            yield _agent_done()
+        return StreamingResponse(return_cached(), media_type="text/event-stream")
 
     def _get_content(doc):
         pdf_bytes = _load_pdf_bytes(doc)
@@ -3739,14 +3829,12 @@ async def agent_compare_docs(body: CompareDocsRequest, db=Depends(get_db)):
     async def run_compare():
         full_report = ""
         try:
-            # Step 1: Analyze both structures
             yield _agent_step(1, 3, "Analyzing document structures")
             structures = _call_claude(client,
                 "You are a document analyst. Compare the structure (sections, headings, organization) of these two documents. List the sections in each and note which sections exist in one but not the other.",
-                f"DOCUMENT A: {name1}\n{content1[:30000]}\n\nDOCUMENT B: {name2}\n{content2[:30000]}")
+                f"DOCUMENT A: {name1}\n{content1[:30000]}\n\nDOCUMENT B: {name2}\n{content2[:30000]}", model=model)
             yield _agent_step(1, 3, "Analyzing document structures", "done")
 
-            # Step 2: Deep content comparison
             yield _agent_step(2, 3, "Comparing content section by section")
             differences = _call_claude(client,
                 f"""You are a document comparison specialist. Compare these two documents in detail.
@@ -3767,10 +3855,9 @@ For each shared section, identify:
 - Content that CONFLICTS between documents
 
 {('FOCUS AREAS: ' + focus) if focus else ''}""",
-                "Perform the detailed comparison.")
+                "Perform the detailed comparison.", model=model)
             yield _agent_step(2, 3, "Comparing content section by section", "done")
 
-            # Step 3: Generate report (streamed)
             yield _agent_step(3, 3, "Generating comparison report")
             for chunk in _stream_claude(client,
                 f"""You are a document comparison report writer. Write a professional comparison report using the analysis below.
@@ -3807,11 +3894,20 @@ Content present in one but missing from the other.
 Which document is more complete and what each needs to match the other.
 
 Use markdown with tables.""",
-                "Write the complete comparison report.", max_tokens=CHAT_MAX_TOKENS * 3):
+                "Write the complete comparison report.", max_tokens=CHAT_MAX_TOKENS * 3, model=model):
                 full_report += chunk
                 yield _agent_chunk(chunk)
 
             yield _agent_step(3, 3, "Generating comparison report", "done")
+
+            save_db = SessionLocal()
+            try:
+                _save_agent_cache(save_db, cache_key, "compare", model,
+                                  full_report, [body.doc_id_1, body.doc_id_2],
+                                  f"focus: {focus}" if focus else "")
+            finally:
+                save_db.close()
+
             yield _agent_done()
 
         except Exception as e:
@@ -3827,6 +3923,7 @@ class ProcedureWriterRequest(BaseModel):
     description: str = Field(max_length=5000)
     reference_doc_ids: list[str] = Field(default=[])
     include_regulations: bool = Field(default=True)
+    model: str = Field(default="sonnet", pattern=r"^(sonnet|haiku)$")
 
 
 @app.post("/agents/procedure-writer", dependencies=[Depends(verify_api_key)])
@@ -3836,13 +3933,17 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, db=Depends(get_db
     if not api_key:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
 
+    model = _resolve_agent_model(body.model)
+
     ref_content = ""
     ref_names = []
+    doc_hashes = []
     if body.reference_doc_ids:
         docs = db.query(DBDocument).filter(DBDocument.id.in_(body.reference_doc_ids)).all()
         for doc in docs[:3]:
             name = _decrypt_text(doc.filename)
             ref_names.append(name)
+            doc_hashes.append(_get_doc_hash(doc))
             pdf_bytes = _load_pdf_bytes(doc)
             structured = extract_structured_text(pdf_bytes)
             text = ""
@@ -3853,6 +3954,17 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, db=Depends(get_db
             if len(text) > 40000:
                 text = text[:40000] + "\n[... truncated ...]"
             ref_content += f'\n--- REFERENCE: "{name}" ---\n{text}\n'
+
+    cache_params = f"{body.description}|regs={body.include_regulations}"
+    cache_key = _agent_cache_key("writer", model, doc_hashes or ["no-refs"], cache_params)
+
+    cached = _check_agent_cache(db, cache_key)
+    if cached:
+        async def return_cached():
+            yield f"data: {json.dumps({'type': 'cached', 'message': 'Returning cached result'})}\n\n"
+            yield _agent_chunk(cached)
+            yield _agent_done()
+        return StreamingResponse(return_cached(), media_type="text/event-stream")
 
     from anthropic import Anthropic
     client = Anthropic(api_key=api_key)
@@ -3869,21 +3981,19 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, db=Depends(get_db
                 outline_prompt += f"\n\nREFERENCE PROCEDURES (match their style and structure):\n{ref_content[:20000]}"
             outline = _call_claude(client,
                 "You are a technical procedure writer. Create a detailed section-by-section outline for the requested procedure. Include all standard sections (Purpose, Scope, Definitions, Responsibilities, Procedure Steps, Safety, Emergency, References). Note what content goes in each section.",
-                outline_prompt)
+                outline_prompt, model=model)
             yield _agent_step(1, steps, "Researching and creating outline", "done")
 
-            # Step 2: Search regulations (optional)
             regulations = ""
             step_num = 2
             if body.include_regulations:
                 yield _agent_step(2, steps, "Searching applicable regulations")
                 regulations = _call_claude(client,
                     "You are a regulatory researcher. Search the web for all regulations, standards, and industry best practices that apply to this procedure. List each with its key requirements.",
-                    f"Find applicable regulations for: {body.description}", tools=web_tools)
+                    f"Find applicable regulations for: {body.description}", tools=web_tools, model=model)
                 yield _agent_step(2, steps, "Searching applicable regulations", "done")
                 step_num = 3
 
-            # Step 3: Write the procedure (streamed)
             yield _agent_step(step_num, steps, "Writing procedure content")
             write_system = f"""You are an expert technical procedure writer. Write a complete, professional procedure document.
 
@@ -3905,13 +4015,12 @@ Write a complete procedure document with:
 - Specific details (not generic placeholders)"""
 
             for chunk in _stream_claude(client, write_system,
-                "Write the complete procedure document now.", max_tokens=CHAT_MAX_TOKENS * 3):
+                "Write the complete procedure document now.", max_tokens=CHAT_MAX_TOKENS * 3, model=model):
                 full_doc += chunk
                 yield _agent_chunk(chunk)
 
             yield _agent_step(step_num, steps, "Writing procedure content", "done")
 
-            # Final step: Quality review
             yield _agent_step(steps, steps, "Running quality review")
             review = _call_claude(client,
                 f"""You are a procedure quality reviewer. Review this draft procedure for:
@@ -3927,11 +4036,20 @@ DRAFT:
 {('REGULATIONS:' + chr(10) + regulations[:5000]) if regulations else ''}
 
 If issues are found, list them briefly. If the document is good, say so.""",
-                "Review the draft and list any issues.")
+                "Review the draft and list any issues.", model=model)
             yield _agent_step(steps, steps, "Running quality review", "done")
 
             if "issue" in review.lower() or "missing" in review.lower() or "should" in review.lower():
+                full_doc += "\n\n---\n\n## Quality Review Notes\n\n" + review
                 yield _agent_chunk("\n\n---\n\n## Quality Review Notes\n\n" + review)
+
+            save_db = SessionLocal()
+            try:
+                _save_agent_cache(save_db, cache_key, "writer", model,
+                                  full_doc, body.reference_doc_ids,
+                                  body.description[:200])
+            finally:
+                save_db.close()
 
             yield _agent_done()
 
@@ -3942,3 +4060,47 @@ If issues are found, list them briefly. If the document is good, say so.""",
             yield _agent_error(err_msg)
 
     return StreamingResponse(run_writer(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# Agent Cache Management
+# ---------------------------------------------------------------------------
+
+@app.get("/agents/cache", dependencies=[Depends(verify_api_key)])
+async def list_agent_cache(db=Depends(get_db)):
+    """List cached agent results (metadata only, no decrypted content)."""
+    entries = db.query(DBAgentCache).order_by(DBAgentCache.created_at.desc()).limit(50).all()
+    return {
+        "cache_entries": [
+            {
+                "id": e.id,
+                "agent_type": e.agent_type,
+                "model_used": e.model_used,
+                "doc_ids": json.loads(e.doc_ids),
+                "params_summary": e.params_summary,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+                "expires_at": e.expires_at.isoformat() if e.expires_at else None,
+            }
+            for e in entries
+        ],
+        "total": len(entries),
+    }
+
+
+@app.delete("/agents/cache", dependencies=[Depends(verify_api_key)])
+async def clear_all_agent_cache(db=Depends(get_db)):
+    """Clear all cached agent results."""
+    count = db.query(DBAgentCache).delete()
+    db.commit()
+    return {"deleted": count}
+
+
+@app.delete("/agents/cache/{cache_id}", dependencies=[Depends(verify_api_key)])
+async def delete_agent_cache_entry(cache_id: str, db=Depends(get_db)):
+    """Delete a specific cached agent result."""
+    entry = db.query(DBAgentCache).filter(DBAgentCache.id == cache_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Cache entry not found")
+    db.delete(entry)
+    db.commit()
+    return {"deleted": True}
