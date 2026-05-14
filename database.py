@@ -173,3 +173,18 @@ class DBUpdateSession(Base):
     status = Column(String, default="draft")               # draft / applied
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
+
+
+class DBAgentCache(Base):
+    """Cached agent results, encrypted at rest."""
+    __tablename__ = "agent_cache"
+
+    id = Column(String, primary_key=True)
+    cache_key = Column(String, nullable=False, unique=True, index=True)  # SHA-256 of inputs
+    agent_type = Column(String, nullable=False)                          # audit / compare / writer
+    model_used = Column(String, nullable=False)
+    result_data = Column(Text, nullable=False)                           # encrypted report text
+    doc_ids = Column(Text, nullable=False)                               # JSON list for lookup
+    params_summary = Column(String, nullable=True)                       # human-readable params
+    created_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=True)
