@@ -180,7 +180,8 @@ class DBAgentCache(Base):
     __tablename__ = "agent_cache"
 
     id = Column(String, primary_key=True)
-    cache_key = Column(String, nullable=False, unique=True, index=True)  # SHA-256 of inputs
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    cache_key = Column(String, nullable=False, index=True)               # SHA-256 of inputs
     agent_type = Column(String, nullable=False)                          # audit / compare / writer
     model_used = Column(String, nullable=False)
     result_data = Column(Text, nullable=False)                           # encrypted report text
