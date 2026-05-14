@@ -136,6 +136,9 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .chat-msg.assistant .chat-bbl{background:#1a2236;border:1px solid var(--border);
   border-radius:16px 16px 16px 4px;color:var(--text)}
 .chat-bbl strong{color:#fff}
+.chat-msg-actions{display:flex;gap:6px;margin-top:8px;padding-top:6px;border-top:1px solid var(--border)}
+.chat-msg-actions button{background:none;border:1px solid var(--border);color:var(--muted);font-size:0.72rem;padding:3px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all 0.15s}
+.chat-msg-actions button:hover{color:var(--fg);border-color:var(--accent);background:var(--accent-bg)}
 .chat-typing{display:flex;margin-bottom:14px}
 .chat-typing-bbl{padding:12px 20px;border-radius:16px 16px 16px 4px;background:#1a2236;
   border:1px solid var(--border);display:flex;gap:6px;align-items:center}
@@ -1815,8 +1818,12 @@ function renderBotMessages(){
     return;
   }
   var html='';
-  botMessages.forEach(function(m){
-    html+='<div class="chat-msg '+m.role+'"><div class="chat-bbl">'+botFmt(m.content)+'</div></div>';
+  botMessages.forEach(function(m,idx){
+    var actions='';
+    if(m.role==='assistant'&&m.content&&m.content.length>20){
+      actions='<div class="chat-msg-actions"><button onclick="botDownloadDocx('+idx+')" title="Download as Word document"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Word</button></div>';
+    }
+    html+='<div class="chat-msg '+m.role+'"><div class="chat-bbl">'+botFmt(m.content)+actions+'</div></div>';
   });
   if(botSending){
     html+='<div class="chat-typing"><div class="chat-typing-bbl">'+
@@ -2020,6 +2027,30 @@ function botFmt(text){
   var parts=safe.split(nl+nl);
   if(parts.length>1) return parts.map(function(p){return '<p style="margin:0 0 8px 0">'+p.split(nl).join('<br>')+'</p>';}).join('');
   return '<p style="margin:0 0 8px 0">'+safe.split(nl).join('<br>')+'</p>';
+}
+
+async function botDownloadDocx(idx){
+  var m=botMessages[idx];
+  if(!m||!m.content) return;
+  try{
+    var title='AI Response';
+    var lines=m.content.split('\n');
+    for(var i=0;i<lines.length;i++){
+      var l=lines[i].trim();
+      if(l.startsWith('# ')){title=l.slice(2);break;}
+      if(l.startsWith('## ')){title=l.slice(3);break;}
+      if(l.startsWith('**')&&l.endsWith('**')){title=l.slice(2,-2);break;}
+    }
+    var r=await fetch(API+'/chat/markdown-to-docx',{method:'POST',headers:headers(true),body:JSON.stringify({markdown:m.content,title:title})});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Download failed');}
+    var blob=await r.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.download=(title.replace(/[^\w\s-]/g,'').trim()||'document')+'.docx';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('Word document downloaded','success');
+  }catch(e){toast(e.message,'error');}
 }
 
 /* ================================================================

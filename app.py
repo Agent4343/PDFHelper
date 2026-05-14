@@ -1583,6 +1583,24 @@ async def export_chat_to_docx(body: ExportChatRequest, request: Request, db=Depe
     )
 
 
+class MarkdownToDocxRequest(BaseModel):
+    markdown: str = Field(max_length=500000)
+    title: str = Field(default="Document", max_length=255)
+
+
+@app.post("/chat/markdown-to-docx", dependencies=[Depends(verify_api_key)])
+async def markdown_to_docx(body: MarkdownToDocxRequest):
+    """Convert markdown text to a downloadable Word document."""
+    docx_bytes = _markdown_to_docx(body.markdown, body.title)
+    safe_title = re.sub(r'[^\w\s-]', '', body.title)[:50].strip() or "document"
+    filename = f"{safe_title}.docx"
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/chat/generate-doc", dependencies=[Depends(verify_api_key)])
 async def generate_document_from_chat(body: GenerateDocRequest, request: Request, db=Depends(get_db)):
     """Use AI to generate a Word document based on chat context and instructions.
