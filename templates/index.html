@@ -149,6 +149,24 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .chat-msg-actions button{background:none;border:1px solid var(--border);color:var(--muted);font-size:0.72rem;padding:3px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all 0.15s}
 .chat-msg-actions button:hover{color:var(--fg);border-color:var(--accent);background:var(--accent-bg)}
 .chat-status{font-size:0.78rem;color:var(--accent);font-style:italic;margin-bottom:4px}
+.agent-bar{display:flex;gap:6px;padding:8px 20px 0;border-top:1px solid var(--border)}
+.agent-btn{display:flex;align-items:center;gap:5px;padding:6px 12px;font-size:0.76rem;background:#1a2236;border:1px solid var(--border);color:var(--muted);border-radius:8px;cursor:pointer;transition:all 0.15s;white-space:nowrap}
+.agent-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-bg)}
+.agent-btn:disabled{opacity:0.4;cursor:not-allowed}
+.agent-btn svg{flex-shrink:0}
+.agent-steps{margin:8px 0;padding:8px 12px;background:#0d1117;border-radius:8px;font-size:0.8rem}
+.agent-step{display:flex;align-items:center;gap:8px;padding:4px 0;color:var(--muted)}
+.agent-step.done{color:#22c55e}
+.agent-step.running{color:var(--accent)}
+.agent-step .step-icon{width:16px;text-align:center;flex-shrink:0}
+.agent-step.running .step-icon{animation:spin 1s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.agent-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;display:flex;align-items:center;justify-content:center}
+.agent-modal{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;width:90%;max-width:480px;max-height:80vh;overflow-y:auto}
+.agent-modal h3{margin:0 0 16px;color:var(--fg)}
+.agent-modal label{display:block;font-size:0.82rem;color:var(--muted);margin-bottom:4px;margin-top:12px}
+.agent-modal select,.agent-modal textarea,.agent-modal input{width:100%;padding:8px 10px;background:#1a2236;border:1px solid var(--border);color:var(--fg);border-radius:8px;font-size:0.85rem}
+.agent-modal .modal-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
 .chat-typing{display:flex;margin-bottom:14px}
 .chat-typing-bbl{padding:12px 20px;border-radius:16px 16px 16px 4px;background:#1a2236;
   border:1px solid var(--border);display:flex;gap:6px;align-items:center}
@@ -851,6 +869,15 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
             <div id="chat-doc-chips" style="display:inline;"></div>
           </div>
           <div class="chat-msgs" id="chat-msgs"></div>
+          <div class="agent-bar">
+            <span style="font-size:0.72rem;color:var(--muted);font-weight:600;align-self:center">Agents:</span>
+            <button class="agent-btn" onclick="showAgentModal('audit')" id="agent-audit-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg>Compliance Audit</button>
+            <button class="agent-btn" onclick="showAgentModal('compare')" id="agent-compare-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="8" height="16" rx="1"/><rect x="14" y="4" width="8" height="16" rx="1"/><path d="M12 2v20"/></svg>Compare Docs</button>
+            <button class="agent-btn" onclick="showAgentModal('writer')" id="agent-writer-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Write Procedure</button>
+          </div>
           <div class="chat-input-bar">
             <textarea id="chat-input" rows="1" placeholder="Ask about your procedures..."
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();botSend()}"
@@ -869,6 +896,18 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- Agent Config Modal -->
+<div class="agent-modal-overlay" id="agent-modal" style="display:none" onclick="if(event.target===this)hideAgentModal()">
+  <div class="agent-modal">
+    <h3 id="agent-modal-title">Agent</h3>
+    <div id="agent-modal-body"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="hideAgentModal()">Cancel</button>
+      <button class="btn btn-primary" id="agent-modal-run" onclick="runAgent()">Run Agent</button>
+    </div>
+  </div>
+</div>
 
 <!-- Generate Document Modal -->
 <div class="doc-gen-modal hidden" id="doc-gen-modal" onclick="if(event.target===this)hideGenDocModal()">
@@ -1832,12 +1871,22 @@ function renderBotMessages(){
   botMessages.forEach(function(m,idx){if(m.role==='assistant') lastAssistantIdx=idx;});
   botMessages.forEach(function(m,idx){
     var statusHtml=m._status?'<div class="chat-status">'+esc(m._status)+'</div>':'';
-    var formatted=m.role==='assistant'?(statusHtml+renderMarkdown(m.content)):botFmt(m.content);
+    var stepsHtml='';
+    if(m._agentSteps&&m._agentSteps.length){
+      stepsHtml='<div class="agent-steps">';
+      m._agentSteps.forEach(function(s){
+        var cls=s.status==='done'?'done':'running';
+        var icon=s.status==='done'?'&#10003;':'&#9881;';
+        stepsHtml+='<div class="agent-step '+cls+'"><span class="step-icon">'+icon+'</span>'+esc(s.name)+'</div>';
+      });
+      stepsHtml+='</div>';
+    }
+    var formatted=m.role==='assistant'?(statusHtml+stepsHtml+renderMarkdown(m.content)):botFmt(m.content);
     var actions='';
-    if(m.role==='assistant'&&m.content&&m.content.length>20){
+    if(m.role==='assistant'&&m.content&&m.content.length>20&&!agentRunning){
       var btns='<button onclick="botCopyMsg('+idx+')" title="Copy to clipboard"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>';
       btns+='<button onclick="botDownloadDocx('+idx+')" title="Download as Word document"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Word</button>';
-      if(idx===lastAssistantIdx&&!botSending) btns+='<button onclick="botRegenerate()" title="Regenerate this response"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Retry</button>';
+      if(idx===lastAssistantIdx&&!botSending&&!agentRunning) btns+='<button onclick="botRegenerate()" title="Regenerate this response"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Retry</button>';
       actions='<div class="chat-msg-actions">'+btns+'</div>';
     }
     html+='<div class="chat-msg '+m.role+'"><div class="chat-bbl">'+formatted+actions+'</div></div>';
@@ -2090,6 +2139,134 @@ function botRegenerate(){
   document.getElementById('chat-input').value=userText;
   chatAutoResize(document.getElementById('chat-input'));
   botSend();
+}
+
+/* ================================================================
+   AI Agents — Multi-step autonomous tasks in chat
+   ================================================================ */
+var activeAgentType='';
+var agentRunning=false;
+
+function showAgentModal(type){
+  activeAgentType=type;
+  var title='',body='';
+  var docOpts=allDocs.map(function(d){return '<option value="'+esc(d.id)+'">'+esc(d.filename)+'</option>';}).join('');
+
+  if(type==='audit'){
+    title='Compliance Audit Agent';
+    body='<p style="font-size:0.82rem;color:var(--muted)">Analyzes a document against current regulations in 4 steps: structure analysis, regulation search, cross-referencing, and report generation.</p>';
+    body+='<label>Document to audit</label><select id="agent-doc-1">'+docOpts+'</select>';
+    body+='<label>Focus areas (optional)</label><textarea id="agent-focus" rows="2" placeholder="e.g. PPE requirements, confined space entry, fall protection..."></textarea>';
+  } else if(type==='compare'){
+    title='Document Comparison Agent';
+    body='<p style="font-size:0.82rem;color:var(--muted)">Compares two documents to find differences, conflicts, and gaps in 3 steps.</p>';
+    body+='<label>Document A</label><select id="agent-doc-1">'+docOpts+'</select>';
+    body+='<label>Document B</label><select id="agent-doc-2">'+docOpts+'</select>';
+    body+='<label>Focus areas (optional)</label><textarea id="agent-focus" rows="2" placeholder="e.g. safety procedures, isolation steps..."></textarea>';
+  } else if(type==='writer'){
+    title='Procedure Writer Agent';
+    body='<p style="font-size:0.82rem;color:var(--muted)">Writes a complete procedure document from scratch: outline, regulation research, writing, and quality review.</p>';
+    body+='<label>Describe the procedure to write</label><textarea id="agent-description" rows="3" placeholder="e.g. Hot work permit procedure for offshore platform, including safety requirements and emergency response..."></textarea>';
+    body+='<label>Reference documents (optional)</label><select id="agent-refs" multiple style="height:80px">'+docOpts+'</select>';
+    body+='<label style="margin-top:8px"><input type="checkbox" id="agent-regs" checked style="width:auto;margin-right:6px">Search for applicable regulations</label>';
+  }
+
+  if(!allDocs.length && type!=='writer'){
+    body='<p style="color:var(--red);font-size:0.85rem">Upload documents first before using this agent.</p>';
+    document.getElementById('agent-modal-run').disabled=true;
+  } else {
+    document.getElementById('agent-modal-run').disabled=false;
+  }
+
+  document.getElementById('agent-modal-title').textContent=title;
+  document.getElementById('agent-modal-body').innerHTML=body;
+  document.getElementById('agent-modal').style.display='flex';
+}
+
+function hideAgentModal(){
+  document.getElementById('agent-modal').style.display='none';
+}
+
+async function runAgent(){
+  hideAgentModal();
+  if(agentRunning){toast('An agent is already running','error');return;}
+
+  var url='',body={};
+  if(activeAgentType==='audit'){
+    var docId=document.getElementById('agent-doc-1').value;
+    if(!docId){toast('Select a document','error');return;}
+    var docName=allDocs.find(function(d){return d.id===docId;});
+    url=API+'/agents/compliance-audit';
+    body={doc_id:docId,focus_areas:(document.getElementById('agent-focus')||{}).value||''};
+    botMessages.push({role:'user',content:'Run a compliance audit on '+(docName?docName.filename:'this document')+(body.focus_areas?'. Focus: '+body.focus_areas:'')});
+  } else if(activeAgentType==='compare'){
+    var d1=document.getElementById('agent-doc-1').value;
+    var d2=document.getElementById('agent-doc-2').value;
+    if(!d1||!d2){toast('Select both documents','error');return;}
+    if(d1===d2){toast('Select two different documents','error');return;}
+    var n1=allDocs.find(function(d){return d.id===d1;});
+    var n2=allDocs.find(function(d){return d.id===d2;});
+    url=API+'/agents/compare-docs';
+    body={doc_id_1:d1,doc_id_2:d2,focus_areas:(document.getElementById('agent-focus')||{}).value||''};
+    botMessages.push({role:'user',content:'Compare '+(n1?n1.filename:'Doc A')+' vs '+(n2?n2.filename:'Doc B')+(body.focus_areas?'. Focus: '+body.focus_areas:'')});
+  } else if(activeAgentType==='writer'){
+    var desc=(document.getElementById('agent-description')||{}).value||'';
+    if(!desc.trim()){toast('Describe what to write','error');return;}
+    var refs=document.getElementById('agent-refs');
+    var refIds=refs?Array.from(refs.selectedOptions).map(function(o){return o.value;}):[];
+    var inclRegs=document.getElementById('agent-regs')?document.getElementById('agent-regs').checked:true;
+    url=API+'/agents/procedure-writer';
+    body={description:desc,reference_doc_ids:refIds,include_regulations:inclRegs};
+    botMessages.push({role:'user',content:'Write a procedure: '+desc});
+  }
+
+  agentRunning=true;
+  var assistantIdx=botMessages.length;
+  botMessages.push({role:'assistant',content:'',_agentSteps:[]});
+  renderBotMessages();
+
+  try{
+    var r=await fetch(url,{method:'POST',headers:headers(true),body:JSON.stringify(body)});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Agent failed');}
+
+    var reader=r.body.getReader();
+    var decoder=new TextDecoder();
+    var buf='';
+    while(true){
+      var result=await reader.read();
+      if(result.done) break;
+      buf+=decoder.decode(result.value,{stream:true});
+      var lines=buf.split('\n');
+      buf=lines.pop()||'';
+      for(var i=0;i<lines.length;i++){
+        var line=lines[i].trim();
+        if(!line.startsWith('data: ')) continue;
+        try{
+          var evt=JSON.parse(line.substring(6));
+          if(evt.type==='agent_step'){
+            var steps=botMessages[assistantIdx]._agentSteps;
+            var existing=steps.findIndex(function(s){return s.step===evt.step;});
+            if(existing>=0) steps[existing]=evt; else steps.push(evt);
+            renderBotMessages();
+          } else if(evt.type==='chunk'){
+            botMessages[assistantIdx].content+=evt.text;
+            renderBotMessages();
+          } else if(evt.type==='error'){
+            botMessages[assistantIdx].content+=(botMessages[assistantIdx].content?'\n\n':'')+'Error: '+detailStr(evt.detail);
+          } else if(evt.type==='done'){
+            // done
+          }
+        }catch(pe){}
+      }
+    }
+    if(!botMessages[assistantIdx].content){
+      botMessages[assistantIdx].content='Agent completed but produced no output.';
+    }
+  }catch(e){
+    botMessages[assistantIdx].content='Error: '+e.message;
+  }
+  agentRunning=false;
+  renderBotMessages();
 }
 
 /* ================================================================
