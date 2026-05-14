@@ -2802,6 +2802,186 @@ async def download_document(doc_id: str, db=Depends(get_db)):
     )
 
 
+@app.get("/documents/{doc_id}/view")
+async def view_document_pdf(
+    doc_id: str,
+    request: Request,
+    token: str = Query(default=""),
+    key: str = Query(default=""),
+    db=Depends(get_db),
+):
+    """Serve decrypted PDF inline for in-browser viewing.
+
+    Accepts auth via query params (token= or key=) for iframe embedding,
+    in addition to the standard Authorization header.
+    """
+    # Try standard header auth first
+    authed = False
+    try:
+        await verify_auth(request)
+        authed = True
+    except HTTPException:
+        pass
+
+    # Fall back to query-param auth for iframe usage
+    if not authed and token:
+        payload = _decode_jwt(token)
+        if payload:
+            authed = True
+    if not authed and key and API_KEY:
+        if secrets.compare_digest(key, API_KEY):
+            authed = True
+
+    if not authed:
+        raise HTTPException(status_code=401, detail="Invalid or missing credentials")
+
+    doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    pdf_bytes = _load_pdf_bytes(doc)
+    filename = _decrypt_text(doc.filename)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@app.get("/dashboard/stats", dependencies=[Depends(verify_api_key)])
+async def dashboard_stats(db=Depends(get_db)):
+    """Return summary stats for the dashboard."""
+    doc_count = db.query(DBDocument).count()
+    chat_count = db.query(DBChatSession).count()
+    cache_count = db.query(DBAgentCache).count()
+    search_count = db.query(DBSearchResult).count()
+    analysis_count = db.query(DBAnalysisReport).count()
+
+    recent_docs = db.query(DBDocument).order_by(DBDocument.uploaded_at.desc()).limit(5).all()
+    recent_chats = db.query(DBChatSession).order_by(DBChatSession.updated_at.desc()).limit(5).all()
+    recent_cache = db.query(DBAgentCache).order_by(DBAgentCache.created_at.desc()).limit(5).all()
+
+    return {
+        "documents": doc_count,
+        "chat_sessions": chat_count,
+        "agent_cache": cache_count,
+        "searches": search_count,
+        "analyses": analysis_count,
+        "recent_documents": [
+            {"id": d.id, "filename": _decrypt_text(d.filename),
+             "page_count": d.page_count, "uploaded_at": d.uploaded_at.isoformat() if d.uploaded_at else None}
+            for d in recent_docs
+        ],
+        "recent_chats": [
+            {"id": s.id, "title": s.title, "updated_at": s.updated_at.isoformat() if s.updated_at else None}
+            for s in recent_chats
+        ],
+        "recent_agents": [
+            {"id": c.id, "agent_type": c.agent_type, "model_used": c.model_used,
+             "params_summary": c.params_summary, "created_at": c.created_at.isoformat() if c.created_at else None}
+            for c in recent_cache
+        ],
+    }
+
+
+class BulkAuditRequest(BaseModel):
+    doc_ids: list[str] = Field(default=[], description="Document IDs to audit (empty = all)")
+    focus_areas: str = Field(default="", max_length=2000)
+    model: str = Field(default="haiku", pattern=r"^(sonnet|haiku)$")
+
+
+@app.post("/agents/bulk-audit", dependencies=[Depends(verify_api_key)])
+async def agent_bulk_audit(body: BulkAuditRequest, request: Request, db=Depends(get_db)):
+    """Run compliance audit on multiple documents, streaming progress."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    current_user_id = getattr(request.state, "user_id", None)
+
+    if body.doc_ids:
+        docs = db.query(DBDocument).filter(DBDocument.id.in_(body.doc_ids)).all()
+    else:
+        docs = db.query(DBDocument).all()
+
+    if not docs:
+        raise HTTPException(status_code=404, detail="No documents found")
+
+    model = _resolve_agent_model(body.model)
+    focus = body.focus_areas
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+    web_tools = [{"type": "web_search_20250305", "name": "web_search"}] if CHAT_WEB_SEARCH else None
+
+    async def run_bulk():
+        total = len(docs)
+        yield f"data: {json.dumps({'type': 'bulk_start', 'total': total})}\n\n"
+
+        for idx, doc in enumerate(docs):
+            doc_name = _decrypt_text(doc.filename)
+            yield f"data: {json.dumps({'type': 'bulk_progress', 'current': idx + 1, 'total': total, 'doc_name': doc_name, 'status': 'running'})}\n\n"
+
+            doc_hash = _get_doc_hash(doc)
+            cache_key = _agent_cache_key("audit", model, [doc_hash], focus)
+            save_db = SessionLocal()
+            try:
+                cached = _check_agent_cache(save_db, cache_key, current_user_id)
+            finally:
+                save_db.close()
+
+            if cached:
+                yield f"data: {json.dumps({'type': 'bulk_result', 'current': idx + 1, 'doc_name': doc_name, 'doc_id': doc.id, 'cached': True, 'summary': cached[:500]})}\n\n"
+                continue
+
+            try:
+                pdf_bytes = _load_pdf_bytes(doc)
+                structured = extract_structured_text(pdf_bytes)
+                doc_content = ""
+                for page_data in structured:
+                    doc_content += f"\n--- Page {page_data['page']} ---\n"
+                    for block in page_data.get("blocks", []):
+                        prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
+                        doc_content += f"{prefix}{block['text']}\n"
+                if len(doc_content) > 50000:
+                    doc_content = doc_content[:50000] + "\n[... truncated ...]"
+
+                report = _call_claude(client,
+                    f"""You are a compliance auditor. Analyze this document against current regulations.
+
+DOCUMENT: {doc_name}
+{doc_content}
+
+Provide a concise compliance audit with:
+1. Overall compliance rating (percentage)
+2. Risk level (HIGH/MEDIUM/LOW)
+3. Key findings (max 5 bullet points)
+4. Critical issues requiring immediate attention
+
+Use markdown formatting.""",
+                    "Audit this document for compliance.", tools=web_tools,
+                    max_tokens=CHAT_MAX_TOKENS * 2, model=model)
+
+                save_db = SessionLocal()
+                try:
+                    _save_agent_cache(save_db, cache_key, "audit", model,
+                                      report, [doc.id], f"bulk|focus: {focus}" if focus else "bulk",
+                                      user_id=current_user_id)
+                finally:
+                    save_db.close()
+
+                yield f"data: {json.dumps({'type': 'bulk_result', 'current': idx + 1, 'doc_name': doc_name, 'doc_id': doc.id, 'cached': False, 'summary': report[:500]})}\n\n"
+
+            except Exception as e:
+                import logging
+                logging.getLogger("pdfhelper").error("Bulk audit failed for %s: %s", doc_name, e)
+                err = "Audit failed" if IS_PRODUCTION else str(e)
+                yield f"data: {json.dumps({'type': 'bulk_result', 'current': idx + 1, 'doc_name': doc_name, 'doc_id': doc.id, 'error': err})}\n\n"
+
+        yield _agent_done()
+
+    return StreamingResponse(run_bulk(), media_type="text/event-stream")
+
+
 class MergeRequest(BaseModel):
     doc_ids: list[str] = Field(..., min_length=2, description="IDs of documents to merge (in order)")
     output_filename: str = Field(default="merged.pdf", max_length=255)
