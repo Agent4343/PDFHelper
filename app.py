@@ -3518,3 +3518,427 @@ async def delete_update_session(session_id: str, request: Request, db=Depends(ge
     db.delete(session)
     db.commit()
     return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# AI Agents — Multi-step autonomous tasks streamed into chat
+# ---------------------------------------------------------------------------
+
+def _agent_step(step: int, total: int, name: str, status: str = "running"):
+    return f"data: {json.dumps({'type': 'agent_step', 'step': step, 'total': total, 'name': name, 'status': status})}\n\n"
+
+
+def _agent_chunk(text: str):
+    return f"data: {json.dumps({'type': 'chunk', 'text': text})}\n\n"
+
+
+def _agent_done():
+    return f"data: {json.dumps({'type': 'done'})}\n\n"
+
+
+def _agent_error(msg: str):
+    return f"data: {json.dumps({'type': 'error', 'detail': msg})}\n\n"
+
+
+def _call_claude(client, system: str, user_msg: str, tools=None, max_tokens=None):
+    """Synchronous Claude call, returns the text content."""
+    kwargs = dict(
+        model=CHAT_MODEL,
+        max_tokens=max_tokens or CHAT_MAX_TOKENS * 2,
+        system=system,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    if tools:
+        kwargs["tools"] = tools
+    resp = client.messages.create(**kwargs)
+    return "".join(b.text for b in resp.content if hasattr(b, "text"))
+
+
+def _stream_claude(client, system: str, user_msg: str, tools=None, max_tokens=None):
+    """Stream Claude response, yields text chunks."""
+    kwargs = dict(
+        model=CHAT_MODEL,
+        max_tokens=max_tokens or CHAT_MAX_TOKENS * 2,
+        system=system,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    if tools:
+        kwargs["tools"] = tools
+    with client.messages.stream(**kwargs) as stream:
+        for event in stream:
+            if hasattr(event, 'type') and event.type == 'content_block_delta':
+                if hasattr(event.delta, 'text'):
+                    yield event.delta.text
+
+
+class ComplianceAuditRequest(BaseModel):
+    doc_id: str = Field(max_length=100)
+    focus_areas: str = Field(default="", max_length=2000)
+
+
+@app.post("/agents/compliance-audit", dependencies=[Depends(verify_api_key)])
+async def agent_compliance_audit(body: ComplianceAuditRequest, db=Depends(get_db)):
+    """Multi-step compliance audit agent."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    doc = db.query(DBDocument).filter(DBDocument.id == body.doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    pdf_bytes = _load_pdf_bytes(doc)
+    structured = extract_structured_text(pdf_bytes)
+    doc_name = _decrypt_text(doc.filename)
+    focus = body.focus_areas
+
+    doc_content = ""
+    for page_data in structured:
+        doc_content += f"\n--- Page {page_data['page']} ---\n"
+        for block in page_data.get("blocks", []):
+            prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
+            doc_content += f"{prefix}{block['text']}\n"
+    if len(doc_content) > 80000:
+        doc_content = doc_content[:80000] + "\n[... truncated ...]"
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+    web_tools = [{"type": "web_search_20250305", "name": "web_search"}] if CHAT_WEB_SEARCH else None
+
+    async def run_audit():
+        full_report = ""
+        try:
+            # Step 1: Analyze document structure
+            yield _agent_step(1, 4, "Analyzing document structure")
+            analysis = _call_claude(client,
+                "You are a document analyst. Identify the key sections, scope, and purpose of this procedure document. List each section with a one-line summary.",
+                f"Analyze this document:\n\nFILENAME: {doc_name}\n\n{doc_content}")
+            yield _agent_step(1, 4, "Analyzing document structure", "done")
+
+            # Step 2: Search current regulations
+            yield _agent_step(2, 4, "Searching current regulations")
+            reg_query = f"Current regulations and standards applicable to: {doc_name}."
+            if focus:
+                reg_query += f" Focus areas: {focus}."
+            reg_query += f"\n\nDocument sections found:\n{analysis[:3000]}"
+            regulations = _call_claude(client,
+                "You are a regulatory researcher. Search the web for current, applicable regulations, standards, and industry requirements. List each regulation with its full title, version/year, and key requirements.",
+                reg_query, tools=web_tools)
+            yield _agent_step(2, 4, "Searching current regulations", "done")
+
+            # Step 3: Cross-reference sections
+            yield _agent_step(3, 4, "Cross-referencing sections against regulations")
+            cross_ref = _call_claude(client,
+                f"""You are a compliance auditor. You have:
+
+DOCUMENT: {doc_name}
+{doc_content[:40000]}
+
+APPLICABLE REGULATIONS:
+{regulations[:20000]}
+
+For EACH section of the document, determine:
+- PASS: Section meets regulatory requirements
+- FAIL: Section is missing required content or contradicts regulations
+- WARNING: Section is partially compliant or could be improved
+
+Be specific about what's missing or wrong. Cite the exact regulation.""",
+                "Perform the cross-reference audit for every section.")
+            yield _agent_step(3, 4, "Cross-referencing sections against regulations", "done")
+
+            # Step 4: Generate final report (streamed)
+            yield _agent_step(4, 4, "Generating audit report")
+            for chunk in _stream_claude(client,
+                f"""You are a compliance audit report writer. Using the analysis below, write a complete, professional audit report.
+
+DOCUMENT ANALYZED: {doc_name}
+{('FOCUS AREAS: ' + focus) if focus else ''}
+
+DOCUMENT STRUCTURE ANALYSIS:
+{analysis[:5000]}
+
+APPLICABLE REGULATIONS:
+{regulations[:10000]}
+
+CROSS-REFERENCE FINDINGS:
+{cross_ref[:20000]}
+
+Format the report with these sections:
+# Compliance Audit Report: [Document Name]
+
+## Executive Summary
+Brief overview with overall compliance rating (percentage) and risk level.
+
+## Regulations Reviewed
+Table of all regulations checked.
+
+## Section-by-Section Findings
+For each section: status (PASS/FAIL/WARNING), finding detail, regulation reference, recommended action.
+
+## Critical Issues
+List any FAIL items that need immediate attention.
+
+## Recommendations
+Prioritized list of changes to achieve full compliance.
+
+Use markdown formatting with tables where appropriate.""",
+                "Write the complete audit report.", max_tokens=CHAT_MAX_TOKENS * 3):
+                full_report += chunk
+                yield _agent_chunk(chunk)
+
+            yield _agent_step(4, 4, "Generating audit report", "done")
+            yield _agent_done()
+
+        except Exception as e:
+            import logging
+            logging.getLogger("pdfhelper").error("Compliance audit agent failed: %s", e)
+            err_msg = "Audit failed" if IS_PRODUCTION else f"Audit failed: {str(e)}"
+            yield _agent_error(err_msg)
+
+    return StreamingResponse(run_audit(), media_type="text/event-stream")
+
+
+class CompareDocsRequest(BaseModel):
+    doc_id_1: str = Field(max_length=100)
+    doc_id_2: str = Field(max_length=100)
+    focus_areas: str = Field(default="", max_length=2000)
+
+
+@app.post("/agents/compare-docs", dependencies=[Depends(verify_api_key)])
+async def agent_compare_docs(body: CompareDocsRequest, db=Depends(get_db)):
+    """Multi-step document comparison agent."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    doc1 = db.query(DBDocument).filter(DBDocument.id == body.doc_id_1).first()
+    doc2 = db.query(DBDocument).filter(DBDocument.id == body.doc_id_2).first()
+    if not doc1 or not doc2:
+        raise HTTPException(status_code=404, detail="One or both documents not found")
+
+    def _get_content(doc):
+        pdf_bytes = _load_pdf_bytes(doc)
+        structured = extract_structured_text(pdf_bytes)
+        text = ""
+        for page_data in structured:
+            text += f"\n--- Page {page_data['page']} ---\n"
+            for block in page_data.get("blocks", []):
+                prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
+                text += f"{prefix}{block['text']}\n"
+        return text[:60000] if len(text) > 60000 else text
+
+    name1 = _decrypt_text(doc1.filename)
+    name2 = _decrypt_text(doc2.filename)
+    content1 = _get_content(doc1)
+    content2 = _get_content(doc2)
+    focus = body.focus_areas
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    async def run_compare():
+        full_report = ""
+        try:
+            # Step 1: Analyze both structures
+            yield _agent_step(1, 3, "Analyzing document structures")
+            structures = _call_claude(client,
+                "You are a document analyst. Compare the structure (sections, headings, organization) of these two documents. List the sections in each and note which sections exist in one but not the other.",
+                f"DOCUMENT A: {name1}\n{content1[:30000]}\n\nDOCUMENT B: {name2}\n{content2[:30000]}")
+            yield _agent_step(1, 3, "Analyzing document structures", "done")
+
+            # Step 2: Deep content comparison
+            yield _agent_step(2, 3, "Comparing content section by section")
+            differences = _call_claude(client,
+                f"""You are a document comparison specialist. Compare these two documents in detail.
+
+DOCUMENT A: {name1}
+{content1[:40000]}
+
+DOCUMENT B: {name2}
+{content2[:40000]}
+
+STRUCTURE ANALYSIS:
+{structures[:5000]}
+
+For each shared section, identify:
+- Content that is IDENTICAL or equivalent
+- Content that DIFFERS (quote both versions)
+- Content that is MISSING from one document
+- Content that CONFLICTS between documents
+
+{('FOCUS AREAS: ' + focus) if focus else ''}""",
+                "Perform the detailed comparison.")
+            yield _agent_step(2, 3, "Comparing content section by section", "done")
+
+            # Step 3: Generate report (streamed)
+            yield _agent_step(3, 3, "Generating comparison report")
+            for chunk in _stream_claude(client,
+                f"""You are a document comparison report writer. Write a professional comparison report using the analysis below.
+
+DOCUMENT A: {name1}
+DOCUMENT B: {name2}
+{('FOCUS AREAS: ' + focus) if focus else ''}
+
+STRUCTURE ANALYSIS:
+{structures[:5000]}
+
+DETAILED DIFFERENCES:
+{differences[:20000]}
+
+Format the report as:
+# Document Comparison: {name1} vs {name2}
+
+## Summary
+Overall similarity rating, key differences count, which document is more comprehensive.
+
+## Structure Comparison
+Table showing sections side-by-side.
+
+## Key Differences
+Each significant difference with quotes from both documents.
+
+## Conflicts Found
+Any contradictions between the documents (these are critical).
+
+## Gaps
+Content present in one but missing from the other.
+
+## Recommendation
+Which document is more complete and what each needs to match the other.
+
+Use markdown with tables.""",
+                "Write the complete comparison report.", max_tokens=CHAT_MAX_TOKENS * 3):
+                full_report += chunk
+                yield _agent_chunk(chunk)
+
+            yield _agent_step(3, 3, "Generating comparison report", "done")
+            yield _agent_done()
+
+        except Exception as e:
+            import logging
+            logging.getLogger("pdfhelper").error("Compare docs agent failed: %s", e)
+            err_msg = "Comparison failed" if IS_PRODUCTION else f"Comparison failed: {str(e)}"
+            yield _agent_error(err_msg)
+
+    return StreamingResponse(run_compare(), media_type="text/event-stream")
+
+
+class ProcedureWriterRequest(BaseModel):
+    description: str = Field(max_length=5000)
+    reference_doc_ids: list[str] = Field(default=[])
+    include_regulations: bool = Field(default=True)
+
+
+@app.post("/agents/procedure-writer", dependencies=[Depends(verify_api_key)])
+async def agent_procedure_writer(body: ProcedureWriterRequest, db=Depends(get_db)):
+    """Multi-step procedure writing agent."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    ref_content = ""
+    ref_names = []
+    if body.reference_doc_ids:
+        docs = db.query(DBDocument).filter(DBDocument.id.in_(body.reference_doc_ids)).all()
+        for doc in docs[:3]:
+            name = _decrypt_text(doc.filename)
+            ref_names.append(name)
+            pdf_bytes = _load_pdf_bytes(doc)
+            structured = extract_structured_text(pdf_bytes)
+            text = ""
+            for page_data in structured:
+                for block in page_data.get("blocks", []):
+                    prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
+                    text += f"{prefix}{block['text']}\n"
+            if len(text) > 40000:
+                text = text[:40000] + "\n[... truncated ...]"
+            ref_content += f'\n--- REFERENCE: "{name}" ---\n{text}\n'
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+    web_tools = [{"type": "web_search_20250305", "name": "web_search"}] if CHAT_WEB_SEARCH else None
+    steps = 4 if body.include_regulations else 3
+
+    async def run_writer():
+        full_doc = ""
+        try:
+            # Step 1: Research and outline
+            yield _agent_step(1, steps, "Researching and creating outline")
+            outline_prompt = f"Create a detailed outline for this procedure:\n\nDESCRIPTION: {body.description}"
+            if ref_content:
+                outline_prompt += f"\n\nREFERENCE PROCEDURES (match their style and structure):\n{ref_content[:20000]}"
+            outline = _call_claude(client,
+                "You are a technical procedure writer. Create a detailed section-by-section outline for the requested procedure. Include all standard sections (Purpose, Scope, Definitions, Responsibilities, Procedure Steps, Safety, Emergency, References). Note what content goes in each section.",
+                outline_prompt)
+            yield _agent_step(1, steps, "Researching and creating outline", "done")
+
+            # Step 2: Search regulations (optional)
+            regulations = ""
+            step_num = 2
+            if body.include_regulations:
+                yield _agent_step(2, steps, "Searching applicable regulations")
+                regulations = _call_claude(client,
+                    "You are a regulatory researcher. Search the web for all regulations, standards, and industry best practices that apply to this procedure. List each with its key requirements.",
+                    f"Find applicable regulations for: {body.description}", tools=web_tools)
+                yield _agent_step(2, steps, "Searching applicable regulations", "done")
+                step_num = 3
+
+            # Step 3: Write the procedure (streamed)
+            yield _agent_step(step_num, steps, "Writing procedure content")
+            write_system = f"""You are an expert technical procedure writer. Write a complete, professional procedure document.
+
+DESCRIPTION: {body.description}
+
+OUTLINE:
+{outline[:10000]}
+
+{('APPLICABLE REGULATIONS:' + chr(10) + regulations[:10000]) if regulations else ''}
+
+{('REFERENCE PROCEDURES (match their style):' + chr(10) + ref_content[:15000]) if ref_content else ''}
+
+Write a complete procedure document with:
+- Professional formatting using markdown headings, numbered lists, and tables
+- Clear, actionable steps with responsible parties
+- Safety warnings and precautions in bold
+- Regulatory references where applicable
+- Standard sections: Purpose, Scope, Definitions, Responsibilities, Procedure, Safety Requirements, Emergency Procedures, References
+- Specific details (not generic placeholders)"""
+
+            for chunk in _stream_claude(client, write_system,
+                "Write the complete procedure document now.", max_tokens=CHAT_MAX_TOKENS * 3):
+                full_doc += chunk
+                yield _agent_chunk(chunk)
+
+            yield _agent_step(step_num, steps, "Writing procedure content", "done")
+
+            # Final step: Quality review
+            yield _agent_step(steps, steps, "Running quality review")
+            review = _call_claude(client,
+                f"""You are a procedure quality reviewer. Review this draft procedure for:
+1. Completeness — are any standard sections missing?
+2. Clarity — are steps clear and unambiguous?
+3. Safety — are all hazards addressed?
+4. Compliance — does it meet the regulations found?
+5. Consistency — any contradictions?
+
+DRAFT:
+{full_doc[:40000]}
+
+{('REGULATIONS:' + chr(10) + regulations[:5000]) if regulations else ''}
+
+If issues are found, list them briefly. If the document is good, say so.""",
+                "Review the draft and list any issues.")
+            yield _agent_step(steps, steps, "Running quality review", "done")
+
+            if "issue" in review.lower() or "missing" in review.lower() or "should" in review.lower():
+                yield _agent_chunk("\n\n---\n\n## Quality Review Notes\n\n" + review)
+
+            yield _agent_done()
+
+        except Exception as e:
+            import logging
+            logging.getLogger("pdfhelper").error("Procedure writer agent failed: %s", e)
+            err_msg = "Writing failed" if IS_PRODUCTION else f"Writing failed: {str(e)}"
+            yield _agent_error(err_msg)
+
+    return StreamingResponse(run_writer(), media_type="text/event-stream")
