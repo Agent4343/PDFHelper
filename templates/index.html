@@ -136,9 +136,19 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .chat-msg.assistant .chat-bbl{background:#1a2236;border:1px solid var(--border);
   border-radius:16px 16px 16px 4px;color:var(--text)}
 .chat-bbl strong{color:#fff}
+.chat-bbl h2,.chat-bbl h3,.chat-bbl h4{margin:0.6rem 0 0.3rem;color:var(--accent)}
+.chat-bbl h2{font-size:1.05rem} .chat-bbl h3{font-size:0.95rem} .chat-bbl h4{font-size:0.88rem}
+.chat-bbl table{border-collapse:collapse;width:100%;margin:0.5rem 0;font-size:0.82rem}
+.chat-bbl th,.chat-bbl td{border:1px solid var(--border);padding:4px 8px;text-align:left}
+.chat-bbl th{background:var(--accent-bg);font-weight:600}
+.chat-bbl code{background:#0d1117;padding:1px 5px;border-radius:4px;font-size:0.85em}
+.chat-bbl pre{background:#0d1117;padding:8px 12px;border-radius:6px;overflow-x:auto;margin:0.4rem 0}
+.chat-bbl pre code{padding:0;background:none}
+.chat-bbl em{color:#94a3b8}
 .chat-msg-actions{display:flex;gap:6px;margin-top:8px;padding-top:6px;border-top:1px solid var(--border)}
 .chat-msg-actions button{background:none;border:1px solid var(--border);color:var(--muted);font-size:0.72rem;padding:3px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all 0.15s}
 .chat-msg-actions button:hover{color:var(--fg);border-color:var(--accent);background:var(--accent-bg)}
+.chat-status{font-size:0.78rem;color:var(--accent);font-style:italic;margin-bottom:4px}
 .chat-typing{display:flex;margin-bottom:14px}
 .chat-typing-bbl{padding:12px 20px;border-radius:16px 16px 16px 4px;background:#1a2236;
   border:1px solid var(--border);display:flex;gap:6px;align-items:center}
@@ -1818,12 +1828,19 @@ function renderBotMessages(){
     return;
   }
   var html='';
+  var lastAssistantIdx=-1;
+  botMessages.forEach(function(m,idx){if(m.role==='assistant') lastAssistantIdx=idx;});
   botMessages.forEach(function(m,idx){
+    var statusHtml=m._status?'<div class="chat-status">'+esc(m._status)+'</div>':'';
+    var formatted=m.role==='assistant'?(statusHtml+renderMarkdown(m.content)):botFmt(m.content);
     var actions='';
     if(m.role==='assistant'&&m.content&&m.content.length>20){
-      actions='<div class="chat-msg-actions"><button onclick="botDownloadDocx('+idx+')" title="Download as Word document"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Word</button></div>';
+      var btns='<button onclick="botCopyMsg('+idx+')" title="Copy to clipboard"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button>';
+      btns+='<button onclick="botDownloadDocx('+idx+')" title="Download as Word document"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Word</button>';
+      if(idx===lastAssistantIdx&&!botSending) btns+='<button onclick="botRegenerate()" title="Regenerate this response"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>Retry</button>';
+      actions='<div class="chat-msg-actions">'+btns+'</div>';
     }
-    html+='<div class="chat-msg '+m.role+'"><div class="chat-bbl">'+botFmt(m.content)+actions+'</div></div>';
+    html+='<div class="chat-msg '+m.role+'"><div class="chat-bbl">'+formatted+actions+'</div></div>';
   });
   if(botSending){
     html+='<div class="chat-typing"><div class="chat-typing-bbl">'+
@@ -1897,10 +1914,11 @@ async function botSend(){
           if(evt.type==='meta'){
             if(evt.session_id) currentSessionId=evt.session_id;
           } else if(evt.type==='status'){
-            /* Show a temporary status like "Searching the web..." */
-            var typing=document.querySelector('.chat-typing-bbl');
-            if(typing) typing.textContent=evt.message||'Thinking...';
+            if(!botMessages[assistantIdx]._status) botMessages[assistantIdx]._status='';
+            botMessages[assistantIdx]._status=evt.message||'Thinking...';
+            renderBotMessages();
           } else if(evt.type==='chunk'){
+            botMessages[assistantIdx]._status='';
             botMessages[assistantIdx].content+=evt.text;
             renderBotMessages();
           } else if(evt.type==='error'){
@@ -2051,6 +2069,27 @@ async function botDownloadDocx(idx){
     URL.revokeObjectURL(url);
     toast('Word document downloaded','success');
   }catch(e){toast(e.message,'error');}
+}
+
+function botCopyMsg(idx){
+  var m=botMessages[idx];
+  if(!m||!m.content) return;
+  navigator.clipboard.writeText(m.content).then(function(){toast('Copied to clipboard','success');}).catch(function(){
+    var ta=document.createElement('textarea');ta.value=m.content;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast('Copied to clipboard','success');
+  });
+}
+
+function botRegenerate(){
+  if(botSending) return;
+  var lastUserIdx=-1;
+  for(var i=botMessages.length-1;i>=0;i--){if(botMessages[i].role==='user'){lastUserIdx=i;break;}}
+  if(lastUserIdx===-1) return;
+  var userText=botMessages[lastUserIdx].content;
+  botMessages.splice(lastUserIdx);
+  renderBotMessages();
+  document.getElementById('chat-input').value=userText;
+  chatAutoResize(document.getElementById('chat-input'));
+  botSend();
 }
 
 /* ================================================================
@@ -2764,17 +2803,40 @@ async function updaterDeleteSession(){
 
 function renderMarkdown(txt){
   if(!txt) return '';
-  return txt
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/^### (.+)$/gm,'<h4 style="color:var(--accent);margin:0.75rem 0 0.25rem">$1</h4>')
-    .replace(/^## (.+)$/gm,'<h3 style="margin:0.75rem 0 0.25rem">$1</h3>')
-    .replace(/^# (.+)$/gm,'<h2 style="margin:0.75rem 0 0.25rem">$1</h2>')
-    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g,'<em>$1</em>')
-    .replace(/^- (.+)$/gm,'<li style="margin-left:1.2rem">$1</li>')
-    .replace(/^\d+\.\s(.+)$/gm,'<li style="margin-left:1.2rem;list-style-type:decimal">$1</li>')
-    .replace(/\n{2,}/g,'<br><br>')
-    .replace(/\n/g,'<br>');
+  var s=txt.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Code blocks
+  s=s.replace(/```(\w*)\n([\s\S]*?)```/g,function(_,lang,code){return '<pre><code>'+code.trim()+'</code></pre>';});
+  // Inline code
+  s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
+  // Tables: detect lines with |
+  s=s.replace(/((?:^\|.+\|$\n?)+)/gm,function(block){
+    var rows=block.trim().split('\n').filter(function(r){return r.trim();});
+    if(rows.length<2) return block;
+    var html='<table>';
+    rows.forEach(function(row,ri){
+      if(row.replace(/[\|\s\-:]/g,'')==='') return; // separator row
+      var tag=ri===0?'th':'td';
+      var cells=row.split('|').filter(function(c,ci,arr){return ci>0&&ci<arr.length-1;});
+      html+='<tr>'+cells.map(function(c){return '<'+tag+'>'+c.trim()+'</'+tag+'>';}).join('')+'</tr>';
+    });
+    return html+'</table>';
+  });
+  // Headings
+  s=s.replace(/^### (.+)$/gm,'<h4>$1</h4>');
+  s=s.replace(/^## (.+)$/gm,'<h3>$1</h3>');
+  s=s.replace(/^# (.+)$/gm,'<h2>$1</h2>');
+  // Bold and italic
+  s=s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  s=s.replace(/\*(.+?)\*/g,'<em>$1</em>');
+  // Lists
+  s=s.replace(/^- (.+)$/gm,'<li style="margin-left:1.2rem">$1</li>');
+  s=s.replace(/^\d+\.\s(.+)$/gm,'<li style="margin-left:1.2rem;list-style-type:decimal">$1</li>');
+  // Links
+  s=s.replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener" style="color:var(--accent)">$1</a>');
+  // Line breaks
+  s=s.replace(/\n{2,}/g,'<br><br>');
+  s=s.replace(/\n/g,'<br>');
+  return s;
 }
 </script>
 </body>

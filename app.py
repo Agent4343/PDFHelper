@@ -1175,13 +1175,24 @@ async def chat_with_documents(
         db.add(session)
         db.flush()
 
-    # Build procedure context from selected documents
+    # Build procedure context from selected documents using structured extraction
     procedure_parts = []
     image_content_blocks = []  # Claude vision blocks for uploaded images
     for doc in documents:
         decrypted_name = _decrypt_text(doc.filename)
-        pages = json.loads(_decrypt_text(doc.text_content))
-        full_text = "\n".join(p["text"] for p in pages if p.get("text"))
+        try:
+            pdf_bytes = _load_pdf_bytes(doc)
+            structured = extract_structured_text(pdf_bytes)
+            parts = []
+            for page_data in structured:
+                parts.append(f"\n--- Page {page_data['page']} ---")
+                for block in page_data.get("blocks", []):
+                    prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
+                    parts.append(f"{prefix}{block['text']}")
+            full_text = "\n".join(parts)
+        except Exception:
+            pages = json.loads(_decrypt_text(doc.text_content))
+            full_text = "\n".join(p["text"] for p in pages if p.get("text"))
         if len(full_text) > 80000:
             full_text = full_text[:80000] + "\n\n[... content truncated for context window ...]"
         procedure_parts.append(
@@ -1282,7 +1293,10 @@ RULES:
 4. When using web search results, clearly indicate which information came from the web vs. from the loaded procedures.
 5. Be precise and direct. Quote relevant sections when helpful.
 6. If a question spans multiple procedures, reference all relevant ones.
-7. Format your answers clearly with procedure references in bold.
+7. Format your answers clearly with procedure references in bold. Use markdown headings, bullet lists, and numbered lists for structure.
+8. If you are uncertain or the procedures are ambiguous, clearly flag it: state what you're confident about and what requires verification.
+9. When a table is present in the source (marked [TABLE]), preserve its structure in your answer using markdown tables.
+10. At the end of your response, suggest 1-2 brief follow-up questions the user might want to ask, formatted as: **Follow-up:** _question here?_
 
 LOADED PROCEDURES:
 {procedure_context}"""
