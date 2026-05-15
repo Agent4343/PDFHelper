@@ -2316,9 +2316,10 @@ function showAgentModal(type){
     body+=modelSelect;
   } else if(type==='writer'){
     title='Procedure Writer Agent';
-    body='<p style="font-size:0.82rem;color:var(--muted)">Writes a complete procedure document from scratch: outline, regulation research, writing, and quality review.</p>';
-    body+='<label>Describe the procedure to write</label><textarea id="agent-description" rows="3" placeholder="e.g. Hot work permit procedure for offshore platform, including safety requirements and emergency response..."></textarea>';
-    body+='<label>Reference documents (optional)</label><select id="agent-refs" multiple style="height:80px">'+docOpts+'</select>';
+    body='<p style="font-size:0.82rem;color:var(--muted)">Writes a complete procedure based on your uploaded document. Select a source document and describe what kind of procedure to produce.</p>';
+    body+='<label>Source document (base procedure on this)</label><select id="agent-source-doc"><option value="">-- None (write from scratch) --</option>'+docOpts+'</select>';
+    body+='<label>Describe the procedure to write</label><textarea id="agent-description" rows="3" placeholder="e.g. Write a safety procedure based on this document, covering all hazards, PPE requirements, and emergency response..."></textarea>';
+    body+='<label>Style reference documents (optional)</label><select id="agent-refs" multiple style="height:60px">'+docOpts+'</select>';
     body+='<label style="margin-top:8px"><input type="checkbox" id="agent-regs" checked style="width:auto;margin-right:6px">Search for applicable regulations</label>';
     body+=modelSelect;
   }
@@ -2365,12 +2366,14 @@ async function runAgent(){
   } else if(activeAgentType==='writer'){
     var desc=(document.getElementById('agent-description')||{}).value||'';
     if(!desc.trim()){toast('Describe what to write','error');return;}
+    var srcDoc=(document.getElementById('agent-source-doc')||{}).value||'';
     var refs=document.getElementById('agent-refs');
     var refIds=refs?Array.from(refs.selectedOptions).map(function(o){return o.value;}):[];
     var inclRegs=document.getElementById('agent-regs')?document.getElementById('agent-regs').checked:true;
+    var srcName=srcDoc?allDocs.find(function(d){return d.id===srcDoc;}):null;
     url=API+'/agents/procedure-writer';
-    body={description:desc,reference_doc_ids:refIds,include_regulations:inclRegs,model:agentModel};
-    botMessages.push({role:'user',content:'Write a procedure: '+desc+' ['+agentModel+']'});
+    body={description:desc,source_doc_id:srcDoc,reference_doc_ids:refIds,include_regulations:inclRegs,model:agentModel};
+    botMessages.push({role:'user',content:'Write a procedure: '+desc+(srcName?' (based on '+srcName.filename+')':'')+' ['+agentModel+']'});
   }
 
   agentRunning=true;
