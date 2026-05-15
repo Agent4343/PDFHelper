@@ -3748,6 +3748,15 @@ def _call_claude(client, system: str, user_msg: str, tools=None, max_tokens=None
     return "".join(b.text for b in resp.content if hasattr(b, "text"))
 
 
+async def _call_claude_bg(client, system, user_msg, tools=None, max_tokens=None, model=None):
+    """Run _call_claude in a background thread (non-blocking for async code)."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, lambda: _call_claude(client, system, user_msg, tools, max_tokens, model)
+    )
+
+
 def _stream_claude(client, system: str, user_msg: str, tools=None, max_tokens=None, model=None):
     """Stream Claude response, yields text chunks."""
     kwargs = dict(
@@ -3867,12 +3876,17 @@ async def agent_compliance_audit(body: ComplianceAuditRequest, request: Request,
     web_tools = [{"type": "web_search_20250305", "name": "web_search"}] if CHAT_WEB_SEARCH else None
 
     async def run_audit():
+        import asyncio
         full_report = ""
         try:
             yield _agent_step(1, 4, "Analyzing document structure")
-            analysis = _call_claude(client,
+            task = asyncio.create_task(_call_claude_bg(client,
                 "You are a document analyst. Identify the key sections, scope, and purpose of this procedure document. List each section with a one-line summary.",
-                f"Analyze this document:\n\nFILENAME: {doc_name}\n\n{doc_content}", model=model)
+                f"Analyze this document:\n\nFILENAME: {doc_name}\n\n{doc_content}", model=model))
+            while not task.done():
+                yield ":\n\n"
+                await asyncio.sleep(3)
+            analysis = task.result()
             yield _agent_step(1, 4, "Analyzing document structure", "done")
 
             yield _agent_step(2, 4, "Searching current regulations")
@@ -3880,13 +3894,17 @@ async def agent_compliance_audit(body: ComplianceAuditRequest, request: Request,
             if focus:
                 reg_query += f" Focus areas: {focus}."
             reg_query += f"\n\nDocument sections found:\n{analysis[:3000]}"
-            regulations = _call_claude(client,
+            task = asyncio.create_task(_call_claude_bg(client,
                 "You are a regulatory researcher. Search the web for current, applicable regulations, standards, and industry requirements. List each regulation with its full title, version/year, and key requirements.",
-                reg_query, tools=web_tools, model=model)
+                reg_query, tools=web_tools, model=model))
+            while not task.done():
+                yield ":\n\n"
+                await asyncio.sleep(3)
+            regulations = task.result()
             yield _agent_step(2, 4, "Searching current regulations", "done")
 
             yield _agent_step(3, 4, "Cross-referencing sections against regulations")
-            cross_ref = _call_claude(client,
+            task = asyncio.create_task(_call_claude_bg(client,
                 f"""You are a compliance auditor. You have:
 
 DOCUMENT: {doc_name}
@@ -3901,7 +3919,11 @@ For EACH section of the document, determine:
 - WARNING: Section is partially compliant or could be improved
 
 Be specific about what's missing or wrong. Cite the exact regulation.""",
-                "Perform the cross-reference audit for every section.", model=model)
+                "Perform the cross-reference audit for every section.", model=model))
+            while not task.done():
+                yield ":\n\n"
+                await asyncio.sleep(3)
+            cross_ref = task.result()
             yield _agent_step(3, 4, "Cross-referencing sections against regulations", "done")
 
             yield _agent_step(4, 4, "Generating audit report")
@@ -4017,16 +4039,21 @@ async def agent_compare_docs(body: CompareDocsRequest, request: Request, db=Depe
     client = Anthropic(api_key=api_key)
 
     async def run_compare():
+        import asyncio
         full_report = ""
         try:
             yield _agent_step(1, 3, "Analyzing document structures")
-            structures = _call_claude(client,
+            task = asyncio.create_task(_call_claude_bg(client,
                 "You are a document analyst. Compare the structure (sections, headings, organization) of these two documents. List the sections in each and note which sections exist in one but not the other.",
-                f"DOCUMENT A: {name1}\n{content1[:30000]}\n\nDOCUMENT B: {name2}\n{content2[:30000]}", model=model)
+                f"DOCUMENT A: {name1}\n{content1[:30000]}\n\nDOCUMENT B: {name2}\n{content2[:30000]}", model=model))
+            while not task.done():
+                yield ":\n\n"
+                await asyncio.sleep(3)
+            structures = task.result()
             yield _agent_step(1, 3, "Analyzing document structures", "done")
 
             yield _agent_step(2, 3, "Comparing content section by section")
-            differences = _call_claude(client,
+            task = asyncio.create_task(_call_claude_bg(client,
                 f"""You are a document comparison specialist. Compare these two documents in detail.
 
 DOCUMENT A: {name1}
@@ -4045,7 +4072,11 @@ For each shared section, identify:
 - Content that CONFLICTS between documents
 
 {('FOCUS AREAS: ' + focus) if focus else ''}""",
-                "Perform the detailed comparison.", model=model)
+                "Perform the detailed comparison.", model=model))
+            while not task.done():
+                yield ":\n\n"
+                await asyncio.sleep(3)
+            differences = task.result()
             yield _agent_step(2, 3, "Comparing content section by section", "done")
 
             yield _agent_step(3, 3, "Generating comparison report")
@@ -4186,6 +4217,7 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, request: Request,
     steps = 4 if body.include_regulations else 3
 
     async def run_writer():
+        import asyncio
         full_doc = ""
         try:
             # Step 1: Research and outline
@@ -4199,16 +4231,24 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, request: Request,
             if source_content:
                 outline_system += " The user has provided a SOURCE DOCUMENT — your outline MUST be based on the actual content, topics, processes, and specifics from that document. Extract the real procedures, steps, equipment, roles, and safety information from it. Do NOT invent generic content — use what the document actually says."
             outline_system += " Include all standard sections (Purpose, Scope, Definitions, Responsibilities, Procedure Steps, Safety, Emergency, References). Note what content goes in each section."
-            outline = _call_claude(client, outline_system, outline_prompt, model=model)
-            yield _agent_step(1, steps, "Researching and creating outline", "done")
+            task = asyncio.create_task(_call_claude_bg(client, outline_system, outline_prompt, model=model))
+            while not task.done():
+                yield ":\n\n"
+                await asyncio.sleep(3)
+            outline = task.result()
+            yield _agent_step(1, steps, "Analyzing document and creating outline", "done")
 
             regulations = ""
             step_num = 2
             if body.include_regulations:
                 yield _agent_step(2, steps, "Searching applicable regulations")
-                regulations = _call_claude(client,
+                task = asyncio.create_task(_call_claude_bg(client,
                     "You are a regulatory researcher. Search the web for all regulations, standards, and industry best practices that apply to this procedure. List each with its key requirements.",
-                    f"Find applicable regulations for: {body.description}", tools=web_tools, model=model)
+                    f"Find applicable regulations for: {body.description}", tools=web_tools, model=model))
+                while not task.done():
+                    yield ":\n\n"
+                    await asyncio.sleep(3)
+                regulations = task.result()
                 yield _agent_step(2, steps, "Searching applicable regulations", "done")
                 step_num = 3
 
@@ -4246,7 +4286,7 @@ CRITICAL: The SOURCE DOCUMENT contains the actual content you must base this pro
             yield _agent_step(step_num, steps, "Writing procedure content", "done")
 
             yield _agent_step(steps, steps, "Running quality review")
-            review = _call_claude(client,
+            task = asyncio.create_task(_call_claude_bg(client,
                 f"""You are a procedure quality reviewer. Review this draft procedure for:
 1. Completeness — are any standard sections missing?
 2. Clarity — are steps clear and unambiguous?
@@ -4260,7 +4300,11 @@ DRAFT:
 {('REGULATIONS:' + chr(10) + regulations[:5000]) if regulations else ''}
 
 If issues are found, list them briefly. If the document is good, say so.""",
-                "Review the draft and list any issues.", model=model)
+                "Review the draft and list any issues.", model=model))
+            while not task.done():
+                yield ":\n\n"
+                await asyncio.sleep(3)
+            review = task.result()
             yield _agent_step(steps, steps, "Running quality review", "done")
 
             if "issue" in review.lower() or "missing" in review.lower() or "should" in review.lower():
