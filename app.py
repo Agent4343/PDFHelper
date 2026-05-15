@@ -4112,6 +4112,7 @@ Use markdown with tables.""",
 
 class ProcedureWriterRequest(BaseModel):
     description: str = Field(max_length=5000)
+    source_doc_id: str = Field(default="", description="Primary document to base the procedure on")
     reference_doc_ids: list[str] = Field(default=[])
     include_regulations: bool = Field(default=True)
     model: str = Field(default="sonnet", pattern=r"^(sonnet|haiku)$")
@@ -4127,27 +4128,48 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, request: Request,
     current_user_id = getattr(request.state, "user_id", None)
     model = _resolve_agent_model(body.model)
 
-    ref_content = ""
-    ref_names = []
+    # Extract source document content (the document to base the procedure on)
+    source_content = ""
+    source_name = ""
     doc_hashes = []
-    if body.reference_doc_ids:
-        docs = db.query(DBDocument).filter(DBDocument.id.in_(body.reference_doc_ids)).all()
-        for doc in docs[:3]:
-            name = _decrypt_text(doc.filename)
-            ref_names.append(name)
-            doc_hashes.append(_get_doc_hash(doc))
-            pdf_bytes = _load_pdf_bytes(doc)
+    if body.source_doc_id:
+        source_doc = db.query(DBDocument).filter(DBDocument.id == body.source_doc_id).first()
+        if source_doc:
+            source_name = _decrypt_text(source_doc.filename)
+            doc_hashes.append(_get_doc_hash(source_doc))
+            pdf_bytes = _load_pdf_bytes(source_doc)
             structured = extract_structured_text(pdf_bytes)
-            text = ""
             for page_data in structured:
+                source_content += f"\n--- Page {page_data['page']} ---\n"
                 for block in page_data.get("blocks", []):
                     prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
-                    text += f"{prefix}{block['text']}\n"
-            if len(text) > 40000:
-                text = text[:40000] + "\n[... truncated ...]"
-            ref_content += f'\n--- REFERENCE: "{name}" ---\n{text}\n'
+                    source_content += f"{prefix}{block['text']}\n"
+            if len(source_content) > 60000:
+                source_content = source_content[:60000] + "\n[... truncated ...]"
 
-    cache_params = f"{body.description}|regs={body.include_regulations}"
+    # Extract reference documents (for style matching)
+    ref_content = ""
+    ref_names = []
+    if body.reference_doc_ids:
+        ref_ids = [rid for rid in body.reference_doc_ids if rid != body.source_doc_id]
+        if ref_ids:
+            docs = db.query(DBDocument).filter(DBDocument.id.in_(ref_ids)).all()
+            for doc in docs[:3]:
+                name = _decrypt_text(doc.filename)
+                ref_names.append(name)
+                doc_hashes.append(_get_doc_hash(doc))
+                pdf_bytes = _load_pdf_bytes(doc)
+                structured = extract_structured_text(pdf_bytes)
+                text = ""
+                for page_data in structured:
+                    for block in page_data.get("blocks", []):
+                        prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
+                        text += f"{prefix}{block['text']}\n"
+                if len(text) > 40000:
+                    text = text[:40000] + "\n[... truncated ...]"
+                ref_content += f'\n--- REFERENCE: "{name}" ---\n{text}\n'
+
+    cache_params = f"{body.description}|src={body.source_doc_id}|regs={body.include_regulations}"
     cache_key = _agent_cache_key("writer", model, doc_hashes or ["no-refs"], cache_params)
 
     cached = _check_agent_cache(db, cache_key, current_user_id)
@@ -4167,13 +4189,17 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, request: Request,
         full_doc = ""
         try:
             # Step 1: Research and outline
-            yield _agent_step(1, steps, "Researching and creating outline")
+            yield _agent_step(1, steps, "Analyzing document and creating outline")
             outline_prompt = f"Create a detailed outline for this procedure:\n\nDESCRIPTION: {body.description}"
+            if source_content:
+                outline_prompt += f'\n\nSOURCE DOCUMENT ("{source_name}") — base the procedure on this content:\n{source_content[:30000]}'
             if ref_content:
-                outline_prompt += f"\n\nREFERENCE PROCEDURES (match their style and structure):\n{ref_content[:20000]}"
-            outline = _call_claude(client,
-                "You are a technical procedure writer. Create a detailed section-by-section outline for the requested procedure. Include all standard sections (Purpose, Scope, Definitions, Responsibilities, Procedure Steps, Safety, Emergency, References). Note what content goes in each section.",
-                outline_prompt, model=model)
+                outline_prompt += f"\n\nREFERENCE PROCEDURES (match their style and structure):\n{ref_content[:15000]}"
+            outline_system = "You are a technical procedure writer. Create a detailed section-by-section outline for the requested procedure."
+            if source_content:
+                outline_system += " The user has provided a SOURCE DOCUMENT — your outline MUST be based on the actual content, topics, processes, and specifics from that document. Extract the real procedures, steps, equipment, roles, and safety information from it. Do NOT invent generic content — use what the document actually says."
+            outline_system += " Include all standard sections (Purpose, Scope, Definitions, Responsibilities, Procedure Steps, Safety, Emergency, References). Note what content goes in each section."
+            outline = _call_claude(client, outline_system, outline_prompt, model=model)
             yield _agent_step(1, steps, "Researching and creating outline", "done")
 
             regulations = ""
@@ -4194,6 +4220,8 @@ DESCRIPTION: {body.description}
 OUTLINE:
 {outline[:10000]}
 
+{('SOURCE DOCUMENT ("' + source_name + '") — base the procedure on this content:' + chr(10) + source_content[:40000]) if source_content else ''}
+
 {('APPLICABLE REGULATIONS:' + chr(10) + regulations[:10000]) if regulations else ''}
 
 {('REFERENCE PROCEDURES (match their style):' + chr(10) + ref_content[:15000]) if ref_content else ''}
@@ -4205,6 +4233,10 @@ Write a complete procedure document with:
 - Regulatory references where applicable
 - Standard sections: Purpose, Scope, Definitions, Responsibilities, Procedure, Safety Requirements, Emergency Procedures, References
 - Specific details (not generic placeholders)"""
+            if source_content:
+                write_system += f"""
+
+CRITICAL: The SOURCE DOCUMENT contains the actual content you must base this procedure on. Use the real processes, equipment names, roles, locations, safety requirements, and specific details from that document. Do NOT generate generic or hypothetical content — extract and organize what the source document actually describes into a well-structured procedure format."""
 
             for chunk in _stream_claude(client, write_system,
                 "Write the complete procedure document now.", max_tokens=CHAT_MAX_TOKENS * 3, model=model):
