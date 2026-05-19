@@ -592,7 +592,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(max_length=10000, description="The user's message")
+    message: str = Field(max_length=20000, description="The user's message")
     doc_ids: list[str] = Field(default=[], max_length=100, description="Document IDs to use as context (empty = all)")
     conversation_history: list[ChatMessage] = Field(default=[], max_length=200, description="Previous messages for context")
     session_id: str | None = Field(default=None, max_length=100, description="Chat session ID to continue (omit to create new)")
