@@ -3738,7 +3738,7 @@ def _resolve_agent_model(model_choice: str) -> str:
 
 
 def _call_claude(client, system: str, user_msg: str, tools=None, max_tokens=None, model=None):
-    """Synchronous Claude call, returns the text content."""
+    """Synchronous Claude call using streaming internally to avoid SDK timeout on long requests."""
     kwargs = dict(
         model=model or CHAT_MODEL,
         max_tokens=max_tokens or CHAT_MAX_TOKENS * 2,
@@ -3747,8 +3747,13 @@ def _call_claude(client, system: str, user_msg: str, tools=None, max_tokens=None
     )
     if tools:
         kwargs["tools"] = tools
-    resp = client.messages.create(**kwargs)
-    return "".join(b.text for b in resp.content if hasattr(b, "text"))
+    result = []
+    with client.messages.stream(**kwargs) as stream:
+        for event in stream:
+            if hasattr(event, 'type') and event.type == 'content_block_delta':
+                if hasattr(event.delta, 'text'):
+                    result.append(event.delta.text)
+    return "".join(result)
 
 
 async def _call_claude_bg(client, system, user_msg, tools=None, max_tokens=None, model=None):
