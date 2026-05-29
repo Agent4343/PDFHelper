@@ -10,10 +10,16 @@ RUN apt-get update && \
         tesseract-ocr-eng \
         libpq5 \
         libpango-1.0-0 \
+        libpangoft2-1.0-0 \
         libpangocairo-1.0-0 \
         libgdk-pixbuf2.0-0 \
+        libcairo2 \
         libffi-dev \
-        libcairo2 && \
+        libglib2.0-0 \
+        libharfbuzz0b \
+        libfontconfig1 \
+        fonts-dejavu-core \
+        gcc && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
