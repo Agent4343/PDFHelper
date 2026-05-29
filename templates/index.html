@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>PDFHelper</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;
@@ -3631,23 +3633,52 @@ async function duplicatePoster(){
 
 async function downloadPosterPDF(){
   if(!currentPosterId){toast('No poster selected','error');return;}
+  var iframe=document.getElementById('poster-iframe');
+  if(!iframe||!iframe.srcdoc){toast('No poster to download','error');return;}
   toast('Generating PDF...');
   try{
-    var r=await fetch(API+'/posters/'+currentPosterId+'/pdf',{headers:headers()});
-    if(!r.ok){var err=await r.json().catch(function(){return {};});throw new Error(detailStr(err.detail)||'PDF generation failed');}
-    var blob=await r.blob();
-    var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');
-    var disposition=r.headers.get('content-disposition')||'';
-    var match=disposition.match(/filename="(.+?)"/);
-    a.download=match?match[1]:'poster.pdf';
-    a.href=url;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    // Render poster in a hidden container at full size
+    var container=document.createElement('div');
+    container.style.cssText='position:fixed;left:-9999px;top:0;z-index:-1;';
+    document.body.appendChild(container);
+    var shadow=container.attachShadow({mode:'open'});
+    // Parse the poster HTML and inject into shadow DOM
+    var parser=new DOMParser();
+    var doc=parser.parseFromString(iframe.srcdoc,'text/html');
+    // Move styles into shadow
+    var style=document.createElement('style');
+    doc.querySelectorAll('style').forEach(function(s){style.textContent+=s.textContent;});
+    shadow.appendChild(style);
+    // Move body content
+    var wrapper=document.createElement('div');
+    wrapper.innerHTML=doc.body.innerHTML;
+    // Copy body styles
+    var bodyStyle=doc.body.getAttribute('style');
+    if(bodyStyle) wrapper.setAttribute('style',bodyStyle);
+    // Get dimensions from CSS
+    var bodyCSS=style.textContent.match(/body\s*\{[^}]*width\s*:\s*([^;]+)/);
+    var bodyH=style.textContent.match(/body\s*\{[^}]*height\s*:\s*([^;]+)/);
+    if(bodyCSS) wrapper.style.width=bodyCSS[1].trim();
+    if(bodyH) wrapper.style.height=bodyH[1].trim();
+    shadow.appendChild(wrapper);
+
+    await new Promise(function(r){setTimeout(r,200);});
+    var canvas=await html2canvas(wrapper,{scale:2,useCORS:true,backgroundColor:'#ffffff'});
+    document.body.removeChild(container);
+
+    var imgData=canvas.toDataURL('image/jpeg',0.95);
+    var pxW=canvas.width;
+    var pxH=canvas.height;
+    // Convert to PDF points (72 DPI, but we rendered at 2x)
+    var pdfW=pxW/2*72/96;
+    var pdfH=pxH/2*72/96;
+    var pdf=new jspdf.jsPDF({orientation:pdfW>pdfH?'landscape':'portrait',unit:'pt',format:[pdfW,pdfH]});
+    pdf.addImage(imgData,'JPEG',0,0,pdfW,pdfH);
+    var title=document.getElementById('poster-editor-title').textContent||'poster';
+    var safeName=title.replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_').substring(0,50)||'poster';
+    pdf.save(safeName+'.pdf');
     toast('PDF downloaded!');
-  }catch(e){toast('Error: '+e.message,'error');}
+  }catch(e){toast('Error generating PDF: '+e.message,'error');console.error(e);}
 }
 
 function printPoster(){
