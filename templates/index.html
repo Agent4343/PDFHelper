@@ -1062,7 +1062,8 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
           <h3 id="poster-editor-title" style="margin:0">Poster Preview</h3>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
             <button class="btn" onclick="duplicatePoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem;background:transparent;border:1px solid var(--border);color:var(--muted)">Duplicate</button>
-            <button class="btn btn-primary" onclick="downloadPosterPDF()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Download PDF</button>
+            <button class="btn btn-primary" onclick="downloadPosterHTML()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Download HTML</button>
+            <button class="btn" onclick="downloadPosterPDF()" style="padding:0.4rem 0.8rem;font-size:0.82rem;background:transparent;border:1px solid var(--border);color:var(--muted)">Download PDF</button>
             <button class="btn" onclick="printPoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem;background:transparent;border:1px solid var(--border);color:var(--muted)">Print</button>
             <button class="btn btn-danger" onclick="deletePoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Delete</button>
           </div>
@@ -3631,6 +3632,24 @@ async function duplicatePoster(){
   }catch(e){toast('Error duplicating poster','error');}
 }
 
+function downloadPosterHTML(){
+  var iframe=document.getElementById('poster-iframe');
+  if(!iframe||!iframe.srcdoc){toast('No poster to download','error');return;}
+  var html=iframe.srcdoc;
+  var blob=new Blob([html],{type:'text/html'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  var title=document.getElementById('poster-editor-title').textContent||'poster';
+  var safeName=title.replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'_').substring(0,50)||'poster';
+  a.download=safeName+'.html';
+  a.href=url;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  toast('HTML downloaded — open in any browser to view or print');
+}
+
 async function downloadPosterPDF(){
   if(!currentPosterId){toast('No poster selected','error');return;}
   var iframe=document.getElementById('poster-iframe');
@@ -3667,11 +3686,11 @@ async function downloadPosterPDF(){
     document.body.removeChild(container);
 
     var imgData=canvas.toDataURL('image/jpeg',0.95);
-    var pxW=canvas.width;
-    var pxH=canvas.height;
-    // Convert to PDF points (72 DPI, but we rendered at 2x)
-    var pdfW=pxW/2*72/96;
-    var pdfH=pxH/2*72/96;
+    // Use exact poster pixel dimensions at 96 DPI to get PDF points
+    var posterW=parseInt(wrapper.style.width)||canvas.width/2;
+    var posterH=parseInt(wrapper.style.height)||canvas.height/2;
+    var pdfW=posterW*72/96;
+    var pdfH=posterH*72/96;
     var pdf=new jspdf.jsPDF({orientation:pdfW>pdfH?'landscape':'portrait',unit:'pt',format:[pdfW,pdfH]});
     pdf.addImage(imgData,'JPEG',0,0,pdfW,pdfH);
     var title=document.getElementById('poster-editor-title').textContent||'poster';
