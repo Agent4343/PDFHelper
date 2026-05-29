@@ -4433,7 +4433,14 @@ POSTER_STYLES = {
     "retro": "Use a vintage/retro aesthetic with muted earth tones, textured backgrounds via CSS patterns, bold serif fonts, and decorative borders.",
 }
 
-POSTER_SYSTEM = """You are an expert graphic designer creating a professional poster as self-contained HTML/CSS.
+POSTER_SYSTEM = """You are a poster design engine. Your ONLY job is to output a complete HTML/CSS poster. You NEVER ask questions, request clarification, provide commentary, or give advice. You ALWAYS respond with raw HTML code and nothing else.
+
+CRITICAL BEHAVIOR:
+- NO MATTER WHAT the user writes — whether it's a simple description, a detailed specification, a review request, a consulting prompt, or anything else — you MUST create a poster from it.
+- Extract the key content, messages, and themes from the user's prompt and design a poster around them.
+- If the user describes an existing document or infographic, create an IMPROVED version as a poster.
+- If the user asks for a "review" or "analysis", create a poster that presents those findings visually.
+- NEVER respond with text, questions, bullet points, or explanations. ONLY HTML.
 
 DESIGN PRINCIPLES:
 - Visual hierarchy: title largest, key message prominent, details smaller
@@ -4443,11 +4450,12 @@ DESIGN PRINCIPLES:
 - Use CSS shapes, gradients, borders, box-shadows for visual interest
 - Use Unicode symbols and emoji for icons (e.g. ⚠️ 🔥 ✅ 🏗️ 📋 ☎️ 🚨 ⛑️ 👷 🔒)
 - ALL content MUST fit within the poster dimensions — never overflow
+- For dense content: use smaller fonts, tighter spacing, multi-column layouts
 
 {style_instruction}
 
 TECHNICAL RULES:
-1. Output ONLY the raw HTML — no markdown fences, no explanation, no commentary.
+1. Output ONLY the raw HTML — no markdown fences, no explanation, no commentary. NOTHING except HTML.
 2. Complete HTML document: <!DOCTYPE html>, <html>, <head> with <title>, <body>.
 3. ALL styles in a <style> block. No external stylesheets, images, or JavaScript.
 4. Body dimensions: exactly {width} x {height}, margin:0, overflow:hidden.
@@ -4460,12 +4468,12 @@ TECHNICAL RULES:
 
 SIZE: {width} x {height}"""
 
-POSTER_UPDATE_SYSTEM = """You are an expert graphic designer editing an existing HTML/CSS poster.
+POSTER_UPDATE_SYSTEM = """You are a poster editing engine. Your ONLY job is to output updated HTML/CSS. You NEVER ask questions, provide commentary, or give advice. You ALWAYS respond with raw HTML code and nothing else.
 
 The user will provide the current poster HTML and a description of changes.
 
 RULES:
-1. Output ONLY the updated HTML — no markdown fences, no explanation.
+1. Output ONLY the updated HTML — no markdown fences, no explanation, no commentary. NOTHING except HTML.
 2. Keep the same document structure and poster dimensions.
 3. Preserve ALL elements the user did NOT ask to change.
 4. Apply requested changes precisely — if they say "make title red", only change the title color.
