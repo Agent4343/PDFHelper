@@ -610,12 +610,13 @@ class LoginRequest(BaseModel):
 
 
 class PosterCreateRequest(BaseModel):
-    prompt: str = Field(max_length=5000, description="Describe the poster you want to create")
-    size: str = Field(default="letter", pattern=r"^(letter|a4|a3|wide)$")
+    prompt: str = Field(max_length=30000, description="Describe the poster you want to create")
+    size: str = Field(default="letter", pattern=r"^(letter|a4|a3|wide|square|banner)$")
+    style: str = Field(default="", max_length=50, description="Optional style preset")
     model: str = Field(default="haiku", pattern=r"^(sonnet|haiku)$")
 
 class PosterUpdateRequest(BaseModel):
-    prompt: str = Field(max_length=5000, description="Describe what to change on the poster")
+    prompt: str = Field(max_length=30000, description="Describe what to change on the poster")
     model: str = Field(default="haiku", pattern=r"^(sonnet|haiku)$")
 
 
@@ -4419,36 +4420,55 @@ POSTER_SIZES = {
     "a4": {"width": "210mm", "height": "297mm", "px_w": 794, "px_h": 1123},
     "a3": {"width": "297mm", "height": "420mm", "px_w": 1123, "px_h": 1587},
     "wide": {"width": "11in", "height": "8.5in", "px_w": 1056, "px_h": 816},
+    "square": {"width": "10in", "height": "10in", "px_w": 960, "px_h": 960},
+    "banner": {"width": "24in", "height": "8in", "px_w": 2304, "px_h": 768},
 }
 
-POSTER_SYSTEM = """You are a professional graphic designer that creates stunning posters as self-contained HTML/CSS.
+POSTER_STYLES = {
+    "bold": "Use strong contrasting colors (black/yellow, red/white), thick borders, large impactful typography, industrial feel.",
+    "clean": "Use a clean modern aesthetic with plenty of white space, subtle shadows, thin lines, and a muted professional color palette.",
+    "safety": "Use standard safety colors: red for danger/prohibition, yellow for caution, blue for mandatory, green for safe. Include ISO-style safety symbols using Unicode. Add hazard borders with diagonal stripes.",
+    "corporate": "Use a polished corporate style with navy/gray tones, structured grid layout, subtle gradients, and professional serif fonts for headings.",
+    "vibrant": "Use bright, eye-catching colors with bold gradients, rounded shapes, playful typography, and high visual energy.",
+    "retro": "Use a vintage/retro aesthetic with muted earth tones, textured backgrounds via CSS patterns, bold serif fonts, and decorative borders.",
+}
 
-RULES:
-1. Output ONLY the HTML code — no markdown fences, no explanation, no commentary.
-2. The HTML must be a complete document with <!DOCTYPE html>, <html>, <head>, <body>.
-3. All styles MUST be in a <style> block in <head>. No external resources, no JavaScript.
-4. Use only web-safe fonts and CSS — the poster must render identically in any browser.
-5. Use bold colors, clear hierarchy, and professional layout. Make it visually striking.
-6. The poster dimensions should fill exactly {width} x {height}.
-7. Use the body as the poster canvas: set exact width/height, margin:0, overflow:hidden.
-8. Include visual elements using CSS: gradients, borders, shapes, shadows, icons via Unicode/emoji.
-9. Text must be large, readable, and well-spaced. Prefer uppercase for headings.
-10. If the prompt mentions safety, compliance, or procedures, use appropriate warning colors and symbols.
+POSTER_SYSTEM = """You are an expert graphic designer creating a professional poster as self-contained HTML/CSS.
+
+DESIGN PRINCIPLES:
+- Visual hierarchy: title largest, key message prominent, details smaller
+- High contrast for readability — never place light text on light backgrounds
+- Balanced whitespace — don't cram everything together
+- Consistent alignment and spacing throughout
+- Use CSS shapes, gradients, borders, box-shadows for visual interest
+- Use Unicode symbols and emoji for icons (e.g. ⚠️ 🔥 ✅ 🏗️ 📋 ☎️ 🚨 ⛑️ 👷 🔒)
+
+{style_instruction}
+
+TECHNICAL RULES:
+1. Output ONLY the raw HTML — no markdown fences, no explanation, no commentary.
+2. Complete HTML document: <!DOCTYPE html>, <html>, <head> with <title>, <body>.
+3. ALL styles in a <style> block. No external stylesheets, images, or JavaScript.
+4. Body dimensions: exactly {width} x {height}, margin:0, overflow:hidden.
+5. Use web-safe fonts: Arial, Georgia, Impact, Courier New, Trebuchet MS, Verdana.
+6. For print quality: use pt/in/cm units for text sizing where appropriate.
+7. Add a <title> tag that summarizes the poster content in 3-6 words.
 
 SIZE: {width} x {height}"""
 
-POSTER_UPDATE_SYSTEM = """You are a professional graphic designer editing an existing HTML/CSS poster.
+POSTER_UPDATE_SYSTEM = """You are an expert graphic designer editing an existing HTML/CSS poster.
 
-The user will provide the current poster HTML and a description of changes they want.
+The user will provide the current poster HTML and a description of changes.
 
 RULES:
-1. Output ONLY the updated HTML code — no markdown fences, no explanation.
-2. Keep the same document structure (<!DOCTYPE html>, <html>, <head>, <body>).
-3. Preserve elements the user did NOT ask to change.
-4. Apply the requested changes precisely.
-5. Maintain professional design quality.
-6. All styles must stay in <style> block. No external resources, no JavaScript.
-7. The poster dimensions must remain the same."""
+1. Output ONLY the updated HTML — no markdown fences, no explanation.
+2. Keep the same document structure and poster dimensions.
+3. Preserve ALL elements the user did NOT ask to change.
+4. Apply requested changes precisely — if they say "make title red", only change the title color.
+5. Maintain or improve design quality — don't break alignment, spacing, or contrast.
+6. All styles stay in <style> block. No external resources, no JavaScript.
+7. If the user asks to add content, integrate it naturally into the existing layout.
+8. Keep the <title> tag updated if the poster topic changes."""
 
 
 @app.post("/posters", dependencies=[Depends(verify_api_key)])
@@ -4463,7 +4483,11 @@ async def create_poster(body: PosterCreateRequest, request: Request, db=Depends(
     model = _resolve_agent_model(body.model)
     size = POSTER_SIZES.get(body.size, POSTER_SIZES["letter"])
 
-    system = POSTER_SYSTEM.format(width=size["width"], height=size["height"])
+    style_instruction = ""
+    if body.style and body.style in POSTER_STYLES:
+        style_instruction = f"STYLE: {body.style.upper()}\n{POSTER_STYLES[body.style]}"
+
+    system = POSTER_SYSTEM.format(width=size["width"], height=size["height"], style_instruction=style_instruction)
 
     async def generate():
         import asyncio
@@ -4618,3 +4642,32 @@ async def delete_poster(poster_id: str, request: Request, db=Depends(get_db)):
     db.delete(poster)
     db.commit()
     return {"deleted": True}
+
+
+@app.post("/posters/{poster_id}/duplicate", dependencies=[Depends(verify_api_key)])
+async def duplicate_poster(poster_id: str, request: Request, db=Depends(get_db)):
+    """Duplicate an existing poster."""
+    current_user_id = getattr(request.state, "user_id", None)
+    poster = db.query(DBPoster).filter(DBPoster.id == poster_id).first()
+    if not poster:
+        raise HTTPException(status_code=404, detail="Poster not found")
+    if current_user_id and poster.user_id and poster.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    now = datetime.now(timezone.utc)
+    orig_title = _decrypt_text(poster.title)
+    new_poster = DBPoster(
+        id=str(uuid.uuid4()),
+        user_id=current_user_id,
+        title=_encrypt_text(f"{orig_title} (Copy)"),
+        prompt_history=poster.prompt_history,
+        html_content=poster.html_content,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(new_poster)
+    db.commit()
+    return {
+        "id": new_poster.id,
+        "title": f"{orig_title} (Copy)",
+    }

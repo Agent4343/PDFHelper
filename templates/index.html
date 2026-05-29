@@ -191,7 +191,7 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .chat-action-btn:hover{border-color:var(--accent);color:var(--accent)}
 .chat-action-btn:disabled{opacity:0.4;cursor:not-allowed}
 #poster-preview{min-height:200px;position:relative}
-#poster-iframe{width:816px;height:1056px;max-width:100%}
+#poster-iframe{width:816px;height:1056px}
 .poster-item{display:flex;align-items:center;justify-content:space-between;padding:0.6rem 0;
   border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}
 .poster-item:hover{background:#ffffff08}
@@ -993,22 +993,53 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
     <div class="page" id="page-posters">
       <h2>Poster Generator</h2>
       <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
-        <p style="font-size:0.9rem"><strong>What does this do?</strong> Create professional posters using AI. Describe what you want and the AI designs it. Then refine it with follow-up prompts until it's perfect.</p>
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> Create professional posters using AI. Describe what you want — include all text, colors, layout ideas — and the AI designs it as a printable poster. Refine with follow-up prompts until it's perfect. Supports up to 30,000 characters of detail.</p>
+      </div>
+
+      <!-- Quick templates -->
+      <div class="card">
+        <h3>Quick Templates</h3>
+        <p style="color:var(--muted);font-size:0.85rem;margin-bottom:0.75rem">Click a template to pre-fill the prompt, then customize before generating.</p>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap" id="poster-templates">
+          <button class="btn" onclick="usePosterTemplate('safety')" style="background:#dc262620;color:#ef4444;border:1px solid #ef444440;font-size:0.82rem">⚠️ Safety Warning</button>
+          <button class="btn" onclick="usePosterTemplate('ppe')" style="background:#2563eb20;color:#3b82f6;border:1px solid #3b82f640;font-size:0.82rem">⛑️ PPE Required</button>
+          <button class="btn" onclick="usePosterTemplate('emergency')" style="background:#dc262620;color:#ef4444;border:1px solid #ef444440;font-size:0.82rem">🚨 Emergency Info</button>
+          <button class="btn" onclick="usePosterTemplate('procedure')" style="background:#22c55e20;color:#22c55e;border:1px solid #22c55e40;font-size:0.82rem">📋 Procedure Steps</button>
+          <button class="btn" onclick="usePosterTemplate('training')" style="background:#f59e0b20;color:#f59e0b;border:1px solid #f59e0b40;font-size:0.82rem">📖 Training Reminder</button>
+          <button class="btn" onclick="usePosterTemplate('notice')" style="background:#8b5cf620;color:#8b5cf6;border:1px solid #8b5cf640;font-size:0.82rem">📌 General Notice</button>
+        </div>
       </div>
 
       <!-- Create new poster -->
       <div class="card">
         <h3>Create New Poster</h3>
-        <label for="poster-prompt">Describe your poster</label>
-        <textarea id="poster-prompt" rows="3" placeholder="e.g. Safety poster about wearing PPE on the job site, bright colors, include hard hat and safety glasses icons..." style="margin-bottom:0.75rem"></textarea>
-        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem">
+        <label for="poster-prompt">Describe your poster <span id="poster-char-count" style="float:right;color:var(--muted);font-weight:400">0 / 30,000</span></label>
+        <textarea id="poster-prompt" rows="5" maxlength="30000" placeholder="Describe everything you want on the poster: title, key messages, text content, colors, symbols, layout preferences, phone numbers, dates, company name, logos (described), etc.
+
+Example: Create a safety poster about confined space entry. Title: 'DANGER - CONFINED SPACE' in white on red. Include the 5 steps: 1) Get a permit, 2) Test the air, 3) Use ventilation, 4) Wear harness, 5) Have a standby person. Add warning symbols. Include emergency number 555-0123. Company name 'ABC Industries' at the bottom."
+          style="margin-bottom:0.75rem" oninput="updatePosterCharCount()"></textarea>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem;align-items:flex-end">
           <div>
             <label for="poster-size">Size</label>
             <select id="poster-size" style="padding:0.55rem 0.75rem;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.88rem">
               <option value="letter">Letter (8.5 x 11in)</option>
               <option value="a4">A4</option>
               <option value="a3">A3 (Large)</option>
-              <option value="wide">Wide (11 x 8.5in)</option>
+              <option value="wide">Wide (Landscape)</option>
+              <option value="square">Square (10 x 10in)</option>
+              <option value="banner">Banner (24 x 8in)</option>
+            </select>
+          </div>
+          <div>
+            <label for="poster-style">Style</label>
+            <select id="poster-style" style="padding:0.55rem 0.75rem;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.88rem">
+              <option value="">Auto (AI decides)</option>
+              <option value="bold">Bold & Industrial</option>
+              <option value="clean">Clean & Modern</option>
+              <option value="safety">Safety Standard</option>
+              <option value="corporate">Corporate</option>
+              <option value="vibrant">Vibrant & Colorful</option>
+              <option value="retro">Retro / Vintage</option>
             </select>
           </div>
           <div>
@@ -1027,21 +1058,22 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
       <div class="card" id="poster-editor-card" style="display:none">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem">
           <h3 id="poster-editor-title" style="margin:0">Poster Preview</h3>
-          <div style="display:flex;gap:0.5rem">
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+            <button class="btn" onclick="duplicatePoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem;background:transparent;border:1px solid var(--border);color:var(--muted)">Duplicate</button>
             <button class="btn btn-primary" onclick="printPoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Print / Save PDF</button>
             <button class="btn btn-danger" onclick="deletePoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Delete</button>
           </div>
         </div>
-        <div id="poster-preview" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fff;margin-bottom:0.75rem;display:flex;justify-content:center">
+        <div id="poster-preview" style="border:1px solid var(--border);border-radius:8px;overflow:auto;background:#fff;margin-bottom:0.75rem;display:flex;justify-content:center;max-height:70vh">
           <iframe id="poster-iframe" style="border:none;transform-origin:top center" sandbox="allow-same-origin"></iframe>
         </div>
         <div style="margin-bottom:0.5rem">
-          <label>Edit prompt history</label>
-          <div id="poster-prompt-history" style="font-size:0.82rem;color:var(--muted);max-height:80px;overflow-y:auto;margin-bottom:0.5rem"></div>
+          <label>Prompt history <span id="poster-history-count" style="color:var(--muted);font-weight:400"></span></label>
+          <div id="poster-prompt-history" style="font-size:0.82rem;color:var(--muted);max-height:120px;overflow-y:auto;margin-bottom:0.5rem;padding:0.5rem;background:var(--code);border-radius:6px"></div>
         </div>
-        <label for="poster-edit-prompt">Describe changes</label>
+        <label for="poster-edit-prompt">Describe changes <span id="poster-edit-char-count" style="float:right;color:var(--muted);font-weight:400">0 / 30,000</span></label>
         <div style="display:flex;gap:0.5rem">
-          <textarea id="poster-edit-prompt" rows="2" placeholder="e.g. Make the title bigger, change background to blue, add a phone number at the bottom..." style="flex:1"></textarea>
+          <textarea id="poster-edit-prompt" rows="3" maxlength="30000" placeholder="e.g. Make the title bigger and red, change background to dark blue, add emergency phone number 555-0199 at the bottom, add a border with yellow/black stripes..." style="flex:1" oninput="updateEditCharCount()"></textarea>
           <button class="btn btn-primary" id="poster-update-btn" onclick="updatePoster()" style="align-self:flex-end">Update</button>
         </div>
         <div id="poster-update-status" style="margin-top:0.5rem"></div>
@@ -3388,7 +3420,36 @@ function renderMarkdown(txt){
 
 /* ---- Poster Generator ---- */
 var currentPosterId=null;
-var posterSizes={letter:{w:816,h:1056},a4:{w:794,h:1123},a3:{w:1123,h:1587},wide:{w:1056,h:816}};
+var posterSizes={letter:{w:816,h:1056},a4:{w:794,h:1123},a3:{w:1123,h:1587},wide:{w:1056,h:816},square:{w:960,h:960},banner:{w:2304,h:768}};
+
+var posterTemplates={
+  safety:'Create a safety warning poster with a bold red and yellow color scheme. Title: "DANGER" at the top in large white text on a red bar. Include warning triangle symbols (⚠️). Add space for 3-5 safety rules listed with bullet points. Include "FAILURE TO COMPLY MAY RESULT IN SERIOUS INJURY" at the bottom. Add hazard stripe borders (yellow and black diagonal stripes).',
+  ppe:'Create a PPE (Personal Protective Equipment) required poster. Title: "PPE REQUIRED IN THIS AREA" in bold white on blue. Show a grid of required PPE items with their Unicode icons and labels: Hard Hat (⛑️), Safety Glasses (🥽), High-Vis Vest (🦺), Steel-Toe Boots (🥾), Gloves (🧤), Hearing Protection (🎧). Add "NO EXCEPTIONS" at the bottom in red.',
+  emergency:'Create an emergency information poster. Title: "EMERGENCY INFORMATION" in white on red. Include sections for: Emergency Number (call 911), Fire Assembly Point, First Aid Kit Location, Fire Extinguisher Location, Emergency Coordinator name and phone. Use clear icons for each section. Add "IN CASE OF EMERGENCY, REMAIN CALM" at the bottom.',
+  procedure:'Create a step-by-step procedure poster. Title: "STANDARD OPERATING PROCEDURE" in white on dark blue. Include numbered steps 1-6 with space for procedure details. Each step should have a number in a colored circle and description text. Add a "COMPLETED BY:" signature line and date field at the bottom. Include a header area for procedure number and revision date.',
+  training:'Create a training reminder poster. Title: "TRAINING REMINDER" in dark text on a bright yellow background. Include sections for: Required Training, Due Date, Who Must Attend, Location, Duration. Add a checklist-style layout with checkbox symbols (☐). Include "COMPLIANCE IS MANDATORY" and contact information at the bottom.',
+  notice:'Create a general workplace notice poster. Title: "NOTICE" in large bold text on a professional blue header. Include a clean body area with good spacing for announcement text. Add sections for: Effective Date, Issued By, Contact For Questions. Use a clean corporate style with subtle borders and professional typography.'
+};
+
+function usePosterTemplate(key){
+  var t=posterTemplates[key];
+  if(!t) return;
+  document.getElementById('poster-prompt').value=t;
+  updatePosterCharCount();
+  document.getElementById('poster-prompt').focus();
+  if(key==='safety'||key==='ppe'||key==='emergency') document.getElementById('poster-style').value='safety';
+  else if(key==='procedure'||key==='notice') document.getElementById('poster-style').value='corporate';
+  else document.getElementById('poster-style').value='bold';
+}
+
+function updatePosterCharCount(){
+  var v=document.getElementById('poster-prompt').value;
+  document.getElementById('poster-char-count').textContent=v.length.toLocaleString()+' / 30,000';
+}
+function updateEditCharCount(){
+  var v=document.getElementById('poster-edit-prompt').value;
+  document.getElementById('poster-edit-char-count').textContent=v.length.toLocaleString()+' / 30,000';
+}
 
 async function loadPosterList(){
   var el=document.getElementById('poster-list');
@@ -3403,7 +3464,7 @@ async function loadPosterList(){
       var d=p.updated_at?new Date(p.updated_at).toLocaleDateString():'';
       return '<div class="poster-item" onclick="loadPoster(\''+p.id+'\')">'+
         '<div><span class="poster-item-title">'+escHtml(p.title)+'</span>'+
-        '<span style="margin-left:8px;font-size:0.78rem;color:var(--muted)">'+p.prompt_count+' prompt(s)</span></div>'+
+        '<span style="margin-left:8px;font-size:0.78rem;color:var(--muted)">'+p.prompt_count+' edit(s)</span></div>'+
         '<span class="poster-item-date">'+d+'</span></div>';
     }).join('');
   }catch(e){el.innerHTML='<span style="color:var(--red)">Error loading posters</span>';}
@@ -3424,30 +3485,63 @@ function showPosterPreview(html,title,prompts){
   document.getElementById('poster-editor-title').textContent=title||'Poster Preview';
   var iframe=document.getElementById('poster-iframe');
   iframe.srcdoc=html;
-  // Scale iframe to fit container
   var container=document.getElementById('poster-preview');
-  setTimeout(function(){
+  iframe.onload=function(){
     var cw=container.clientWidth-2;
-    var iw=iframe.clientWidth||816;
+    var iw=iframe.scrollWidth||iframe.clientWidth||816;
+    var ih=iframe.scrollHeight||iframe.clientHeight||1056;
     if(iw>cw){
       var scale=cw/iw;
       iframe.style.transform='scale('+scale+')';
-      iframe.style.height=(iframe.clientHeight*scale)+'px';
+      iframe.style.transformOrigin='top center';
+      iframe.style.width=iw+'px';
+      iframe.style.height=ih+'px';
+      container.style.height=Math.ceil(ih*scale)+4+'px';
     }else{
       iframe.style.transform='none';
+      iframe.style.width=iw+'px';
+      iframe.style.height=ih+'px';
+      container.style.height='auto';
     }
-  },100);
-  // Show prompt history
+  };
+  document.getElementById('poster-editor-card').scrollIntoView({behavior:'smooth',block:'start'});
   var histEl=document.getElementById('poster-prompt-history');
+  var countEl=document.getElementById('poster-history-count');
   if(prompts&&prompts.length){
-    histEl.innerHTML=prompts.map(function(p,i){return '<div style="margin-bottom:4px"><strong>'+(i+1)+'.</strong> '+escHtml(p)+'</div>';}).join('');
-  }else{histEl.innerHTML='';}
+    countEl.textContent='('+prompts.length+' prompt'+(prompts.length>1?'s':'')+')';
+    histEl.innerHTML=prompts.map(function(p,i){
+      var label=i===0?'Original':'Edit #'+i;
+      return '<div style="margin-bottom:6px;padding:4px 0;'+(i>0?'border-top:1px solid var(--border);':'')+'"><strong style="color:var(--accent)">'+label+':</strong> '+escHtml(p)+'</div>';
+    }).join('');
+  }else{histEl.innerHTML='';countEl.textContent='';}
+}
+
+function readSSE(response,onEvent,onDone,onError){
+  var reader=response.body.getReader();
+  var decoder=new TextDecoder();
+  var buffer='';
+  function pump(){
+    reader.read().then(function(result){
+      if(result.done){if(onDone)onDone();return;}
+      buffer+=decoder.decode(result.value,{stream:true});
+      var lines=buffer.split('\n');
+      buffer=lines.pop();
+      for(var i=0;i<lines.length;i++){
+        var line=lines[i].trim();
+        if(!line.startsWith('data: ')) continue;
+        try{var evt=JSON.parse(line.slice(6));onEvent(evt);}catch(e){}
+      }
+      pump();
+    }).catch(function(e){if(onError)onError(e);});
+  }
+  pump();
 }
 
 async function createPoster(){
   var prompt=document.getElementById('poster-prompt').value.trim();
   if(!prompt){toast('Enter a description for your poster','error');return;}
   var size=document.getElementById('poster-size').value;
+  var style=document.getElementById('poster-style').value;
   var model=document.getElementById('poster-model').value;
   var btn=document.getElementById('poster-create-btn');
   var status=document.getElementById('poster-create-status');
@@ -3455,39 +3549,26 @@ async function createPoster(){
   status.innerHTML='<div class="loading-overlay" style="position:static;background:transparent;padding:0.5rem 0"><div class="spinner"></div><span>Designing your poster...</span></div>';
 
   try{
-    var r=await fetch(API+'/posters',{method:'POST',headers:headers(true),body:JSON.stringify({prompt:prompt,size:size,model:model})});
+    var r=await fetch(API+'/posters',{method:'POST',headers:headers(true),body:JSON.stringify({prompt:prompt,size:size,style:style,model:model})});
     if(!r.ok){var err=await r.json().catch(function(){return {};});throw new Error(detailStr(err.detail)||'Request failed');}
-    var reader=r.body.getReader();
-    var decoder=new TextDecoder();
-    var buffer='';
-    while(true){
-      var chunk=await reader.read();
-      if(chunk.done) break;
-      buffer+=decoder.decode(chunk.value,{stream:true});
-      var lines=buffer.split('\n');
-      buffer=lines.pop();
-      for(var i=0;i<lines.length;i++){
-        var line=lines[i].trim();
-        if(!line.startsWith('data: ')) continue;
-        try{
-          var evt=JSON.parse(line.slice(6));
-          if(evt.type==='status') status.innerHTML='<div style="color:var(--muted);font-size:0.88rem">'+escHtml(evt.message)+'</div>';
-          if(evt.type==='result'){
-            currentPosterId=evt.poster_id;
-            showPosterPreview(evt.html,evt.title,[prompt]);
-            status.innerHTML='<div style="color:var(--green);font-size:0.88rem">Poster created!</div>';
-            document.getElementById('poster-prompt').value='';
-            loadPosterList();
-            // Set iframe dimensions based on size
-            var dims=posterSizes[size]||posterSizes.letter;
-            var iframe=document.getElementById('poster-iframe');
-            iframe.style.width=dims.w+'px';
-            iframe.style.height=dims.h+'px';
-          }
-          if(evt.type==='done') break;
-        }catch(e){}
+    readSSE(r,function(evt){
+      if(evt.type==='status') status.innerHTML='<div style="color:var(--muted);font-size:0.88rem">'+escHtml(evt.message)+'</div>';
+      if(evt.type==='result'){
+        currentPosterId=evt.poster_id;
+        var dims=posterSizes[size]||posterSizes.letter;
+        var iframe=document.getElementById('poster-iframe');
+        iframe.style.width=dims.w+'px';
+        iframe.style.height=dims.h+'px';
+        showPosterPreview(evt.html,evt.title,[prompt]);
+        status.innerHTML='<div style="color:var(--green);font-size:0.88rem">Poster created!</div>';
+        document.getElementById('poster-prompt').value='';
+        updatePosterCharCount();
+        loadPosterList();
       }
-    }
+    },null,function(e){
+      status.innerHTML='<div style="color:var(--red);font-size:0.88rem">Error: Connection lost</div>';
+      btn.disabled=false;
+    });
   }catch(e){status.innerHTML='<div style="color:var(--red);font-size:0.88rem">Error: '+escHtml(e.message)+'</div>';}
   btn.disabled=false;
 }
@@ -3505,33 +3586,19 @@ async function updatePoster(){
   try{
     var r=await fetch(API+'/posters/'+currentPosterId+'/update',{method:'POST',headers:headers(true),body:JSON.stringify({prompt:prompt,model:model})});
     if(!r.ok){var err=await r.json().catch(function(){return {};});throw new Error(detailStr(err.detail)||'Request failed');}
-    var reader=r.body.getReader();
-    var decoder=new TextDecoder();
-    var buffer='';
-    while(true){
-      var chunk=await reader.read();
-      if(chunk.done) break;
-      buffer+=decoder.decode(chunk.value,{stream:true});
-      var lines=buffer.split('\n');
-      buffer=lines.pop();
-      for(var i=0;i<lines.length;i++){
-        var line=lines[i].trim();
-        if(!line.startsWith('data: ')) continue;
-        try{
-          var evt=JSON.parse(line.slice(6));
-          if(evt.type==='status') status.innerHTML='<div style="color:var(--muted);font-size:0.88rem">'+escHtml(evt.message)+'</div>';
-          if(evt.type==='result'){
-            showPosterPreview(evt.html,evt.title,null);
-            status.innerHTML='<div style="color:var(--green);font-size:0.88rem">Poster updated!</div>';
-            document.getElementById('poster-edit-prompt').value='';
-            loadPosterList();
-            // Reload to get full prompt history
-            loadPoster(currentPosterId);
-          }
-          if(evt.type==='done') break;
-        }catch(e){}
+    readSSE(r,function(evt){
+      if(evt.type==='status') status.innerHTML='<div style="color:var(--muted);font-size:0.88rem">'+escHtml(evt.message)+'</div>';
+      if(evt.type==='result'){
+        status.innerHTML='<div style="color:var(--green);font-size:0.88rem">Poster updated!</div>';
+        document.getElementById('poster-edit-prompt').value='';
+        updateEditCharCount();
+        loadPosterList();
+        loadPoster(currentPosterId);
       }
-    }
+    },null,function(e){
+      status.innerHTML='<div style="color:var(--red);font-size:0.88rem">Error: Connection lost</div>';
+      btn.disabled=false;
+    });
   }catch(e){status.innerHTML='<div style="color:var(--red);font-size:0.88rem">Error: '+escHtml(e.message)+'</div>';}
   btn.disabled=false;
 }
@@ -3547,6 +3614,18 @@ async function deletePoster(){
     toast('Poster deleted');
     loadPosterList();
   }catch(e){toast('Error deleting poster','error');}
+}
+
+async function duplicatePoster(){
+  if(!currentPosterId) return;
+  try{
+    var r=await fetch(API+'/posters/'+currentPosterId+'/duplicate',{method:'POST',headers:headers(true)});
+    if(!r.ok) throw new Error('Failed');
+    var data=await r.json();
+    toast('Poster duplicated: '+data.title);
+    loadPosterList();
+    loadPoster(data.id);
+  }catch(e){toast('Error duplicating poster','error');}
 }
 
 function printPoster(){
