@@ -46,7 +46,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from database import (
     SessionLocal, engine, Base, DBUser, DBDocument, DBSearchResult, DBAnalysisReport,
     DBChatSession, DBChatMessage, DBDrawing, DBIsolationPackage, DBUpdateSession,
-    DBAgentCache,
+    DBAgentCache, DBPoster,
 )
 from audit import log_upload, log_search, log_delete, log_auth_failure, log_access
 from ocr import extract_text_with_ocr_fallback, extract_structured_text
@@ -607,6 +607,16 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str = Field(max_length=50)
     password: str = Field(max_length=128)
+
+
+class PosterCreateRequest(BaseModel):
+    prompt: str = Field(max_length=5000, description="Describe the poster you want to create")
+    size: str = Field(default="letter", pattern=r"^(letter|a4|a3|wide)$")
+    model: str = Field(default="haiku", pattern=r"^(sonnet|haiku)$")
+
+class PosterUpdateRequest(BaseModel):
+    prompt: str = Field(max_length=5000, description="Describe what to change on the poster")
+    model: str = Field(default="haiku", pattern=r"^(sonnet|haiku)$")
 
 
 class HealthResponse(BaseModel):
@@ -4396,5 +4406,215 @@ async def delete_agent_cache_entry(cache_id: str, request: Request, db=Depends(g
     if current_user_id and entry.user_id and entry.user_id != current_user_id:
         raise HTTPException(status_code=403, detail="You do not own this cache entry")
     db.delete(entry)
+    db.commit()
+    return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Poster Generator
+# ---------------------------------------------------------------------------
+
+POSTER_SIZES = {
+    "letter": {"width": "8.5in", "height": "11in", "px_w": 816, "px_h": 1056},
+    "a4": {"width": "210mm", "height": "297mm", "px_w": 794, "px_h": 1123},
+    "a3": {"width": "297mm", "height": "420mm", "px_w": 1123, "px_h": 1587},
+    "wide": {"width": "11in", "height": "8.5in", "px_w": 1056, "px_h": 816},
+}
+
+POSTER_SYSTEM = """You are a professional graphic designer that creates stunning posters as self-contained HTML/CSS.
+
+RULES:
+1. Output ONLY the HTML code — no markdown fences, no explanation, no commentary.
+2. The HTML must be a complete document with <!DOCTYPE html>, <html>, <head>, <body>.
+3. All styles MUST be in a <style> block in <head>. No external resources, no JavaScript.
+4. Use only web-safe fonts and CSS — the poster must render identically in any browser.
+5. Use bold colors, clear hierarchy, and professional layout. Make it visually striking.
+6. The poster dimensions should fill exactly {width} x {height}.
+7. Use the body as the poster canvas: set exact width/height, margin:0, overflow:hidden.
+8. Include visual elements using CSS: gradients, borders, shapes, shadows, icons via Unicode/emoji.
+9. Text must be large, readable, and well-spaced. Prefer uppercase for headings.
+10. If the prompt mentions safety, compliance, or procedures, use appropriate warning colors and symbols.
+
+SIZE: {width} x {height}"""
+
+POSTER_UPDATE_SYSTEM = """You are a professional graphic designer editing an existing HTML/CSS poster.
+
+The user will provide the current poster HTML and a description of changes they want.
+
+RULES:
+1. Output ONLY the updated HTML code — no markdown fences, no explanation.
+2. Keep the same document structure (<!DOCTYPE html>, <html>, <head>, <body>).
+3. Preserve elements the user did NOT ask to change.
+4. Apply the requested changes precisely.
+5. Maintain professional design quality.
+6. All styles must stay in <style> block. No external resources, no JavaScript.
+7. The poster dimensions must remain the same."""
+
+
+@app.post("/posters", dependencies=[Depends(verify_api_key)])
+async def create_poster(body: PosterCreateRequest, request: Request, db=Depends(get_db)):
+    """Generate a new poster from a text prompt using AI."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+    model = _resolve_agent_model(body.model)
+    size = POSTER_SIZES.get(body.size, POSTER_SIZES["letter"])
+
+    system = POSTER_SYSTEM.format(width=size["width"], height=size["height"])
+
+    async def generate():
+        import asyncio
+        yield f"data: {json.dumps({'type': 'status', 'message': 'Designing your poster...'})}\n\n"
+
+        task = asyncio.create_task(_call_claude_bg(
+            client, system, body.prompt, max_tokens=16000, model=model
+        ))
+        while not task.done():
+            yield ":\n\n"
+            await asyncio.sleep(3)
+        html_content = task.result()
+
+        html_content = html_content.strip()
+        if html_content.startswith("```"):
+            html_content = re.sub(r"^```(?:html)?\s*\n?", "", html_content)
+            html_content = re.sub(r"\n?```\s*$", "", html_content)
+
+        current_user_id = getattr(request.state, "user_id", None)
+        poster_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+
+        title_match = re.search(r"<title>(.*?)</title>", html_content, re.IGNORECASE)
+        title = title_match.group(1) if title_match else body.prompt[:80]
+
+        poster = DBPoster(
+            id=poster_id,
+            user_id=current_user_id,
+            title=_encrypt_text(title),
+            prompt_history=_encrypt_text(json.dumps([body.prompt])),
+            html_content=_encrypt_text(html_content),
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(poster)
+        db.commit()
+
+        yield f"data: {json.dumps({'type': 'result', 'poster_id': poster_id, 'title': title, 'html': html_content, 'size': body.size})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.post("/posters/{poster_id}/update", dependencies=[Depends(verify_api_key)])
+async def update_poster(poster_id: str, body: PosterUpdateRequest, request: Request, db=Depends(get_db)):
+    """Update an existing poster with a new prompt."""
+    current_user_id = getattr(request.state, "user_id", None)
+    poster = db.query(DBPoster).filter(DBPoster.id == poster_id).first()
+    if not poster:
+        raise HTTPException(status_code=404, detail="Poster not found")
+    if current_user_id and poster.user_id and poster.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+    model = _resolve_agent_model(body.model)
+
+    current_html = _decrypt_text(poster.html_content)
+    prompt_history = json.loads(_decrypt_text(poster.prompt_history))
+
+    user_msg = f"CURRENT POSTER HTML:\n{current_html}\n\nREQUESTED CHANGES:\n{body.prompt}"
+
+    async def generate():
+        import asyncio
+        yield f"data: {json.dumps({'type': 'status', 'message': 'Updating your poster...'})}\n\n"
+
+        task = asyncio.create_task(_call_claude_bg(
+            client, POSTER_UPDATE_SYSTEM, user_msg, max_tokens=16000, model=model
+        ))
+        while not task.done():
+            yield ":\n\n"
+            await asyncio.sleep(3)
+        new_html = task.result()
+
+        new_html = new_html.strip()
+        if new_html.startswith("```"):
+            new_html = re.sub(r"^```(?:html)?\s*\n?", "", new_html)
+            new_html = re.sub(r"\n?```\s*$", "", new_html)
+
+        prompt_history.append(body.prompt)
+        title_match = re.search(r"<title>(.*?)</title>", new_html, re.IGNORECASE)
+        title = title_match.group(1) if title_match else _decrypt_text(poster.title)
+
+        poster.title = _encrypt_text(title)
+        poster.prompt_history = _encrypt_text(json.dumps(prompt_history))
+        poster.html_content = _encrypt_text(new_html)
+        poster.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        yield f"data: {json.dumps({'type': 'result', 'poster_id': poster_id, 'title': title, 'html': new_html})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/posters", dependencies=[Depends(verify_api_key)])
+async def list_posters(request: Request, db=Depends(get_db)):
+    """List all posters for the current user."""
+    current_user_id = getattr(request.state, "user_id", None)
+    q = db.query(DBPoster)
+    if current_user_id:
+        q = q.filter(DBPoster.user_id == current_user_id)
+    else:
+        q = q.filter(DBPoster.user_id.is_(None))
+    posters = q.order_by(DBPoster.updated_at.desc()).all()
+    return {
+        "posters": [
+            {
+                "id": p.id,
+                "title": _decrypt_text(p.title),
+                "prompt_count": len(json.loads(_decrypt_text(p.prompt_history))),
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+            }
+            for p in posters
+        ]
+    }
+
+
+@app.get("/posters/{poster_id}", dependencies=[Depends(verify_api_key)])
+async def get_poster(poster_id: str, request: Request, db=Depends(get_db)):
+    """Get a specific poster with its full HTML content."""
+    current_user_id = getattr(request.state, "user_id", None)
+    poster = db.query(DBPoster).filter(DBPoster.id == poster_id).first()
+    if not poster:
+        raise HTTPException(status_code=404, detail="Poster not found")
+    if current_user_id and poster.user_id and poster.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return {
+        "id": poster.id,
+        "title": _decrypt_text(poster.title),
+        "html": _decrypt_text(poster.html_content),
+        "prompts": json.loads(_decrypt_text(poster.prompt_history)),
+        "created_at": poster.created_at.isoformat() if poster.created_at else None,
+        "updated_at": poster.updated_at.isoformat() if poster.updated_at else None,
+    }
+
+
+@app.delete("/posters/{poster_id}", dependencies=[Depends(verify_api_key)])
+async def delete_poster(poster_id: str, request: Request, db=Depends(get_db)):
+    """Delete a poster."""
+    current_user_id = getattr(request.state, "user_id", None)
+    poster = db.query(DBPoster).filter(DBPoster.id == poster_id).first()
+    if not poster:
+        raise HTTPException(status_code=404, detail="Poster not found")
+    if current_user_id and poster.user_id and poster.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    db.delete(poster)
     db.commit()
     return {"deleted": True}
