@@ -189,3 +189,17 @@ class DBAgentCache(Base):
     params_summary = Column(String, nullable=True)                       # human-readable params
     created_at = Column(DateTime, nullable=False)
     expires_at = Column(DateTime, nullable=True)
+
+
+class DBPoster(Base):
+    """AI-generated poster with editable HTML content."""
+    __tablename__ = "posters"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    title = Column(String, nullable=False)                               # encrypted
+    prompt_history = Column(Text, nullable=False)                        # encrypted JSON list of prompts
+    html_content = Column(Text, nullable=False)                          # encrypted — full HTML/CSS poster
+    thumbnail = Column(Text, nullable=True)                              # optional base64 preview
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)

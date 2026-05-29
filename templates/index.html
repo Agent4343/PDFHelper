@@ -190,6 +190,14 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
   border-radius:8px;color:var(--muted);font-size:12px;cursor:pointer;transition:all .15s;white-space:nowrap}
 .chat-action-btn:hover{border-color:var(--accent);color:var(--accent)}
 .chat-action-btn:disabled{opacity:0.4;cursor:not-allowed}
+#poster-preview{min-height:200px;position:relative}
+#poster-iframe{width:816px;height:1056px;max-width:100%}
+.poster-item{display:flex;align-items:center;justify-content:space-between;padding:0.6rem 0;
+  border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}
+.poster-item:hover{background:#ffffff08}
+.poster-item:last-child{border-bottom:none}
+.poster-item-title{font-weight:500;color:var(--text)}
+.poster-item-date{font-size:0.78rem;color:var(--muted)}
 .doc-gen-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);
   z-index:1000;display:flex;align-items:center;justify-content:center}
 .doc-gen-modal.hidden{display:none}
@@ -477,6 +485,8 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         <span>Doc Updater</span>
       </button>
+      <button onclick="showPage('posters')" id="nav-posters" style="border-top:1px solid var(--border)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>Posters</button>
       <button onclick="showPage('bot')" id="nav-bot" style="margin-top:auto;border-top:1px solid var(--border)">
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
         <span>AI Chat</span>
@@ -499,6 +509,7 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
       <button onclick="showPage('pdftools')" id="tn-pdftools">PDF Tools</button>
       <button onclick="showPage('isointel')" id="tn-isointel">IsoIntel</button>
       <button onclick="showPage('updater')" id="tn-updater">Doc Updater</button>
+      <button onclick="showPage('posters')" id="tn-posters">Posters</button>
       <button onclick="showPage('bot')" id="tn-bot">AI Chat</button>
     </div>
 
@@ -978,6 +989,71 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
       </div>
     </div>
 
+    <!-- Poster Generator page -->
+    <div class="page" id="page-posters">
+      <h2>Poster Generator</h2>
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> Create professional posters using AI. Describe what you want and the AI designs it. Then refine it with follow-up prompts until it's perfect.</p>
+      </div>
+
+      <!-- Create new poster -->
+      <div class="card">
+        <h3>Create New Poster</h3>
+        <label for="poster-prompt">Describe your poster</label>
+        <textarea id="poster-prompt" rows="3" placeholder="e.g. Safety poster about wearing PPE on the job site, bright colors, include hard hat and safety glasses icons..." style="margin-bottom:0.75rem"></textarea>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem">
+          <div>
+            <label for="poster-size">Size</label>
+            <select id="poster-size" style="padding:0.55rem 0.75rem;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.88rem">
+              <option value="letter">Letter (8.5 x 11in)</option>
+              <option value="a4">A4</option>
+              <option value="a3">A3 (Large)</option>
+              <option value="wide">Wide (11 x 8.5in)</option>
+            </select>
+          </div>
+          <div>
+            <label for="poster-model">AI Model</label>
+            <select id="poster-model" style="padding:0.55rem 0.75rem;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.88rem">
+              <option value="haiku">Haiku (Fast)</option>
+              <option value="sonnet">Sonnet (Better quality)</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="poster-create-btn" onclick="createPoster()">Generate Poster</button>
+        <div id="poster-create-status" style="margin-top:0.75rem"></div>
+      </div>
+
+      <!-- Poster preview & edit -->
+      <div class="card" id="poster-editor-card" style="display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem">
+          <h3 id="poster-editor-title" style="margin:0">Poster Preview</h3>
+          <div style="display:flex;gap:0.5rem">
+            <button class="btn btn-primary" onclick="printPoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Print / Save PDF</button>
+            <button class="btn btn-danger" onclick="deletePoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Delete</button>
+          </div>
+        </div>
+        <div id="poster-preview" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fff;margin-bottom:0.75rem;display:flex;justify-content:center">
+          <iframe id="poster-iframe" style="border:none;transform-origin:top center" sandbox="allow-same-origin"></iframe>
+        </div>
+        <div style="margin-bottom:0.5rem">
+          <label>Edit prompt history</label>
+          <div id="poster-prompt-history" style="font-size:0.82rem;color:var(--muted);max-height:80px;overflow-y:auto;margin-bottom:0.5rem"></div>
+        </div>
+        <label for="poster-edit-prompt">Describe changes</label>
+        <div style="display:flex;gap:0.5rem">
+          <textarea id="poster-edit-prompt" rows="2" placeholder="e.g. Make the title bigger, change background to blue, add a phone number at the bottom..." style="flex:1"></textarea>
+          <button class="btn btn-primary" id="poster-update-btn" onclick="updatePoster()" style="align-self:flex-end">Update</button>
+        </div>
+        <div id="poster-update-status" style="margin-top:0.5rem"></div>
+      </div>
+
+      <!-- Saved posters list -->
+      <div class="card">
+        <h3>Saved Posters</h3>
+        <div id="poster-list" style="font-size:0.88rem;color:var(--muted)">No posters yet. Create one above!</div>
+      </div>
+    </div>
+
     <div class="page" id="page-bot">
       <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
         <p style="font-size:0.9rem"><strong>What does this do?</strong> Talk to an AI that has read all your documents. Ask it questions in plain English like "What does section 5 say about training?" or "Summarize the safety rules" — and it answers based on what's actually in your files. It's like having a helper who has memorized all your paperwork.</p>
@@ -1301,6 +1377,7 @@ function headers(json){
   return h;
 }
 function detailStr(d){if(!d)return'';if(typeof d==='string')return d;if(Array.isArray(d))return d.map(function(e){return e&&e.msg?e.msg:JSON.stringify(e)}).join('; ');return JSON.stringify(d);}
+function escHtml(s){if(!s)return '';var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function toast(msg,type='success'){
   const t=document.getElementById('toast');
   t.textContent=msg; t.className='toast '+type+' show';
@@ -1377,6 +1454,7 @@ function showPage(name){
   if(name==='pdftools') loadDocuments();
   if(name==='isointel') initIsoIntel();
   if(name==='updater') initUpdater();
+  if(name==='posters') loadPosterList();
   if(name==='bot') initBot();
 }
 function toggleKeyVisibility(e){
@@ -3306,6 +3384,176 @@ function renderMarkdown(txt){
   s=s.replace(/\n{2,}/g,'<br><br>');
   s=s.replace(/\n/g,'<br>');
   return s;
+}
+
+/* ---- Poster Generator ---- */
+var currentPosterId=null;
+var posterSizes={letter:{w:816,h:1056},a4:{w:794,h:1123},a3:{w:1123,h:1587},wide:{w:1056,h:816}};
+
+async function loadPosterList(){
+  var el=document.getElementById('poster-list');
+  try{
+    var r=await fetch(API+'/posters',{headers:headers()});
+    if(!r.ok) throw new Error('Failed to load');
+    var data=await r.json();
+    if(!data.posters||data.posters.length===0){
+      el.innerHTML='No posters yet. Create one above!';return;
+    }
+    el.innerHTML=data.posters.map(function(p){
+      var d=p.updated_at?new Date(p.updated_at).toLocaleDateString():'';
+      return '<div class="poster-item" onclick="loadPoster(\''+p.id+'\')">'+
+        '<div><span class="poster-item-title">'+escHtml(p.title)+'</span>'+
+        '<span style="margin-left:8px;font-size:0.78rem;color:var(--muted)">'+p.prompt_count+' prompt(s)</span></div>'+
+        '<span class="poster-item-date">'+d+'</span></div>';
+    }).join('');
+  }catch(e){el.innerHTML='<span style="color:var(--red)">Error loading posters</span>';}
+}
+
+async function loadPoster(id){
+  try{
+    var r=await fetch(API+'/posters/'+id,{headers:headers()});
+    if(!r.ok) throw new Error('Failed');
+    var data=await r.json();
+    currentPosterId=data.id;
+    showPosterPreview(data.html,data.title,data.prompts);
+  }catch(e){toast('Error loading poster','error');}
+}
+
+function showPosterPreview(html,title,prompts){
+  document.getElementById('poster-editor-card').style.display='block';
+  document.getElementById('poster-editor-title').textContent=title||'Poster Preview';
+  var iframe=document.getElementById('poster-iframe');
+  iframe.srcdoc=html;
+  // Scale iframe to fit container
+  var container=document.getElementById('poster-preview');
+  setTimeout(function(){
+    var cw=container.clientWidth-2;
+    var iw=iframe.clientWidth||816;
+    if(iw>cw){
+      var scale=cw/iw;
+      iframe.style.transform='scale('+scale+')';
+      iframe.style.height=(iframe.clientHeight*scale)+'px';
+    }else{
+      iframe.style.transform='none';
+    }
+  },100);
+  // Show prompt history
+  var histEl=document.getElementById('poster-prompt-history');
+  if(prompts&&prompts.length){
+    histEl.innerHTML=prompts.map(function(p,i){return '<div style="margin-bottom:4px"><strong>'+(i+1)+'.</strong> '+escHtml(p)+'</div>';}).join('');
+  }else{histEl.innerHTML='';}
+}
+
+async function createPoster(){
+  var prompt=document.getElementById('poster-prompt').value.trim();
+  if(!prompt){toast('Enter a description for your poster','error');return;}
+  var size=document.getElementById('poster-size').value;
+  var model=document.getElementById('poster-model').value;
+  var btn=document.getElementById('poster-create-btn');
+  var status=document.getElementById('poster-create-status');
+  btn.disabled=true;
+  status.innerHTML='<div class="loading-overlay" style="position:static;background:transparent;padding:0.5rem 0"><div class="spinner"></div><span>Designing your poster...</span></div>';
+
+  try{
+    var r=await fetch(API+'/posters',{method:'POST',headers:headers(true),body:JSON.stringify({prompt:prompt,size:size,model:model})});
+    if(!r.ok){var err=await r.json().catch(function(){return {};});throw new Error(detailStr(err.detail)||'Request failed');}
+    var reader=r.body.getReader();
+    var decoder=new TextDecoder();
+    var buffer='';
+    while(true){
+      var chunk=await reader.read();
+      if(chunk.done) break;
+      buffer+=decoder.decode(chunk.value,{stream:true});
+      var lines=buffer.split('\n');
+      buffer=lines.pop();
+      for(var i=0;i<lines.length;i++){
+        var line=lines[i].trim();
+        if(!line.startsWith('data: ')) continue;
+        try{
+          var evt=JSON.parse(line.slice(6));
+          if(evt.type==='status') status.innerHTML='<div style="color:var(--muted);font-size:0.88rem">'+escHtml(evt.message)+'</div>';
+          if(evt.type==='result'){
+            currentPosterId=evt.poster_id;
+            showPosterPreview(evt.html,evt.title,[prompt]);
+            status.innerHTML='<div style="color:var(--green);font-size:0.88rem">Poster created!</div>';
+            document.getElementById('poster-prompt').value='';
+            loadPosterList();
+            // Set iframe dimensions based on size
+            var dims=posterSizes[size]||posterSizes.letter;
+            var iframe=document.getElementById('poster-iframe');
+            iframe.style.width=dims.w+'px';
+            iframe.style.height=dims.h+'px';
+          }
+          if(evt.type==='done') break;
+        }catch(e){}
+      }
+    }
+  }catch(e){status.innerHTML='<div style="color:var(--red);font-size:0.88rem">Error: '+escHtml(e.message)+'</div>';}
+  btn.disabled=false;
+}
+
+async function updatePoster(){
+  if(!currentPosterId){toast('No poster selected','error');return;}
+  var prompt=document.getElementById('poster-edit-prompt').value.trim();
+  if(!prompt){toast('Enter what you want to change','error');return;}
+  var model=document.getElementById('poster-model').value;
+  var btn=document.getElementById('poster-update-btn');
+  var status=document.getElementById('poster-update-status');
+  btn.disabled=true;
+  status.innerHTML='<div class="loading-overlay" style="position:static;background:transparent;padding:0.5rem 0"><div class="spinner"></div><span>Updating poster...</span></div>';
+
+  try{
+    var r=await fetch(API+'/posters/'+currentPosterId+'/update',{method:'POST',headers:headers(true),body:JSON.stringify({prompt:prompt,model:model})});
+    if(!r.ok){var err=await r.json().catch(function(){return {};});throw new Error(detailStr(err.detail)||'Request failed');}
+    var reader=r.body.getReader();
+    var decoder=new TextDecoder();
+    var buffer='';
+    while(true){
+      var chunk=await reader.read();
+      if(chunk.done) break;
+      buffer+=decoder.decode(chunk.value,{stream:true});
+      var lines=buffer.split('\n');
+      buffer=lines.pop();
+      for(var i=0;i<lines.length;i++){
+        var line=lines[i].trim();
+        if(!line.startsWith('data: ')) continue;
+        try{
+          var evt=JSON.parse(line.slice(6));
+          if(evt.type==='status') status.innerHTML='<div style="color:var(--muted);font-size:0.88rem">'+escHtml(evt.message)+'</div>';
+          if(evt.type==='result'){
+            showPosterPreview(evt.html,evt.title,null);
+            status.innerHTML='<div style="color:var(--green);font-size:0.88rem">Poster updated!</div>';
+            document.getElementById('poster-edit-prompt').value='';
+            loadPosterList();
+            // Reload to get full prompt history
+            loadPoster(currentPosterId);
+          }
+          if(evt.type==='done') break;
+        }catch(e){}
+      }
+    }
+  }catch(e){status.innerHTML='<div style="color:var(--red);font-size:0.88rem">Error: '+escHtml(e.message)+'</div>';}
+  btn.disabled=false;
+}
+
+async function deletePoster(){
+  if(!currentPosterId) return;
+  if(!confirm('Delete this poster?')) return;
+  try{
+    var r=await fetch(API+'/posters/'+currentPosterId,{method:'DELETE',headers:headers()});
+    if(!r.ok) throw new Error('Failed');
+    currentPosterId=null;
+    document.getElementById('poster-editor-card').style.display='none';
+    toast('Poster deleted');
+    loadPosterList();
+  }catch(e){toast('Error deleting poster','error');}
+}
+
+function printPoster(){
+  var iframe=document.getElementById('poster-iframe');
+  if(!iframe||!iframe.contentWindow){toast('No poster to print','error');return;}
+  iframe.contentWindow.focus();
+  iframe.contentWindow.print();
 }
 </script>
 </body>
