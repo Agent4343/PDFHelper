@@ -1060,7 +1060,8 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
           <h3 id="poster-editor-title" style="margin:0">Poster Preview</h3>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
             <button class="btn" onclick="duplicatePoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem;background:transparent;border:1px solid var(--border);color:var(--muted)">Duplicate</button>
-            <button class="btn btn-primary" onclick="printPoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Print / Save PDF</button>
+            <button class="btn btn-primary" onclick="downloadPosterPDF()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Download PDF</button>
+            <button class="btn" onclick="printPoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem;background:transparent;border:1px solid var(--border);color:var(--muted)">Print</button>
             <button class="btn btn-danger" onclick="deletePoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Delete</button>
           </div>
         </div>
@@ -3626,6 +3627,27 @@ async function duplicatePoster(){
     loadPosterList();
     loadPoster(data.id);
   }catch(e){toast('Error duplicating poster','error');}
+}
+
+async function downloadPosterPDF(){
+  if(!currentPosterId){toast('No poster selected','error');return;}
+  toast('Generating PDF...');
+  try{
+    var r=await fetch(API+'/posters/'+currentPosterId+'/pdf',{headers:headers()});
+    if(!r.ok){var err=await r.json().catch(function(){return {};});throw new Error(detailStr(err.detail)||'PDF generation failed');}
+    var blob=await r.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    var disposition=r.headers.get('content-disposition')||'';
+    var match=disposition.match(/filename="(.+?)"/);
+    a.download=match?match[1]:'poster.pdf';
+    a.href=url;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast('PDF downloaded!');
+  }catch(e){toast('Error: '+e.message,'error');}
 }
 
 function printPoster(){
