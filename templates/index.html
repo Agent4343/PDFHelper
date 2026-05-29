@@ -3630,9 +3630,18 @@ async function duplicatePoster(){
 
 function printPoster(){
   var iframe=document.getElementById('poster-iframe');
-  if(!iframe||!iframe.contentWindow){toast('No poster to print','error');return;}
-  iframe.contentWindow.focus();
-  iframe.contentWindow.print();
+  if(!iframe||!iframe.srcdoc){toast('No poster to print','error');return;}
+  var html=iframe.srcdoc;
+  // Inject print CSS if missing
+  if(html.indexOf('@page')===-1){
+    var printCSS='<style>@page{margin:0}@media print{html,body{margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>';
+    html=html.replace('</head>',printCSS+'</head>');
+  }
+  var w=window.open('','_blank','width=900,height=700');
+  if(!w){toast('Pop-up blocked — allow pop-ups for this site','error');return;}
+  w.document.write(html);
+  w.document.close();
+  w.onload=function(){w.focus();w.print();};
 }
 </script>
 </body>

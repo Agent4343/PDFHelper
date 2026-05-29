@@ -4442,6 +4442,7 @@ DESIGN PRINCIPLES:
 - Consistent alignment and spacing throughout
 - Use CSS shapes, gradients, borders, box-shadows for visual interest
 - Use Unicode symbols and emoji for icons (e.g. ⚠️ 🔥 ✅ 🏗️ 📋 ☎️ 🚨 ⛑️ 👷 🔒)
+- ALL content MUST fit within the poster dimensions — never overflow
 
 {style_instruction}
 
@@ -4453,6 +4454,9 @@ TECHNICAL RULES:
 5. Use web-safe fonts: Arial, Georgia, Impact, Courier New, Trebuchet MS, Verdana.
 6. For print quality: use pt/in/cm units for text sizing where appropriate.
 7. Add a <title> tag that summarizes the poster content in 3-6 words.
+8. CRITICAL — include these print rules in your <style> block so the poster prints cleanly with no browser headers/footers/URLs:
+   @page {{ margin: 0; size: {width} {height}; }}
+   @media print {{ html, body {{ margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }} }}
 
 SIZE: {width} x {height}"""
 
@@ -4468,7 +4472,10 @@ RULES:
 5. Maintain or improve design quality — don't break alignment, spacing, or contrast.
 6. All styles stay in <style> block. No external resources, no JavaScript.
 7. If the user asks to add content, integrate it naturally into the existing layout.
-8. Keep the <title> tag updated if the poster topic changes."""
+8. Keep the <title> tag updated if the poster topic changes.
+9. ALWAYS keep or add these print rules in the <style> block:
+   @page { margin: 0; }
+   @media print { html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }"""
 
 
 @app.post("/posters", dependencies=[Depends(verify_api_key)])
