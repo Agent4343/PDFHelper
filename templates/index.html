@@ -1012,6 +1012,10 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();botSend()}"
               oninput="chatAutoResize(this)"></textarea>
             <div class="chat-actions">
+              <select id="chat-model-select" title="AI Model" style="padding:6px 10px;background:var(--code);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;cursor:pointer">
+                <option value="haiku">Haiku (Fast)</option>
+                <option value="sonnet">Sonnet (Smart)</option>
+              </select>
               <button class="chat-action-btn" id="chat-export-btn" onclick="exportChatToWord()" title="Export this conversation to Word">Export .docx</button>
               <button class="chat-action-btn" id="chat-gendoc-btn" onclick="showGenDocModal()" title="Ask AI to write a new Word document">Generate Doc</button>
             </div>
@@ -2071,7 +2075,8 @@ async function botSend(){
   botMessages.push({role:'assistant',content:''});
 
   try{
-    var body={message:text,doc_ids:[...botSelectedIds],conversation_history:botMessages.slice(0,-2).slice(-10)};
+    var chatModel=(document.getElementById('chat-model-select')||{}).value||'haiku';
+    var body={message:text,doc_ids:[...botSelectedIds],conversation_history:botMessages.slice(0,-2).slice(-10),model:chatModel};
     if(currentSessionId) body.session_id=currentSessionId;
     var r=await fetch(API+'/chat',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
 

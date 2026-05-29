@@ -596,6 +596,7 @@ class ChatRequest(BaseModel):
     doc_ids: list[str] = Field(default=[], max_length=100, description="Document IDs to use as context (empty = all)")
     conversation_history: list[ChatMessage] = Field(default=[], max_length=200, description="Previous messages for context")
     session_id: str | None = Field(default=None, max_length=100, description="Chat session ID to continue (omit to create new)")
+    model: str = Field(default="", pattern=r"^(sonnet|haiku|)$", description="Model to use: 'sonnet' or 'haiku' (empty = default)")
 
 
 class RegisterRequest(BaseModel):
@@ -1336,8 +1337,9 @@ LOADED PROCEDURES:
             # Send session metadata first
             yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'documents_used': doc_info})}\n\n"
 
+            chat_model = AGENT_MODELS.get(body.model, CHAT_MODEL) if body.model else CHAT_MODEL
             create_kwargs = dict(
-                model=CHAT_MODEL,
+                model=chat_model,
                 max_tokens=CHAT_MAX_TOKENS,
                 system=system_prompt,
                 messages=conversation,
