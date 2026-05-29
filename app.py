@@ -4637,28 +4637,6 @@ async def get_poster(poster_id: str, request: Request, db=Depends(get_db)):
     }
 
 
-@app.get("/posters/{poster_id}/pdf", dependencies=[Depends(verify_api_key)])
-async def download_poster_pdf(poster_id: str, request: Request, db=Depends(get_db)):
-    """Download a poster as a clean PDF file with no browser headers/footers."""
-    current_user_id = getattr(request.state, "user_id", None)
-    poster = db.query(DBPoster).filter(DBPoster.id == poster_id).first()
-    if not poster:
-        raise HTTPException(status_code=404, detail="Poster not found")
-    if current_user_id and poster.user_id and poster.user_id != current_user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    html_content = _decrypt_text(poster.html_content)
-    title = _decrypt_text(poster.title)
-
-    import weasyprint
-    pdf_bytes = weasyprint.HTML(string=html_content).write_pdf()
-
-    safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:50] or 'poster'
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{safe_title}.pdf"'},
-    )
 
 
 @app.delete("/posters/{poster_id}", dependencies=[Depends(verify_api_key)])
