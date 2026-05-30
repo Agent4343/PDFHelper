@@ -1061,6 +1061,7 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem">
           <h3 id="poster-editor-title" style="margin:0">Poster Preview</h3>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+            <button class="btn" onclick="togglePosterCode()" id="poster-code-toggle" style="padding:0.4rem 0.8rem;font-size:0.82rem;background:transparent;border:1px solid var(--border);color:var(--muted)">Edit HTML</button>
             <button class="btn" onclick="duplicatePoster()" style="padding:0.4rem 0.8rem;font-size:0.82rem;background:transparent;border:1px solid var(--border);color:var(--muted)">Duplicate</button>
             <button class="btn btn-primary" onclick="downloadPosterHTML()" style="padding:0.4rem 0.8rem;font-size:0.82rem">Download HTML</button>
             <button class="btn" onclick="downloadPosterPDF()" style="padding:0.4rem 0.8rem;font-size:0.82rem;background:transparent;border:1px solid var(--border);color:var(--muted)">Download PDF</button>
@@ -1070,6 +1071,17 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
         </div>
         <div id="poster-preview" style="border:1px solid var(--border);border-radius:8px;overflow:auto;background:#fff;margin-bottom:0.75rem;display:flex;justify-content:center;max-height:70vh">
           <iframe id="poster-iframe" style="border:none;transform-origin:top center" sandbox="allow-same-origin allow-modals"></iframe>
+        </div>
+        <!-- HTML code editor -->
+        <div id="poster-code-editor" style="display:none;margin-bottom:0.75rem">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.4rem">
+            <label style="margin:0">HTML Source Code</label>
+            <div style="display:flex;gap:0.5rem">
+              <button class="btn" onclick="applyPosterCode()" style="padding:0.3rem 0.7rem;font-size:0.8rem;background:var(--green);color:#fff;border:none">Apply Changes</button>
+              <button class="btn" onclick="savePosterCode()" style="padding:0.3rem 0.7rem;font-size:0.8rem;background:var(--accent);color:#fff;border:none">Save to Server</button>
+            </div>
+          </div>
+          <textarea id="poster-code-area" style="width:100%;min-height:400px;font-family:'Courier New',monospace;font-size:0.82rem;background:var(--code);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:0.75rem;line-height:1.5;tab-size:2;resize:vertical" spellcheck="false" onkeydown="if(event.key==='Tab'){event.preventDefault();var s=this.selectionStart,e=this.selectionEnd;this.value=this.value.substring(0,s)+'  '+this.value.substring(e);this.selectionStart=this.selectionEnd=s+2;}"></textarea>
         </div>
         <div style="margin-bottom:0.5rem">
           <label>Prompt history <span id="poster-history-count" style="color:var(--muted);font-weight:400"></span></label>
@@ -3630,6 +3642,48 @@ async function duplicatePoster(){
     loadPosterList();
     loadPoster(data.id);
   }catch(e){toast('Error duplicating poster','error');}
+}
+
+function togglePosterCode(){
+  var editor=document.getElementById('poster-code-editor');
+  var btn=document.getElementById('poster-code-toggle');
+  var iframe=document.getElementById('poster-iframe');
+  if(editor.style.display==='none'){
+    document.getElementById('poster-code-area').value=iframe.srcdoc||'';
+    editor.style.display='block';
+    btn.textContent='Hide HTML';
+    btn.style.borderColor='var(--accent)';
+    btn.style.color='var(--accent)';
+  }else{
+    editor.style.display='none';
+    btn.textContent='Edit HTML';
+    btn.style.borderColor='var(--border)';
+    btn.style.color='var(--muted)';
+  }
+}
+
+function applyPosterCode(){
+  var html=document.getElementById('poster-code-area').value;
+  if(!html.trim()){toast('HTML is empty','error');return;}
+  var iframe=document.getElementById('poster-iframe');
+  iframe.srcdoc=html;
+  toast('Preview updated — click "Save to Server" to keep changes');
+}
+
+async function savePosterCode(){
+  if(!currentPosterId){toast('No poster selected','error');return;}
+  var html=document.getElementById('poster-code-area').value;
+  if(!html.trim()){toast('HTML is empty','error');return;}
+  try{
+    var r=await fetch(API+'/posters/'+currentPosterId,{method:'PATCH',headers:headers(true),body:JSON.stringify({html:html})});
+    if(!r.ok){var err=await r.json().catch(function(){return {};});throw new Error(detailStr(err.detail)||'Save failed');}
+    var data=await r.json();
+    var iframe=document.getElementById('poster-iframe');
+    iframe.srcdoc=html;
+    if(data.title) document.getElementById('poster-editor-title').textContent=data.title;
+    toast('Poster saved!');
+    loadPosterList();
+  }catch(e){toast('Error: '+e.message,'error');}
 }
 
 function downloadPosterHTML(){
