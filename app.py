@@ -4661,6 +4661,33 @@ async def delete_poster(poster_id: str, request: Request, db=Depends(get_db)):
     return {"deleted": True}
 
 
+class PosterSaveHTMLRequest(BaseModel):
+    html: str = Field(max_length=500000, description="Updated HTML content")
+
+
+@app.patch("/posters/{poster_id}", dependencies=[Depends(verify_api_key)])
+async def save_poster_html(poster_id: str, body: PosterSaveHTMLRequest, request: Request, db=Depends(get_db)):
+    """Save manually edited HTML content for a poster."""
+    current_user_id = getattr(request.state, "user_id", None)
+    poster = db.query(DBPoster).filter(DBPoster.id == poster_id).first()
+    if not poster:
+        raise HTTPException(status_code=404, detail="Poster not found")
+    if current_user_id and poster.user_id and poster.user_id != current_user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    title_match = re.search(r"<title>(.*?)</title>", body.html, re.IGNORECASE)
+    if title_match:
+        poster.title = _encrypt_text(title_match.group(1))
+
+    prompt_history = json.loads(_decrypt_text(poster.prompt_history))
+    prompt_history.append("[Manual HTML edit]")
+    poster.prompt_history = _encrypt_text(json.dumps(prompt_history))
+    poster.html_content = _encrypt_text(body.html)
+    poster.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"saved": True, "title": _decrypt_text(poster.title)}
+
+
 @app.post("/posters/{poster_id}/duplicate", dependencies=[Depends(verify_api_key)])
 async def duplicate_poster(poster_id: str, request: Request, db=Depends(get_db)):
     """Duplicate an existing poster."""
