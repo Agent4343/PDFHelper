@@ -1312,10 +1312,25 @@ RULES:
    - Use bullet lists for non-sequential items
    - Preserve table structure from the source when a [TABLE] block is referenced
 7. When you are uncertain or the procedures are ambiguous, explicitly state: "**Note:** This requires verification — the procedure is unclear on this point."
-8. Do NOT add follow-up question suggestions unless the user's question is broad and could genuinely benefit from narrowing down.
+8. Do NOT add follow-up question suggestions unless the user's question is broad and could genuinely benefit from narrowing down."""
 
-LOADED PROCEDURES:
-{procedure_context}"""
+    # Use structured system prompt with cache_control for Anthropic prompt caching.
+    # The rules block is cached (stable across messages), and the procedures block
+    # is cached separately (stable within a session). This means follow-up messages
+    # in the same session reuse cached tokens instead of re-processing everything,
+    # cutting input costs by up to 90%.
+    system_blocks = [
+        {
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        },
+        {
+            "type": "text",
+            "text": f"LOADED PROCEDURES:\n{procedure_context}",
+            "cache_control": {"type": "ephemeral"},
+        },
+    ]
 
     from anthropic import Anthropic
     client = Anthropic(api_key=api_key)
@@ -1352,7 +1367,7 @@ LOADED PROCEDURES:
             create_kwargs = dict(
                 model=chat_model,
                 max_tokens=CHAT_MAX_TOKENS,
-                system=system_prompt,
+                system=system_blocks,
                 messages=conversation,
             )
             if chat_tools:
