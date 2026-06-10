@@ -337,6 +337,7 @@ def _safe_unlink(filepath: Path) -> None:
 PDF_MAGIC_BYTES = b"%PDF-"
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"}
+ALLOWED_SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".csv"}
 
 
 def _verify_pdf_content(data: bytes) -> bool:
@@ -380,6 +381,37 @@ def _detect_image_media_type(image_bytes: bytes) -> str:
     if image_bytes[:2] == b'BM':
         return "image/bmp"
     return "image/png"  # fallback
+
+
+def _is_spreadsheet_file(filename: str) -> bool:
+    return any(filename.lower().endswith(ext) for ext in ALLOWED_SPREADSHEET_EXTENSIONS)
+
+
+def _extract_spreadsheet_text(content: bytes, filename: str) -> list[dict]:
+    """Extract text from Excel/CSV files as markdown tables, one 'page' per sheet."""
+    import io
+    import pandas as pd
+
+    pages = []
+    lower = filename.lower()
+
+    if lower.endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(content))
+        text = df.to_markdown(index=False) if hasattr(df, 'to_markdown') else df.to_string(index=False)
+        pages.append({"page": 1, "text": f"[Sheet: CSV Data]\n\n{text}"})
+    else:
+        xls = pd.ExcelFile(io.BytesIO(content))
+        for i, sheet_name in enumerate(xls.sheet_names, 1):
+            df = pd.read_excel(xls, sheet_name=sheet_name)
+            if df.empty:
+                continue
+            text = df.to_markdown(index=False) if hasattr(df, 'to_markdown') else df.to_string(index=False)
+            pages.append({"page": i, "text": f"[Sheet: {sheet_name}]\n\n{text}"})
+
+    if not pages:
+        pages.append({"page": 1, "text": "(Empty spreadsheet)"})
+
+    return pages
 
 
 # ---------------------------------------------------------------------------
@@ -651,21 +683,18 @@ class IsolationRequest(BaseModel):
 # Validation
 # ---------------------------------------------------------------------------
 
-def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool]:
-    """Validate an uploaded file (PDF or image). Returns (sanitized_name, file_bytes, is_image).
-
-    Images are converted to PDF for text extraction. The original image bytes
-    are returned alongside so they can be stored for Claude vision.
-    """
+def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool, bool]:
+    """Validate an uploaded file. Returns (sanitized_name, file_bytes, is_image, is_spreadsheet)."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
 
     clean_name = _sanitize_filename(file.filename)
     is_image = _is_image_file(clean_name)
+    is_spreadsheet = _is_spreadsheet_file(clean_name)
 
-    if not clean_name.lower().endswith(".pdf") and not is_image:
+    if not clean_name.lower().endswith(".pdf") and not is_image and not is_spreadsheet:
         raise HTTPException(status_code=400,
-                            detail=f"Only PDF and image files allowed, got: {clean_name}")
+                            detail=f"Only PDF, image, and Excel/CSV files allowed, got: {clean_name}")
 
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
@@ -673,20 +702,20 @@ def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool]
             detail=f"{clean_name} exceeds max size of {MAX_FILE_SIZE // (1024*1024)} MB",
         )
 
-    if is_image:
-        # Convert image to PDF for text extraction pipeline
+    if is_spreadsheet:
+        return clean_name, content, False, True
+    elif is_image:
         try:
             pdf_bytes = _image_to_pdf(content)
         except Exception as exc:
             raise HTTPException(status_code=400,
                                 detail=f"Could not process image {clean_name}: {exc}")
-        return clean_name, pdf_bytes, True
+        return clean_name, pdf_bytes, True, False
     else:
-        # Verify actual PDF content
         if not _verify_pdf_content(content):
             raise HTTPException(status_code=400,
                                 detail="File does not appear to be a valid PDF")
-        return clean_name, content, False
+        return clean_name, content, False, False
 
 
 # ---------------------------------------------------------------------------
@@ -907,11 +936,11 @@ async def upload_pdfs(
     background_tasks: BackgroundTasks = None,
     db=Depends(get_db),
 ):
-    """Upload one or more PDFs or images for later searching.
+    """Upload one or more PDFs, images, or Excel/CSV files for later searching.
 
-    Supported formats: PDF, JPG, PNG, TIFF, BMP, WebP.
+    Supported formats: PDF, JPG, PNG, TIFF, BMP, WebP, XLSX, XLS, CSV.
     Images are automatically converted to PDF and OCR'd for text extraction.
-    Original images are also stored so Claude vision can analyze them in chat.
+    Spreadsheets are converted to markdown tables for AI consumption.
     """
     if len(files) > MAX_FILES_PER_REQUEST:
         raise HTTPException(status_code=400,
@@ -919,30 +948,30 @@ async def upload_pdfs(
 
     client_ip = _get_client_ip(request)
 
-    # Run cleanup after the response is sent so it doesn't slow down uploads
     if background_tasks:
         background_tasks.add_task(_run_cleanup_background)
 
     uploaded = []
     for file in files:
         raw_content = await file.read()
-        clean_name, pdf_bytes, is_image = validate_upload(file, raw_content)
+        clean_name, file_bytes, is_image, is_spreadsheet = validate_upload(file, raw_content)
 
-        # Extract text from PDF bytes (images were converted to PDF above)
-        pages = extract_text_from_bytes(pdf_bytes)
+        if is_spreadsheet:
+            pages = _extract_spreadsheet_text(raw_content, clean_name)
+        else:
+            pages = extract_text_from_bytes(file_bytes)
 
         doc_id = str(uuid.uuid4())
         save_path = UPLOAD_DIR / f"{doc_id}.pdf.enc"
 
-        # Encrypt and save the PDF version
-        _encrypt_and_save(pdf_bytes, save_path)
+        _encrypt_and_save(raw_content, save_path)
 
-        # If it was an image, also save the original for Claude vision
         if is_image:
             img_save_path = UPLOAD_DIR / f"{doc_id}.img.enc"
             _encrypt_and_save(raw_content, img_save_path)
 
         content_hash = hashlib.sha256(raw_content).hexdigest()
+        file_type = "spreadsheet" if is_spreadsheet else ("image" if is_image else "pdf")
 
         db_doc = DBDocument(
             id=doc_id,
@@ -962,7 +991,7 @@ async def upload_pdfs(
             "id": doc_id,
             "filename": clean_name,
             "pages": len(pages),
-            "type": "image" if is_image else "pdf",
+            "type": file_type,
         })
 
     return {"uploaded": uploaded, "count": len(uploaded)}
