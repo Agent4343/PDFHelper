@@ -651,11 +651,11 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
         <p style="font-size:0.9rem"><strong>What does this do?</strong> This is where you bring your PDF files into the app. Think of it like putting papers into a filing cabinet — once they're here, you can search them, read them, edit them, and ask the AI questions about them.</p>
       </div>
       <div class="card">
-        <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif,.bmp,.webp" multiple style="display:none">
+        <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png,.tiff,.tif,.bmp,.webp,.xlsx,.xls,.csv" multiple style="display:none">
         <label class="drop-zone" id="drop-zone" for="file-input">
           <div class="icon">&#128196;</div>
-          <p>Click or drag PDF / image files here</p>
-          <p style="font-size:0.78rem;color:var(--muted)">PDF, JPG, PNG, TIFF, BMP, WebP — Max 20 files, 20 MB each</p>
+          <p>Click or drag files here</p>
+          <p style="font-size:0.78rem;color:var(--muted)">PDF, Images, Excel, CSV — Max 20 files, 20 MB each</p>
           <div class="selected" id="file-list"></div>
         </label>
         <button class="btn btn-primary" id="upload-btn" onclick="uploadFiles()">Upload</button>
@@ -1522,7 +1522,7 @@ dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover
 dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
 dz.addEventListener('drop',e=>{
   e.preventDefault();dz.classList.remove('dragover');
-  var allowedExts=['.pdf','.jpg','.jpeg','.png','.tiff','.tif','.bmp','.webp'];
+  var allowedExts=['.pdf','.jpg','.jpeg','.png','.tiff','.tif','.bmp','.webp','.xlsx','.xls','.csv'];
   selectedFiles=[...e.dataTransfer.files].filter(f=>allowedExts.some(ext=>f.name.toLowerCase().endsWith(ext)));
   showFileNames();
 });
@@ -1534,8 +1534,8 @@ function showFileNames(){
 async function uploadFiles(){
   const res=document.getElementById('upload-result');
   if(!selectedFiles.length){
-    toast('Select PDF files first','error');
-    showInlineError('upload-result','Click the drop zone above to select PDF files first.');
+    toast('Select files first','error');
+    showInlineError('upload-result','Click the drop zone above to select files first.');
     return;
   }
   res.innerHTML='';
