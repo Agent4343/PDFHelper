@@ -65,7 +65,8 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-haiku-4-5-20251001")
-CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "33000"))
+CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "8192"))
+AGENT_MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "12000"))
 CHAT_WEB_SEARCH = os.getenv("CHAT_WEB_SEARCH", "true").lower() == "true"
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/pdfhelper_uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -1715,7 +1716,7 @@ INSTRUCTIONS:
 
     create_kwargs = dict(
         model=CHAT_MODEL,
-        max_tokens=CHAT_MAX_TOKENS * 2,  # allow longer output for documents
+        max_tokens=AGENT_MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": body.instructions}],
     )
@@ -2070,7 +2071,7 @@ RULES:
 
     create_kwargs = dict(
         model=CHAT_MODEL,
-        max_tokens=CHAT_MAX_TOKENS * 2,
+        max_tokens=AGENT_MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": f"Improve this procedure. Focus areas: {focus}\n\nProduce the complete improved procedure now."}],
     )
@@ -2990,7 +2991,7 @@ Provide a concise compliance audit with:
 
 Use markdown formatting.""",
                     "Audit this document for compliance.", tools=web_tools,
-                    max_tokens=CHAT_MAX_TOKENS * 2, model=model)
+                    max_tokens=AGENT_MAX_TOKENS, model=model)
 
                 save_db = SessionLocal()
                 try:
@@ -3460,7 +3461,7 @@ Respond ONLY with a valid JSON array. No markdown, no explanation outside the JS
 
     create_kwargs = dict(
         model=CHAT_MODEL,
-        max_tokens=CHAT_MAX_TOKENS * 2,
+        max_tokens=AGENT_MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": "Analyze the document and generate all necessary updates as a JSON array."}],
     )
@@ -3608,7 +3609,7 @@ Write the complete updated document using markdown formatting:
 
     response = client.messages.create(
         model=CHAT_MODEL,
-        max_tokens=CHAT_MAX_TOKENS * 2,
+        max_tokens=AGENT_MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": f"Please write the complete updated document titled '{body.title}'."}],
     )
@@ -3769,7 +3770,7 @@ def _call_claude(client, system: str, user_msg: str, tools=None, max_tokens=None
     """Synchronous Claude call using streaming internally to avoid SDK timeout on long requests."""
     kwargs = dict(
         model=model or CHAT_MODEL,
-        max_tokens=max_tokens or CHAT_MAX_TOKENS * 2,
+        max_tokens=max_tokens or AGENT_MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": user_msg}],
     )
@@ -3797,7 +3798,7 @@ def _stream_claude(client, system: str, user_msg: str, tools=None, max_tokens=No
     """Stream Claude response, yields text chunks."""
     kwargs = dict(
         model=model or CHAT_MODEL,
-        max_tokens=max_tokens or CHAT_MAX_TOKENS * 2,
+        max_tokens=max_tokens or AGENT_MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": user_msg}],
     )
@@ -4524,7 +4525,7 @@ async def create_poster(body: PosterCreateRequest, request: Request, db=Depends(
         yield f"data: {json.dumps({'type': 'status', 'message': 'Designing your poster...'})}\n\n"
 
         task = asyncio.create_task(_call_claude_bg(
-            client, system, body.prompt, max_tokens=16000, model=model
+            client, system, body.prompt, max_tokens=8000, model=model
         ))
         while not task.done():
             yield ":\n\n"
@@ -4589,7 +4590,7 @@ async def update_poster(poster_id: str, body: PosterUpdateRequest, request: Requ
         yield f"data: {json.dumps({'type': 'status', 'message': 'Updating your poster...'})}\n\n"
 
         task = asyncio.create_task(_call_claude_bg(
-            client, POSTER_UPDATE_SYSTEM, user_msg, max_tokens=16000, model=model
+            client, POSTER_UPDATE_SYSTEM, user_msg, max_tokens=8000, model=model
         ))
         while not task.done():
             yield ":\n\n"
