@@ -247,6 +247,7 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .sess-item:hover .sess-del{opacity:1}
 .sess-item .sess-del:hover{color:var(--red)}
 /* Top nav tabs */
+.top-nav-wrap{position:relative}
 .top-nav{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:1.25rem;
   flex-wrap:wrap;flex-shrink:0}
 .top-nav button{padding:0.6rem 1rem;background:none;border:none;color:var(--muted);
@@ -259,11 +260,17 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .sidebar{display:none}
 .main{padding:0.75rem 0.5rem;height:100%}
 .main h2{font-size:1.15rem;margin-bottom:0.75rem}
-/* Top nav: horizontal scroll on mobile */
+/* Top nav: horizontal scroll on mobile with fade hint */
 .top-nav{overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap;
-  margin:0 -0.5rem 0.75rem;padding:0 0.5rem;scrollbar-width:none;gap:0}
+  margin:0 -0.5rem 0.75rem;padding:0 0.5rem;scrollbar-width:none;gap:0;
+  position:relative}
 .top-nav::-webkit-scrollbar{display:none}
 .top-nav button{padding:0.55rem 0.7rem;font-size:0.78rem;flex-shrink:0}
+/* Scroll fade indicator */
+.top-nav-wrap{position:relative}
+.top-nav-wrap::after{content:'';position:absolute;top:0;right:0;bottom:0;width:32px;
+  background:linear-gradient(to right,transparent,var(--bg));pointer-events:none;z-index:2}
+.top-nav-wrap.scrolled-end::after{display:none}
 /* Auth bar */
 .api-bar{flex-direction:column;align-items:stretch;gap:0.5rem}
 .api-bar .field{width:100%;display:block!important;margin-right:0!important}
@@ -501,18 +508,20 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
   <main class="main">
 
     <!-- Top navigation tabs -->
+    <div class="top-nav-wrap" id="top-nav-wrap">
     <div class="top-nav" id="top-nav">
       <button class="active" onclick="showPage('dashboard')" id="tn-dashboard">Dashboard</button>
       <button onclick="showPage('upload')" id="tn-upload">Upload</button>
-      <button onclick="showPage('documents')" id="tn-documents">Documents</button>
+      <button onclick="showPage('documents')" id="tn-documents">Docs</button>
       <button onclick="showPage('search')" id="tn-search">Search</button>
       <button onclick="showPage('analyze')" id="tn-analyze">Analyze</button>
-      <button onclick="showPage('history')" id="tn-history">History</button>
+      <button onclick="showPage('bot')" id="tn-bot">AI Chat</button>
       <button onclick="showPage('pdftools')" id="tn-pdftools">PDF Tools</button>
       <button onclick="showPage('isointel')" id="tn-isointel">IsoIntel</button>
-      <button onclick="showPage('updater')" id="tn-updater">Doc Updater</button>
+      <button onclick="showPage('updater')" id="tn-updater">Updater</button>
       <button onclick="showPage('posters')" id="tn-posters">Posters</button>
-      <button onclick="showPage('bot')" id="tn-bot">AI Chat</button>
+      <button onclick="showPage('history')" id="tn-history">History</button>
+    </div>
     </div>
 
     <!-- Auth bar — login/register or API key -->
@@ -1214,6 +1223,15 @@ const API = window.location.origin;
 let apiConnected = false;
 let authToken = null;
 
+/* Mobile top-nav scroll fade indicator */
+(function(){
+  var nav=document.getElementById('top-nav');
+  var wrap=document.getElementById('top-nav-wrap');
+  if(nav&&wrap){nav.addEventListener('scroll',function(){
+    wrap.classList.toggle('scrolled-end',nav.scrollLeft+nav.clientWidth>=nav.scrollWidth-4);
+  });}
+})();
+
 function getKey(){ return document.getElementById('apikey').value.trim(); }
 function saveKey(){ const k=getKey(); if(k) localStorage.setItem('pdfhelper_apikey',k); }
 function showApiKeyMode(){
@@ -1492,7 +1510,7 @@ function showPage(name){
   /* Update top nav tabs */
   document.querySelectorAll('.top-nav button').forEach(b=>b.classList.remove('active'));
   var topBtn=document.getElementById('tn-'+name);
-  if(topBtn) topBtn.classList.add('active');
+  if(topBtn){topBtn.classList.add('active');topBtn.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});}
   /* Chat layout toggle */
   var m=document.querySelector('.main');
   m.classList.toggle('chat-active',name==='bot');
