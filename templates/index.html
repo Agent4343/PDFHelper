@@ -119,6 +119,7 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
 .page{display:none}.page.active{display:block}
 /* Chat/Bot page */
 .main.chat-active{padding:0;overflow:hidden;display:flex;flex-direction:column}
+.main.chat-active .top-nav-wrap{flex-shrink:0}
 .main.chat-active .top-nav{flex-shrink:0;margin-bottom:0}
 .main.chat-active .page.active{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
 .chat-page{display:flex;flex-direction:column;width:100%;height:100%}
@@ -193,6 +194,11 @@ padding:0.75rem 1rem;margin-top:0.75rem;color:var(--red);font-size:0.88rem;font-
   border-radius:8px;color:var(--muted);font-size:12px;cursor:pointer;transition:all .15s;white-space:nowrap}
 .chat-action-btn:hover{border-color:var(--accent);color:var(--accent)}
 .chat-action-btn:disabled{opacity:0.4;cursor:not-allowed}
+.chat-mobile-tools{display:none!important}
+.chat-more-toggle{display:none}
+.chat-mob-btn{padding:6px 12px;background:var(--accent-bg);border:1px solid var(--accent);color:var(--accent);
+  border-radius:8px;font-size:0.75rem;cursor:pointer;white-space:nowrap;font-weight:500;transition:all .15s}
+.chat-mob-btn:hover{background:var(--accent);color:#fff}
 #poster-preview{min-height:200px;position:relative}
 #poster-iframe{width:816px;height:1056px}
 .poster-item{display:flex;align-items:center;justify-content:space-between;padding:0.6rem 0;
@@ -301,28 +307,34 @@ input[style*="width:70px"],input[style*="width:90px"],input[style*="width:140px"
 .main.chat-active .top-nav{margin:0;padding:0 0.5rem}
 /* Hide the info card on mobile chat — it eats too much space */
 #page-bot>.card{display:none}
+/* Hide auth bar on mobile when in chat — user is already logged in */
+.main.chat-active #auth-bar{display:none!important}
 .chat-layout{flex-direction:column}
 .chat-sessions{display:none}
-.chat-page{flex:1;min-height:0}
-.chat-doc-bar{padding:6px 10px;gap:4px;overflow-x:auto;flex-wrap:nowrap;
+.chat-page{flex:1;min-height:0;overflow:hidden}
+.chat-doc-bar{padding:4px 10px;gap:4px;overflow-x:auto;flex-wrap:nowrap;
   -webkit-overflow-scrolling:touch;scrollbar-width:none}
 .chat-doc-bar::-webkit-scrollbar{display:none}
 .chat-doc-chip{flex-shrink:0}
 .chat-msgs{padding:10px;flex:1;min-height:0;overflow-y:auto;
   -webkit-overflow-scrolling:touch}
-/* Compact agent bar on mobile */
-.agent-bar{padding:4px 8px;gap:4px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-.agent-bar::-webkit-scrollbar{display:none}
-.agent-btn{padding:4px 8px;font-size:0.68rem}
-.agent-bar>span{font-size:0.65rem!important}
+/* Hide agent bar on mobile — accessible via menu later */
+.agent-bar{display:none}
 /* Compact input bar on mobile */
 .chat-input-bar{padding:6px 8px;gap:4px;padding-bottom:max(6px,env(safe-area-inset-bottom))}
 .chat-input-row{gap:6px}
 .chat-input-bar textarea{font-size:16px;padding:8px 12px}
 .chat-send{padding:8px 14px;font-size:13px}
-.chat-actions{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;gap:4px}
-.chat-actions::-webkit-scrollbar{display:none}
-.chat-actions select,.chat-actions button{font-size:11px;padding:5px 8px;flex-shrink:0}
+/* Hide desktop actions on mobile — replaced by mobile tools toggle */
+.chat-actions{display:none}
+/* Mobile tools toggle and expandable panel */
+.chat-more-toggle{display:block;width:100%;padding:5px;background:none;border:1px solid var(--border);
+  border-radius:6px;color:var(--muted);font-size:0.72rem;cursor:pointer;text-align:center}
+.chat-mobile-tools{display:none;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;padding:2px 0}
+.chat-mobile-tools::-webkit-scrollbar{display:none}
+.chat-mobile-tools.open{display:flex!important}
+.chat-mob-btn{padding:5px 10px;font-size:0.7rem}
 .chat-bbl{max-width:92%;padding:10px 12px;font-size:13px}
 .chat-empty{padding:1rem}
 .chat-empty h3{font-size:16px}
@@ -1164,6 +1176,18 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
               <button class="chat-action-btn" id="chat-export-btn" onclick="exportChatToWord()" title="Export this conversation to Word">Export .docx</button>
               <button class="chat-action-btn" id="chat-gendoc-btn" onclick="showGenDocModal()" title="Ask AI to write a new Word document">Generate Doc</button>
             </div>
+            <div class="chat-mobile-tools" id="chat-mobile-tools" style="display:none">
+              <select id="chat-model-select-mobile" onchange="document.getElementById('chat-model-select').value=this.value" style="padding:5px 8px;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.72rem;flex-shrink:0">
+                <option value="haiku">Haiku</option>
+                <option value="sonnet">Sonnet</option>
+              </select>
+              <button class="chat-mob-btn" onclick="showAgentModal('audit')">Audit</button>
+              <button class="chat-mob-btn" onclick="showAgentModal('compare')">Compare</button>
+              <button class="chat-mob-btn" onclick="showAgentModal('writer')">Write</button>
+              <button class="chat-mob-btn" onclick="exportChatToWord()">Export</button>
+              <button class="chat-mob-btn" onclick="showGenDocModal()">Gen Doc</button>
+            </div>
+            <button class="chat-more-toggle" id="chat-more-toggle" onclick="toggleChatMobileTools()">Tools &#9650;</button>
           </div>
         </div>
       </div>
@@ -2208,6 +2232,12 @@ function botUseSug(btn){
 function chatAutoResize(el){
   el.style.height='auto';
   el.style.height=Math.min(el.scrollHeight,120)+'px';
+}
+function toggleChatMobileTools(){
+  var p=document.getElementById('chat-mobile-tools');
+  var b=document.getElementById('chat-more-toggle');
+  var open=p.classList.toggle('open');
+  b.innerHTML=open?'Tools &#9660;':'Tools &#9650;';
 }
 
 async function botSend(){
