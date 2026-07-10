@@ -1332,7 +1332,13 @@ async def chat_with_documents(
     if len(procedure_context) > budget_for_procedures:
         procedure_context = procedure_context[:budget_for_procedures] + "\n\n[... procedures truncated to fit context window ...]"
 
-    system_prompt = """You are a Procedure Knowledge Assistant. Your primary job is to answer questions using ONLY the procedure documents loaded below. You also have web search available for supplementary information.
+    system_prompt = """You are a Procedure Knowledge Assistant. Your ONLY job is to answer questions about the procedure documents loaded below.
+
+ABSOLUTE CONSTRAINTS — NEVER VIOLATE THESE:
+- You are NOT a software developer. NEVER write code, build applications, generate HTML/CSS/JavaScript, or create files.
+- You are NOT a general-purpose assistant. NEVER offer to build tools, apps, dashboards, or systems.
+- You ONLY answer questions about the loaded procedure documents. If a question is not about the procedures, say "That question is outside the scope of the loaded procedures."
+- Use web search ONLY to find regulatory references or standards mentioned in the procedures. NEVER use web search to find software, tools, or application ideas.
 
 CRITICAL ACCURACY RULES:
 1. GROUND EVERY CLAIM: Every factual statement you make MUST be traceable to a specific page in the loaded procedures. If you cannot find it in the documents, say "I could not find this in the loaded procedures" — do NOT guess, infer, or fill in from general knowledge.
@@ -1389,7 +1395,7 @@ RESPONSE FORMAT:
     # Configure tools — optionally include web search
     chat_tools = []
     if CHAT_WEB_SEARCH:
-        chat_tools.append({"type": "web_search_20260209", "name": "web_search"})
+        chat_tools.append({"type": "web_search_20250305", "name": "web_search"})
 
     async def stream_chat():
         """Stream the AI response as Server-Sent Events.
@@ -1761,7 +1767,7 @@ INSTRUCTIONS:
         messages=[{"role": "user", "content": body.instructions}],
     )
     if CHAT_WEB_SEARCH:
-        create_kwargs["tools"] = [{"type": "web_search_20260209", "name": "web_search"}]
+        create_kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
 
     response = client.messages.create(**create_kwargs)
     full_text = ""
@@ -2116,7 +2122,7 @@ RULES:
         messages=[{"role": "user", "content": f"Improve this procedure. Focus areas: {focus}\n\nProduce the complete improved procedure now."}],
     )
     if CHAT_WEB_SEARCH:
-        create_kwargs["tools"] = [{"type": "web_search_20260209"}]
+        create_kwargs["tools"] = [{"type": "web_search_20250305"}]
 
     response = client.messages.create(**create_kwargs)
     full_text = ""
@@ -2983,7 +2989,7 @@ async def agent_bulk_audit(body: BulkAuditRequest, request: Request, db=Depends(
 
     from anthropic import Anthropic
     client = Anthropic(api_key=api_key)
-    web_tools = [{"type": "web_search_20260209", "name": "web_search"}] if CHAT_WEB_SEARCH else None
+    web_tools = [{"type": "web_search_20250305", "name": "web_search"}] if CHAT_WEB_SEARCH else None
 
     async def run_bulk():
         total = len(docs)
@@ -3419,7 +3425,7 @@ Use markdown formatting. Cite sources with URLs when available."""
         max_tokens=CHAT_MAX_TOKENS,
         system=system,
         messages=[{"role": "user", "content": body.query + (f"\n\nAdditional context: {body.context}" if body.context else "")}],
-        tools=[{"type": "web_search_20260209", "name": "web_search"}],
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
     )
 
     async def stream_search():
@@ -3581,7 +3587,7 @@ Respond ONLY with valid JSON. No markdown outside the JSON."""
         messages=[{"role": "user", "content": f"Review this highlighted section:\n\n{body.highlighted_text}" + (f"\n\nAdditional context: {body.context}" if body.context else "")}],
     )
     if CHAT_WEB_SEARCH:
-        create_kwargs["tools"] = [{"type": "web_search_20260209", "name": "web_search"}]
+        create_kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
 
     async def stream_review():
         full_reply = ""
@@ -3950,7 +3956,7 @@ async def agent_compliance_audit(body: ComplianceAuditRequest, request: Request,
 
     from anthropic import Anthropic
     client = Anthropic(api_key=api_key)
-    web_tools = [{"type": "web_search_20260209", "name": "web_search"}] if CHAT_WEB_SEARCH else None
+    web_tools = [{"type": "web_search_20250305", "name": "web_search"}] if CHAT_WEB_SEARCH else None
 
     async def run_audit():
         import asyncio
@@ -4290,7 +4296,7 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, request: Request,
 
     from anthropic import Anthropic
     client = Anthropic(api_key=api_key)
-    web_tools = [{"type": "web_search_20260209", "name": "web_search"}] if CHAT_WEB_SEARCH else None
+    web_tools = [{"type": "web_search_20250305", "name": "web_search"}] if CHAT_WEB_SEARCH else None
     steps = 4 if body.include_regulations else 3
 
     async def run_writer():
