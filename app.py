@@ -65,7 +65,7 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-5")
-CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "8192"))
+CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "16384"))
 AGENT_MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "12000"))
 CHAT_WEB_SEARCH = os.getenv("CHAT_WEB_SEARCH", "true").lower() == "true"
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/pdfhelper_uploads"))
