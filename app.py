@@ -64,7 +64,7 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
-CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-haiku-4-5-20251001")
+CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-4-5-20250929")
 CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "8192"))
 AGENT_MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "12000"))
 CHAT_WEB_SEARCH = os.getenv("CHAT_WEB_SEARCH", "true").lower() == "true"
@@ -1264,7 +1264,12 @@ async def chat_with_documents(
             except Exception:
                 pass  # skip if image can't be loaded
 
-    procedure_context = "\n\n".join(procedure_parts)
+    doc_index_lines = ["DOCUMENT INDEX:"]
+    for i, doc in enumerate(documents, 1):
+        decrypted_name = _decrypt_text(doc.filename)
+        doc_index_lines.append(f"  {i}. \"{decrypted_name}\" — {doc.page_count} pages")
+    doc_index = "\n".join(doc_index_lines)
+    procedure_context = doc_index + "\n\n" + "\n\n".join(procedure_parts)
 
     # Build conversation from DB history (prefer DB over client-sent history)
     db_messages = (
@@ -1277,12 +1282,12 @@ async def chat_with_documents(
     if db_messages:
         conversation = [
             {"role": m.role, "content": _decrypt_text(m.content)}
-            for m in db_messages[-20:]
+            for m in db_messages[-40:]
         ]
     else:
         conversation = [
             {"role": m.role, "content": m.content}
-            for m in body.conversation_history[-20:]
+            for m in body.conversation_history[-40:]
             if m.role in ("user", "assistant")
         ]
     # Build the user message — include images via Claude vision only on the
@@ -1327,22 +1332,28 @@ async def chat_with_documents(
     if len(procedure_context) > budget_for_procedures:
         procedure_context = procedure_context[:budget_for_procedures] + "\n\n[... procedures truncated to fit context window ...]"
 
-    system_prompt = f"""You are a Procedure Knowledge Assistant. You answer questions based on the procedure documents provided below, and when needed you can also search the web for additional information.
+    system_prompt = """You are a Procedure Knowledge Assistant. Your primary job is to answer questions using ONLY the procedure documents loaded below. You also have web search available for supplementary information.
 
-RULES:
-1. ACCURACY FIRST: Only state facts that are directly supported by the loaded procedures. If the procedures don't contain the answer, say so clearly — never guess or fabricate procedure content.
-2. CITE PRECISELY: Always cite the procedure name AND page number (e.g. **"WMS Manual 4.0.1" — Page 12**). When quoting, use the exact text from the source.
-3. MATCH RESPONSE LENGTH TO THE QUESTION: Simple questions get short answers (1-3 sentences). Complex analysis questions get structured answers with headings and lists. Never pad responses with unnecessary detail.
-4. If the answer cannot be found in the provided procedures, use web search to find relevant information. Clearly label web-sourced information as: *(Source: web search)*.
-5. If a question spans multiple procedures, reference all relevant ones and note any differences or conflicts between them.
-6. FORMAT FOR CLARITY:
-   - Use **bold** for procedure names and key terms
-   - Use markdown tables to present comparisons or tabular data from the source
-   - Use numbered lists for step-by-step procedures
-   - Use bullet lists for non-sequential items
-   - Preserve table structure from the source when a [TABLE] block is referenced
-7. When you are uncertain or the procedures are ambiguous, explicitly state: "**Note:** This requires verification — the procedure is unclear on this point."
-8. Do NOT add follow-up question suggestions unless the user's question is broad and could genuinely benefit from narrowing down."""
+CRITICAL ACCURACY RULES:
+1. GROUND EVERY CLAIM: Every factual statement you make MUST be traceable to a specific page in the loaded procedures. If you cannot find it in the documents, say "I could not find this in the loaded procedures" — do NOT guess, infer, or fill in from general knowledge.
+2. QUOTE BEFORE PARAPHRASING: When answering, first provide the exact relevant quote from the source (in a blockquote), then explain it. This forces accuracy and lets the user verify.
+3. CITE PRECISELY: Always cite the procedure name AND page number (e.g. **"WMS Manual 4.0.1" — Page 12**). Every answer must have at least one citation.
+4. DISTINGUISH SOURCES: Clearly separate what comes from the loaded procedures vs. web search vs. your general knowledge:
+   - Procedure content: cite normally with document name + page
+   - Web search results: label as *(Source: web search)*
+   - General knowledge (ONLY if explicitly asked): label as *(General knowledge — verify against your procedures)*
+5. NEVER HALLUCINATE PROCEDURE CONTENT: If you're unsure whether something is in the documents, re-read the relevant sections before answering. It is better to say "I'm not sure" than to state something incorrectly.
+6. CONFLICT DETECTION: If a question spans multiple procedures, reference all relevant ones and explicitly flag any differences or contradictions between them.
+
+RESPONSE FORMAT:
+- Simple factual questions: 1-3 sentences with a direct quote and citation
+- Step-by-step procedure questions: numbered list preserving the exact steps from the source
+- Comparison questions: markdown table with citations per cell
+- Analysis questions: structured answer with headings, but every claim cited
+- Use **bold** for procedure names and key terms
+- Preserve table structure from the source when a [TABLE] block is referenced
+- When uncertain: "**Note:** This requires verification — the procedure is unclear on this point."
+- Do NOT add follow-up question suggestions unless the question is genuinely broad"""
 
     # Use structured system prompt with cache_control for Anthropic prompt caching.
     # The rules block is cached (stable across messages), and the procedures block

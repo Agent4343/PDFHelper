@@ -1170,16 +1170,16 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
             </div>
             <div class="chat-actions">
               <select id="chat-model-select" title="AI Model" style="padding:6px 10px;background:var(--code);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;cursor:pointer">
+                <option value="sonnet">Sonnet (Accurate)</option>
                 <option value="haiku">Haiku (Fast)</option>
-                <option value="sonnet">Sonnet (Smart)</option>
               </select>
               <button class="chat-action-btn" id="chat-export-btn" onclick="exportChatToWord()" title="Export this conversation to Word">Export .docx</button>
               <button class="chat-action-btn" id="chat-gendoc-btn" onclick="showGenDocModal()" title="Ask AI to write a new Word document">Generate Doc</button>
             </div>
             <div class="chat-mobile-tools" id="chat-mobile-tools" style="display:none">
               <select id="chat-model-select-mobile" onchange="document.getElementById('chat-model-select').value=this.value" style="padding:5px 8px;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.72rem;flex-shrink:0">
-                <option value="haiku">Haiku</option>
                 <option value="sonnet">Sonnet</option>
+                <option value="haiku">Haiku</option>
               </select>
               <button class="chat-mob-btn" onclick="showAgentModal('audit')">Audit</button>
               <button class="chat-mob-btn" onclick="showAgentModal('compare')">Compare</button>
@@ -2260,7 +2260,7 @@ async function botSend(){
   botMessages.push({role:'assistant',content:''});
 
   try{
-    var chatModel=(document.getElementById('chat-model-select')||{}).value||'haiku';
+    var chatModel=(document.getElementById('chat-model-select')||{}).value||'sonnet';
     var body={message:text,doc_ids:[...botSelectedIds],conversation_history:botMessages.slice(0,-2).slice(-10),model:chatModel};
     if(currentSessionId) body.session_id=currentSessionId;
     var r=await fetch(API+'/chat',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
