@@ -1410,16 +1410,10 @@ RESPONSE FORMAT:
         chat_tools.append({"type": "web_search_20250305", "name": "web_search"})
 
     async def stream_chat():
-        """Stream the AI response as Server-Sent Events.
-
-        When CHAT_WEB_SEARCH is enabled, the Anthropic API's server-side
-        web_search connector automatically searches and returns results
-        within a single request — no multi-turn loop needed.
-        """
+        """Stream the AI response as Server-Sent Events."""
         full_reply = ""
 
         try:
-            # Send session metadata first
             yield f"data: {json.dumps({'type': 'meta', 'session_id': session_id, 'documents_used': doc_info})}\n\n"
 
             chat_model = AGENT_MODELS.get(body.model, CHAT_MODEL) if body.model else CHAT_MODEL
@@ -1432,26 +1426,40 @@ RESPONSE FORMAT:
             if chat_tools:
                 create_kwargs["tools"] = chat_tools
 
-            with client.messages.stream(**create_kwargs) as stream:
-                for event in stream:
-                    if hasattr(event, 'type'):
-                        if event.type == 'content_block_start':
-                            if hasattr(event.content_block, 'type'):
-                                if event.content_block.type == 'server_tool_use':
-                                    yield f"data: {json.dumps({'type': 'status', 'message': 'Searching the web...'})}\n\n"
-                                elif event.content_block.type == 'thinking':
-                                    yield f"data: {json.dumps({'type': 'status', 'message': 'Thinking...'})}\n\n"
-                        elif event.type == 'content_block_delta':
-                            if hasattr(event.delta, 'text'):
-                                full_reply += event.delta.text
-                                yield f"data: {json.dumps({'type': 'chunk', 'text': event.delta.text})}\n\n"
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    with client.messages.stream(**create_kwargs) as stream:
+                        for event in stream:
+                            if hasattr(event, 'type'):
+                                if event.type == 'content_block_start':
+                                    if hasattr(event.content_block, 'type'):
+                                        if event.content_block.type == 'server_tool_use':
+                                            yield f"data: {json.dumps({'type': 'status', 'message': 'Searching the web...'})}\n\n"
+                                        elif event.content_block.type == 'thinking':
+                                            yield f"data: {json.dumps({'type': 'status', 'message': 'Thinking...'})}\n\n"
+                                elif event.type == 'content_block_delta':
+                                    if hasattr(event.delta, 'text'):
+                                        full_reply += event.delta.text
+                                        yield f"data: {json.dumps({'type': 'chunk', 'text': event.delta.text})}\n\n"
+                    break
+                except Exception as retry_err:
+                    err_str = str(retry_err)
+                    is_retryable = "overloaded" in err_str.lower() or "529" in err_str or "rate" in err_str.lower()
+                    if is_retryable and attempt < max_retries - 1:
+                        import asyncio
+                        wait_time = 2 ** (attempt + 1)
+                        yield f"data: {json.dumps({'type': 'status', 'message': f'Server busy, retrying in {wait_time}s...'})}\n\n"
+                        await asyncio.sleep(wait_time)
+                        full_reply = ""
+                        continue
+                    raise
 
-            # Signal completion
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
             import logging
             logging.getLogger("pdfhelper").error("Chat AI stream failed: %s", e)
-            err_msg = "AI request failed" if IS_PRODUCTION else f"AI request failed: {str(e)}"
+            err_msg = "AI request failed — please try again" if IS_PRODUCTION else f"AI request failed: {str(e)}"
             yield f"data: {json.dumps({'type': 'error', 'detail': err_msg})}\n\n"
             full_reply = full_reply or err_msg
         finally:
