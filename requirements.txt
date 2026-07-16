@@ -1,5 +1,5 @@
 PyMuPDF>=1.24.0
-anthropic>=0.39.0
+anthropic>=0.49.0
 rich>=13.0.0
 fastapi>=0.115.0
 uvicorn>=0.32.0
