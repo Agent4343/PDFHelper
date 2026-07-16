@@ -65,7 +65,7 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "20")) * 1024 * 1024
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-5")
-CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "16384"))
+CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "32000"))
 AGENT_MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "12000"))
 CHAT_WEB_SEARCH = os.getenv("CHAT_WEB_SEARCH", "true").lower() == "true"
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/pdfhelper_uploads"))
@@ -1343,6 +1343,15 @@ IMPORTANT RULES:
 - Use web search ONLY to find regulatory references or standards mentioned in the procedures. NEVER use web search to find software templates or unrelated tools.
 - When answering questions (Q&A Mode), NEVER offer to build an application unless the user asks.
 
+CODE QUALITY RULES (Build Mode):
+- Generate COMPLETE, working, single-file HTML with all CSS and JavaScript embedded inline. Never use external CDN links.
+- Test your logic mentally before writing — ensure all variables are defined, all functions are called correctly, and all event listeners are properly attached.
+- Use clean, modern HTML5 with semantic elements. Include responsive CSS so it works on mobile and desktop.
+- Add clear section headings and professional styling. Use a clean color scheme.
+- Make sure all buttons, forms, and interactive elements actually work — wire up every onclick/onsubmit handler.
+- Include all the data from the procedures — never use placeholder text like "lorem ipsum" or "TODO".
+- Output the COMPLETE code in a single code block. Never say "rest of code here" or truncate the output.
+
 CRITICAL ACCURACY RULES:
 1. GROUND EVERY CLAIM: Every factual statement you make MUST be traceable to a specific page in the loaded procedures. If you cannot find it in the documents, say "I could not find this in the loaded procedures" — do NOT guess, infer, or fill in from general knowledge.
 2. QUOTE BEFORE PARAPHRASING: When answering, first provide the exact relevant quote from the source (in a blockquote), then explain it. This forces accuracy and lets the user verify.
@@ -1420,16 +1429,20 @@ RESPONSE FORMAT:
                 system=system_blocks,
                 messages=conversation,
             )
+            if "haiku" not in chat_model:
+                create_kwargs["thinking"] = {"type": "adaptive"}
             if chat_tools:
                 create_kwargs["tools"] = chat_tools
 
             with client.messages.stream(**create_kwargs) as stream:
                 for event in stream:
-                    # Stream text chunks to the client
                     if hasattr(event, 'type'):
                         if event.type == 'content_block_start':
-                            if hasattr(event.content_block, 'type') and event.content_block.type == 'server_tool_use':
-                                yield f"data: {json.dumps({'type': 'status', 'message': 'Searching the web...'})}\n\n"
+                            if hasattr(event.content_block, 'type'):
+                                if event.content_block.type == 'server_tool_use':
+                                    yield f"data: {json.dumps({'type': 'status', 'message': 'Searching the web...'})}\n\n"
+                                elif event.content_block.type == 'thinking':
+                                    yield f"data: {json.dumps({'type': 'status', 'message': 'Thinking...'})}\n\n"
                         elif event.type == 'content_block_delta':
                             if hasattr(event.delta, 'text'):
                                 full_reply += event.delta.text
