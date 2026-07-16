@@ -1429,8 +1429,6 @@ RESPONSE FORMAT:
                 system=system_blocks,
                 messages=conversation,
             )
-            if "haiku" not in chat_model:
-                create_kwargs["thinking"] = {"type": "adaptive"}
             if chat_tools:
                 create_kwargs["tools"] = chat_tools
 
