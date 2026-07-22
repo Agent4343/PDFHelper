@@ -2519,7 +2519,7 @@ function showAgentModal(type){
     title='Code Builder Agent';
     body='<p style="font-size:0.82rem;color:var(--muted)">Generates a complete, working HTML application using data from your documents. The output is a single HTML file you can open in any browser.</p>';
     body+='<label>Application type</label><select id="agent-app-type"><option value="dashboard">Dashboard</option><option value="tracker">Tracker</option><option value="checklist">Checklist</option><option value="form">Form</option><option value="report">Report</option><option value="custom">Custom</option></select>';
-    body+='<label>Describe what to build</label><textarea id="agent-description" rows="3" placeholder="e.g. Build a safety critical task tracker with status columns, filters, and search..."></textarea>';
+    body+='<label>Describe what to build (be as detailed as you want)</label><textarea id="agent-description" rows="8" placeholder="e.g. Build a safety critical task tracker with status columns, filters, and search. Include all tasks from the document, color-code by priority, add a print button..." style="min-height:120px;max-height:300px;resize:vertical"></textarea>';
     body+='<label>Documents to use (select multiple)</label><select id="agent-code-docs" multiple style="height:80px">'+docOpts+'</select>';
     body+=modelSelect;
   }
