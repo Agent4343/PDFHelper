@@ -640,8 +640,8 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
     <!-- Dashboard page -->
     <div class="page active" id="page-dashboard">
       <h2>Dashboard</h2>
-      <div id="dash-loading" class="loading-overlay"><div class="spinner"></div><span>Loading stats...</span></div>
-      <div id="dash-content" style="display:none">
+      <div id="dash-loading" class="loading-overlay" style="display:none"><div class="spinner"></div><span>Loading stats...</span></div>
+      <div id="dash-content">
         <div class="dash-stats" id="dash-stats"></div>
 
         <div style="display:flex;gap:1rem;flex-wrap:wrap">
@@ -1664,7 +1664,7 @@ function showPage(name){
   /* Chat layout toggle */
   var m=document.querySelector('.main');
   m.classList.toggle('chat-active',name==='bot'||name==='code');
-  if(name==='dashboard') loadDashboardStats();
+  if(name==='dashboard' && apiConnected) loadDashboardStats();
   if(name==='documents') loadDocuments();
   if(name==='history') loadHistory();
   if(name==='pdftools') loadDocuments();
@@ -3836,7 +3836,9 @@ async function loadDashboardStats(){
     }else{agents.innerHTML='<li class="dash-empty">No agent results cached</li>';}
     ld.style.display='none';ct.style.display='block';
   }catch(e){
-    ld.innerHTML='<p style="color:var(--red)">'+esc(e.message)+'</p>';
+    ld.style.display='none';ct.style.display='block';
+    var st=document.getElementById('dash-stats');
+    st.innerHTML='<div class="dash-stat"><div class="ds-num">—</div><div class="ds-label">Connect to load</div></div>';
   }
 }
 
