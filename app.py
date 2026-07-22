@@ -4437,6 +4437,174 @@ If issues are found, list them briefly. If the document is good, say so.""",
 
 
 # ---------------------------------------------------------------------------
+# Code Builder Agent
+# ---------------------------------------------------------------------------
+
+class CodeBuilderRequest(BaseModel):
+    description: str = Field(max_length=5000)
+    doc_ids: list[str] = Field(default=[])
+    app_type: str = Field(default="dashboard", pattern=r"^(dashboard|form|tracker|checklist|report|custom)$")
+    model: str = Field(default="sonnet", pattern=r"^(sonnet|haiku)$")
+
+
+@app.post("/agents/code-builder", dependencies=[Depends(verify_api_key)])
+async def agent_code_builder(body: CodeBuilderRequest, request: Request, db=Depends(get_db)):
+    """Multi-step code builder agent that generates complete HTML applications from document data."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
+
+    current_user_id = getattr(request.state, "user_id", None)
+    model = _resolve_agent_model(body.model)
+
+    doc_content = ""
+    doc_names = []
+    doc_hashes = []
+    selected_docs = db.query(DBDocument).filter(DBDocument.id.in_(body.doc_ids)).all() if body.doc_ids else []
+    if not selected_docs:
+        selected_docs = db.query(DBDocument).filter(
+            DBDocument.user_id == current_user_id
+        ).all() if current_user_id else []
+
+    for doc in selected_docs[:5]:
+        name = _decrypt_text(doc.filename)
+        doc_names.append(name)
+        doc_hashes.append(_get_doc_hash(doc))
+        pdf_bytes = _load_pdf_bytes(doc)
+        structured = extract_structured_text(pdf_bytes)
+        text = ""
+        for page_data in structured:
+            text += f"\n--- Page {page_data['page']} ---\n"
+            for block in page_data.get("blocks", []):
+                prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
+                text += f"{prefix}{block['text']}\n"
+        if len(text) > 80000:
+            text = text[:80000] + "\n[... truncated ...]"
+        doc_content += f'\n===== DOCUMENT: "{name}" =====\n{text}\n'
+
+    if len(doc_content) > 300000:
+        doc_content = doc_content[:300000] + "\n[... truncated ...]"
+
+    cache_params = f"{body.description}|type={body.app_type}"
+    cache_key = _agent_cache_key("code-builder", model, doc_hashes or ["no-docs"], cache_params)
+
+    cached = _check_agent_cache(db, cache_key, current_user_id)
+    if cached:
+        async def return_cached():
+            yield f"data: {json.dumps({'type': 'cached', 'message': 'Returning cached result'})}\n\n"
+            yield _agent_chunk(cached)
+            yield _agent_done()
+        return StreamingResponse(return_cached(), media_type="text/event-stream")
+
+    from anthropic import Anthropic
+    client = Anthropic(api_key=api_key)
+
+    async def run_builder():
+        import asyncio
+        full_code = ""
+        try:
+            # Step 1: Extract and structure the data
+            yield _agent_step(1, 3, "Extracting data from documents")
+            extract_system = """You are a data extraction specialist. Extract ALL relevant data from the provided documents and organize it into structured JSON-like format.
+
+Extract:
+- All tables (preserve rows and columns)
+- All lists and checklists
+- All named items, categories, and their properties
+- All numerical data, dates, statuses
+- All personnel roles, responsibilities
+- All procedures, steps, requirements
+- All section headings and their content hierarchy
+
+Output the extracted data in a clear, organized format that a code generator can use. Include EVERY piece of data — do not summarize or skip anything."""
+
+            task = asyncio.create_task(_call_claude_bg(client, extract_system,
+                f"Extract all data from these documents:\n\n{doc_content[:150000]}",
+                max_tokens=CHAT_MAX_TOKENS, model=model))
+            while not task.done():
+                yield ":\n\n"
+                await asyncio.sleep(3)
+            extracted_data = task.result()
+            yield _agent_step(1, 3, "Extracting data from documents", "done")
+
+            # Step 2: Plan the application
+            yield _agent_step(2, 3, "Planning application structure")
+            plan_system = f"""You are a senior web application architect. Plan a complete single-file HTML5 application.
+
+APPLICATION TYPE: {body.app_type}
+USER REQUEST: {body.description}
+DOCUMENTS USED: {', '.join(doc_names)}
+
+Plan the application with:
+1. Component layout (what sections, panels, and UI elements)
+2. Data model (how the extracted data maps to the UI)
+3. Interactivity (filters, search, sorting, tabs, modals)
+4. Color scheme and visual design approach
+5. Responsive layout strategy
+
+Keep the plan focused and specific to the actual data provided."""
+
+            task = asyncio.create_task(_call_claude_bg(client, plan_system,
+                f"Plan the application using this extracted data:\n\n{extracted_data[:50000]}",
+                model=model))
+            while not task.done():
+                yield ":\n\n"
+                await asyncio.sleep(3)
+            plan = task.result()
+            yield _agent_step(2, 3, "Planning application structure", "done")
+
+            # Step 3: Generate the complete code
+            yield _agent_step(3, 3, "Generating complete HTML application")
+            code_system = f"""You are an expert front-end developer. Generate a COMPLETE, PRODUCTION-READY, single-file HTML5 application.
+
+APPLICATION TYPE: {body.app_type}
+USER REQUEST: {body.description}
+DOCUMENTS USED: {', '.join(doc_names)}
+
+APPLICATION PLAN:
+{plan[:15000]}
+
+ABSOLUTE REQUIREMENTS — YOUR CODE WILL BE REJECTED IF ANY ARE VIOLATED:
+1. Output ONLY the HTML code — start with <!DOCTYPE html> and end with </html>. No explanations, no markdown fences, no commentary before or after the code.
+2. SINGLE FILE — all CSS in <style> tags, all JavaScript in <script> tags. ZERO external dependencies (no CDN links, no imports, no external fonts).
+3. ALL DATA EMBEDDED — every piece of data from the documents must be hardcoded as JavaScript arrays/objects inside the file. Never use placeholder data like "Item 1", "Lorem ipsum", or "TODO".
+4. FULLY FUNCTIONAL — every button, filter, search box, tab, and interactive element must work. Test mentally: click each button, type in each input — does it do something?
+5. RESPONSIVE — must work on both desktop (1200px+) and mobile (375px). Use CSS Grid/Flexbox, relative units, and media queries.
+6. PROFESSIONAL DESIGN — clean modern UI with a cohesive color scheme, proper spacing, shadows, rounded corners, hover states on interactive elements.
+7. COMPLETE — do not truncate, abbreviate, or skip any section. The output must be the entire working application.
+8. INCLUDE: search/filter functionality, sorting where applicable, print-friendly styles (@media print), and a professional header with the application title.
+
+Remember: Output ONLY the raw HTML code. No markdown, no explanations."""
+
+            for chunk in _stream_claude(client, code_system,
+                f"Generate the complete HTML application using this data:\n\n{extracted_data[:80000]}",
+                max_tokens=CHAT_MAX_TOKENS * 3, model=model):
+                full_code += chunk
+                yield _agent_chunk(chunk)
+
+            yield _agent_step(3, 3, "Generating complete HTML application", "done")
+
+            save_db = SessionLocal()
+            try:
+                _save_agent_cache(save_db, cache_key, "code-builder", model,
+                                  full_code, body.doc_ids,
+                                  body.description[:200],
+                                  user_id=current_user_id)
+            finally:
+                save_db.close()
+
+            yield _agent_done()
+
+        except Exception as e:
+            import logging
+            logging.getLogger("pdfhelper").error("Code builder agent failed: %s", e)
+            err_msg = "Code generation failed" if IS_PRODUCTION else f"Code generation failed: {str(e)}"
+            yield _agent_error(err_msg)
+
+    return StreamingResponse(run_builder(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
 # Agent Cache Management
 # ---------------------------------------------------------------------------
 
