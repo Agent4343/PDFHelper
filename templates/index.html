@@ -2454,12 +2454,12 @@ async function initCode(){
   await loadCodeSessions();
   if(!codeInited && allDocs.length>0 && codeMessages.length===0){
     codeInited=true;
-    var g='**Code Builder ready!** I have access to **'+allDocs.length+' document'+(allDocs.length>1?'s':'')+'**.\\n\\n';
-    g+='Tell me what you want to build — for example:\\n';
-    g+='- "Build a safety checklist app using the procedures"\\n';
-    g+='- "Create a training quiz from the manual"\\n';
-    g+='- "Make a dashboard showing all equipment tags"\\n\\n';
-    g+='I\\'ll generate complete HTML code and you can preview it live on the right.';
+    var g='**Code Builder ready!** I have access to **'+allDocs.length+' document'+(allDocs.length>1?'s':'')+'**.\n\n';
+    g+='Tell me what you want to build — for example:\n';
+    g+='- "Build a safety checklist app using the procedures"\n';
+    g+='- "Create a training quiz from the manual"\n';
+    g+='- "Make a dashboard showing all equipment tags"\n\n';
+    g+='I will generate complete HTML code and you can preview it live on the right.';
     codeMessages.push({role:'assistant',content:g});
   }
   renderCodeMessages();
@@ -2518,12 +2518,12 @@ function startNewCode(){
   if(panel) panel.classList.remove('visible');
   if(allDocs.length>0){
     codeInited=true;
-    var g='**Code Builder ready!** I have access to **'+allDocs.length+' document'+(allDocs.length>1?'s':'')+'**.\\n\\n';
-    g+='Tell me what you want to build — for example:\\n';
-    g+='- "Build a safety checklist app using the procedures"\\n';
-    g+='- "Create a training quiz from the manual"\\n';
-    g+='- "Make a dashboard showing all equipment tags"\\n\\n';
-    g+='I\\'ll generate complete HTML code and you can preview it live on the right.';
+    var g='**Code Builder ready!** I have access to **'+allDocs.length+' document'+(allDocs.length>1?'s':'')+'**.\n\n';
+    g+='Tell me what you want to build — for example:\n';
+    g+='- "Build a safety checklist app using the procedures"\n';
+    g+='- "Create a training quiz from the manual"\n';
+    g+='- "Make a dashboard showing all equipment tags"\n\n';
+    g+='I will generate complete HTML code and you can preview it live on the right.';
     codeMessages.push({role:'assistant',content:g});
   }
   renderCodeMessages();
