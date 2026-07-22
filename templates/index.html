@@ -1158,6 +1158,8 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="8" height="16" rx="1"/><rect x="14" y="4" width="8" height="16" rx="1"/><path d="M12 2v20"/></svg>Compare Docs</button>
             <button class="agent-btn" onclick="showAgentModal('writer')" id="agent-writer-btn">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Write Procedure</button>
+            <button class="agent-btn" onclick="showAgentModal('codebuilder')" id="agent-code-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>Build App</button>
             <button class="agent-btn" onclick="clearAgentCache()" id="agent-cache-btn" style="margin-left:auto;border-color:var(--border);color:var(--muted);background:transparent;font-weight:400">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Clear Cache</button>
           </div>
@@ -1184,6 +1186,7 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
               <button class="chat-mob-btn" onclick="showAgentModal('audit')">Audit</button>
               <button class="chat-mob-btn" onclick="showAgentModal('compare')">Compare</button>
               <button class="chat-mob-btn" onclick="showAgentModal('writer')">Write</button>
+              <button class="chat-mob-btn" onclick="showAgentModal('codebuilder')">Build App</button>
               <button class="chat-mob-btn" onclick="exportChatToWord()">Export</button>
               <button class="chat-mob-btn" onclick="showGenDocModal()">Gen Doc</button>
             </div>
@@ -2512,6 +2515,13 @@ function showAgentModal(type){
     body+='<label>Style reference documents (optional)</label><select id="agent-refs" multiple style="height:60px">'+docOpts+'</select>';
     body+='<label style="margin-top:8px"><input type="checkbox" id="agent-regs" checked style="width:auto;margin-right:6px">Search for applicable regulations</label>';
     body+=modelSelect;
+  } else if(type==='codebuilder'){
+    title='Code Builder Agent';
+    body='<p style="font-size:0.82rem;color:var(--muted)">Generates a complete, working HTML application using data from your documents. The output is a single HTML file you can open in any browser.</p>';
+    body+='<label>Application type</label><select id="agent-app-type"><option value="dashboard">Dashboard</option><option value="tracker">Tracker</option><option value="checklist">Checklist</option><option value="form">Form</option><option value="report">Report</option><option value="custom">Custom</option></select>';
+    body+='<label>Describe what to build</label><textarea id="agent-description" rows="3" placeholder="e.g. Build a safety critical task tracker with status columns, filters, and search..."></textarea>';
+    body+='<label>Documents to use (select multiple)</label><select id="agent-code-docs" multiple style="height:80px">'+docOpts+'</select>';
+    body+=modelSelect;
   }
 
   if(!allDocs.length && type!=='writer'){
@@ -2564,6 +2574,15 @@ async function runAgent(){
     url=API+'/agents/procedure-writer';
     body={description:desc,source_doc_id:srcDoc,reference_doc_ids:refIds,include_regulations:inclRegs,model:agentModel};
     botMessages.push({role:'user',content:'Write a procedure: '+desc+(srcName?' (based on '+srcName.filename+')':'')+' ['+agentModel+']'});
+  } else if(activeAgentType==='codebuilder'){
+    var desc=(document.getElementById('agent-description')||{}).value||'';
+    if(!desc.trim()){toast('Describe what to build','error');return;}
+    var appType=(document.getElementById('agent-app-type')||{}).value||'dashboard';
+    var codeDocs=document.getElementById('agent-code-docs');
+    var docIds=codeDocs?Array.from(codeDocs.selectedOptions).map(function(o){return o.value;}):[];
+    url=API+'/agents/code-builder';
+    body={description:desc,app_type:appType,doc_ids:docIds,model:agentModel};
+    botMessages.push({role:'user',content:'Build a '+appType+': '+desc+' ['+agentModel+']'});
   }
 
   agentRunning=true;
