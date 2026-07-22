@@ -4441,7 +4441,7 @@ If issues are found, list them briefly. If the document is good, say so.""",
 # ---------------------------------------------------------------------------
 
 class CodeBuilderRequest(BaseModel):
-    description: str = Field(max_length=5000)
+    description: str = Field(max_length=50000)
     doc_ids: list[str] = Field(default=[])
     app_type: str = Field(default="dashboard", pattern=r"^(dashboard|form|tracker|checklist|report|custom)$")
     model: str = Field(default="sonnet", pattern=r"^(sonnet|haiku)$")
