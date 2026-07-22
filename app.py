@@ -67,7 +67,7 @@ MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "20"))
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-5")
 CHAT_MAX_TOKENS = int(os.getenv("CHAT_MAX_TOKENS", "32000"))
 AGENT_MAX_TOKENS = int(os.getenv("AGENT_MAX_TOKENS", "12000"))
-CHAT_WEB_SEARCH = os.getenv("CHAT_WEB_SEARCH", "true").lower() == "true"
+CHAT_WEB_SEARCH = os.getenv("CHAT_WEB_SEARCH", "false").lower() == "true"
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/pdfhelper_uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1233,10 +1233,14 @@ async def chat_with_documents(
                     prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
                     parts.append(f"{prefix}{block['text']}")
             full_text = "\n".join(parts)
-        except Exception:
+        except Exception as exc:
+            logging.getLogger("pdfhelper").warning("Structured extraction failed for %s: %s", doc.id, exc)
             pages = json.loads(_decrypt_text(doc.text_content))
-            full_text = "\n".join(p["text"] for p in pages if p.get("text"))
-        if len(full_text) > 80000:
+            full_text = "\n".join(
+                f"\n--- Page {p['page']} ---\n{p['text']}" for p in pages if p.get("text")
+            )
+        per_doc_limit = max(80000, 500000 // max(len(documents), 1))
+        if len(full_text) > per_doc_limit:
             full_text = full_text[:80000] + "\n\n[... content truncated for context window ...]"
         procedure_parts.append(
             f'--- PROCEDURE: "{decrypted_name}" ---\n{full_text}\n--- END OF "{decrypted_name}" ---'
@@ -1282,14 +1286,16 @@ async def chat_with_documents(
     if db_messages:
         conversation = [
             {"role": m.role, "content": _decrypt_text(m.content)}
-            for m in db_messages[-40:]
+            for m in db_messages[-20:]
         ]
     else:
         conversation = [
             {"role": m.role, "content": m.content}
-            for m in body.conversation_history[-40:]
+            for m in body.conversation_history[-20:]
             if m.role in ("user", "assistant")
         ]
+    while conversation and conversation[0]["role"] != "user":
+        conversation.pop(0)
     # Build the user message — include images via Claude vision only on the
     # first message of a session so they aren't re-sent on every turn.
     include_images = image_content_blocks and not db_messages
@@ -1332,46 +1338,22 @@ async def chat_with_documents(
     if len(procedure_context) > budget_for_procedures:
         procedure_context = procedure_context[:budget_for_procedures] + "\n\n[... procedures truncated to fit context window ...]"
 
-    system_prompt = """You are a Procedure Knowledge Assistant. You have two modes:
+    system_prompt = """You are a Procedure Knowledge Assistant. Answer questions ONLY from the procedure documents loaded below.
 
-1. **Q&A MODE** (default): Answer questions about the procedure documents loaded below. Ground every answer in the documents with quotes and citations.
-2. **BUILD MODE**: When the user explicitly asks you to build, create, generate, or develop code (HTML, CSS, JavaScript, etc.), generate the requested code using ONLY data and content from the loaded procedure documents.
-
-IMPORTANT RULES:
-- NEVER switch to Build Mode on your own. Only generate code when the user explicitly asks for it (e.g. "build an HTML page", "create a form", "generate a dashboard").
-- In Build Mode, ALL data, text, steps, and content in the generated code MUST come from the loaded procedure documents — do NOT invent or fabricate content.
-- Use web search ONLY to find regulatory references or standards mentioned in the procedures. NEVER use web search to find software templates or unrelated tools.
-- When answering questions (Q&A Mode), NEVER offer to build an application unless the user asks.
-
-CODE QUALITY RULES (Build Mode):
-- Generate COMPLETE, working, single-file HTML with all CSS and JavaScript embedded inline. Never use external CDN links.
-- Test your logic mentally before writing — ensure all variables are defined, all functions are called correctly, and all event listeners are properly attached.
-- Use clean, modern HTML5 with semantic elements. Include responsive CSS so it works on mobile and desktop.
-- Add clear section headings and professional styling. Use a clean color scheme.
-- Make sure all buttons, forms, and interactive elements actually work — wire up every onclick/onsubmit handler.
-- Include all the data from the procedures — never use placeholder text like "lorem ipsum" or "TODO".
-- Output the COMPLETE code in a single code block. Never say "rest of code here" or truncate the output.
-
-CRITICAL ACCURACY RULES:
-1. GROUND EVERY CLAIM: Every factual statement you make MUST be traceable to a specific page in the loaded procedures. If you cannot find it in the documents, say "I could not find this in the loaded procedures" — do NOT guess, infer, or fill in from general knowledge.
-2. QUOTE BEFORE PARAPHRASING: When answering, first provide the exact relevant quote from the source (in a blockquote), then explain it. This forces accuracy and lets the user verify.
-3. CITE PRECISELY: Always cite the procedure name AND page number (e.g. **"WMS Manual 4.0.1" — Page 12**). Every answer must have at least one citation.
-4. DISTINGUISH SOURCES: Clearly separate what comes from the loaded procedures vs. web search vs. your general knowledge:
-   - Procedure content: cite normally with document name + page
-   - Web search results: label as *(Source: web search)*
-   - General knowledge (ONLY if explicitly asked): label as *(General knowledge — verify against your procedures)*
-5. NEVER HALLUCINATE PROCEDURE CONTENT: If you're unsure whether something is in the documents, re-read the relevant sections before answering. It is better to say "I'm not sure" than to state something incorrectly.
-6. CONFLICT DETECTION: If a question spans multiple procedures, reference all relevant ones and explicitly flag any differences or contradictions between them.
+RULES — READ THESE FIRST:
+1. EVERY answer MUST come from the loaded documents. If you cannot find it, say "I could not find this in the loaded procedures." Do NOT guess or use general knowledge.
+2. ALWAYS quote the relevant text from the document (in a blockquote), then explain it.
+3. ALWAYS cite the document name AND page number (e.g. **"WMS Manual 4.0.1" — Page 12**).
+4. If you're unsure, say so. Never fabricate procedure content.
+5. If multiple documents cover the same topic, cite all of them and flag any differences.
+6. If the user asks you to build or generate code (HTML, apps, etc.), you may do so, but ALL data in the code MUST come from the loaded documents — never invent content.
 
 RESPONSE FORMAT:
-- Simple factual questions: 1-3 sentences with a direct quote and citation
-- Step-by-step procedure questions: numbered list preserving the exact steps from the source
-- Comparison questions: markdown table with citations per cell
-- Analysis questions: structured answer with headings, but every claim cited
+- Simple questions: 1-3 sentences with a quote and citation
+- Procedure steps: numbered list preserving the exact steps from the source
+- Comparisons: markdown table with citations per cell
 - Use **bold** for procedure names and key terms
-- Preserve table structure from the source when a [TABLE] block is referenced
-- When uncertain: "**Note:** This requires verification — the procedure is unclear on this point."
-- Do NOT add follow-up question suggestions unless the question is genuinely broad"""
+- Preserve table structure from the source when a [TABLE] block is referenced"""
 
     # Use structured system prompt with cache_control for Anthropic prompt caching.
     # The rules block is cached (stable across messages), and the procedures block
