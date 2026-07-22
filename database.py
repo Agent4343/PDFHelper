@@ -191,6 +191,35 @@ class DBAgentCache(Base):
     expires_at = Column(DateTime, nullable=True)
 
 
+class DBCodeSession(Base):
+    """A code chat session for iterative code generation."""
+    __tablename__ = "code_sessions"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    title = Column(String, nullable=True)
+    doc_ids = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+    messages = relationship("DBCodeMessage", back_populates="session",
+                            order_by="DBCodeMessage.created_at",
+                            cascade="all, delete-orphan")
+
+
+class DBCodeMessage(Base):
+    """A message in a code chat session."""
+    __tablename__ = "code_messages"
+
+    id = Column(String, primary_key=True)
+    session_id = Column(String, ForeignKey("code_sessions.id"), nullable=False)
+    role = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+
+    session = relationship("DBCodeSession", back_populates="messages")
+
+
 class DBPoster(Base):
     """AI-generated poster with editable HTML content."""
     __tablename__ = "posters"
