@@ -2598,11 +2598,11 @@ function renderCodeMessages(){
 }
 
 function extractHtmlFromContent(content){
-  var match=content.match(/```html\s*\n([\s\S]*?)```/);
+  var match=content.match(/```html\s*\n([\s\S]*)```/);
   if(match) return match[1].trim();
-  match=content.match(/```\s*\n(<!DOCTYPE[\s\S]*?)```/i);
+  match=content.match(/```\s*\n(<!DOCTYPE[\s\S]*)```/i);
   if(match) return match[1].trim();
-  match=content.match(/```\s*\n(<html[\s\S]*?)```/i);
+  match=content.match(/```\s*\n(<html[\s\S]*)```/i);
   if(match) return match[1].trim();
   return null;
 }
