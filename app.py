@@ -339,6 +339,7 @@ PDF_MAGIC_BYTES = b"%PDF-"
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"}
 ALLOWED_SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".csv"}
 ALLOWED_WORD_EXTENSIONS = {".docx", ".doc"}
+ALLOWED_TEXT_EXTENSIONS = {".js", ".html", ".htm", ".css", ".md", ".txt", ".json", ".xml", ".yaml", ".yml", ".py", ".ts", ".tsx", ".jsx", ".sql", ".sh", ".env", ".toml", ".ini", ".cfg"}
 
 
 def _verify_pdf_content(data: bytes) -> bool:
@@ -390,6 +391,33 @@ def _is_spreadsheet_file(filename: str) -> bool:
 
 def _is_word_file(filename: str) -> bool:
     return any(filename.lower().endswith(ext) for ext in ALLOWED_WORD_EXTENSIONS)
+
+
+def _is_text_file(filename: str) -> bool:
+    return any(filename.lower().endswith(ext) for ext in ALLOWED_TEXT_EXTENSIONS)
+
+
+def _extract_text_file(content: bytes, filename: str) -> list[dict]:
+    """Extract text from a plain text/code file, chunked into page-equivalents."""
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        text = content.decode("latin-1")
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    label = f"[{ext.upper()} FILE: {filename}]"
+
+    if not text.strip():
+        return [{"page": 1, "text": f"{label}\n(Empty file)"}]
+
+    page_size = 3000
+    pages = []
+    for i in range(0, len(text), page_size):
+        chunk = text[i:i + page_size]
+        header = f"{label} (part {len(pages) + 1})" if len(text) > page_size else label
+        pages.append({"page": len(pages) + 1, "text": f"{header}\n{chunk}"})
+
+    return pages
 
 
 def _extract_word_text(content: bytes) -> list[dict]:
@@ -740,8 +768,8 @@ class IsolationRequest(BaseModel):
 # Validation
 # ---------------------------------------------------------------------------
 
-def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool, bool, bool]:
-    """Validate an uploaded file. Returns (sanitized_name, file_bytes, is_image, is_spreadsheet, is_word)."""
+def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, str]:
+    """Validate an uploaded file. Returns (sanitized_name, file_bytes, file_type)."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
 
@@ -749,10 +777,11 @@ def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool,
     is_image = _is_image_file(clean_name)
     is_spreadsheet = _is_spreadsheet_file(clean_name)
     is_word = _is_word_file(clean_name)
+    is_text = _is_text_file(clean_name)
 
-    if not clean_name.lower().endswith(".pdf") and not is_image and not is_spreadsheet and not is_word:
+    if not clean_name.lower().endswith(".pdf") and not is_image and not is_spreadsheet and not is_word and not is_text:
         raise HTTPException(status_code=400,
-                            detail=f"Only PDF, Word, image, and Excel/CSV files allowed, got: {clean_name}")
+                            detail=f"Unsupported file type: {clean_name}")
 
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
@@ -761,21 +790,23 @@ def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool,
         )
 
     if is_spreadsheet:
-        return clean_name, content, False, True, False
+        return clean_name, content, "spreadsheet"
     elif is_word:
-        return clean_name, content, False, False, True
+        return clean_name, content, "word"
+    elif is_text:
+        return clean_name, content, "text"
     elif is_image:
         try:
             pdf_bytes = _image_to_pdf(content)
         except Exception as exc:
             raise HTTPException(status_code=400,
                                 detail=f"Could not process image {clean_name}: {exc}")
-        return clean_name, pdf_bytes, True, False, False
+        return clean_name, pdf_bytes, "image"
     else:
         if not _verify_pdf_content(content):
             raise HTTPException(status_code=400,
                                 detail="File does not appear to be a valid PDF")
-        return clean_name, content, False, False, False
+        return clean_name, content, "pdf"
 
 
 # ---------------------------------------------------------------------------
@@ -996,12 +1027,10 @@ async def upload_pdfs(
     background_tasks: BackgroundTasks = None,
     db=Depends(get_db),
 ):
-    """Upload one or more PDFs, Word docs, images, or Excel/CSV files for later searching.
+    """Upload files for later searching.
 
-    Supported formats: PDF, DOCX, DOC, JPG, PNG, TIFF, BMP, WebP, XLSX, XLS, CSV.
-    Images are automatically converted to PDF and OCR'd for text extraction.
-    Word documents are parsed for text, headings, lists, and tables.
-    Spreadsheets are converted to markdown tables for AI consumption.
+    Supported formats: PDF, DOCX, JS, HTML, CSS, MD, TXT, JSON, XML, YAML, PY,
+    JPG, PNG, TIFF, BMP, WebP, XLSX, XLS, CSV (and more code/text formats).
     """
     if len(files) > MAX_FILES_PER_REQUEST:
         raise HTTPException(status_code=400,
@@ -1015,12 +1044,14 @@ async def upload_pdfs(
     uploaded = []
     for file in files:
         raw_content = await file.read()
-        clean_name, file_bytes, is_image, is_spreadsheet, is_word = validate_upload(file, raw_content)
+        clean_name, file_bytes, file_type = validate_upload(file, raw_content)
 
-        if is_spreadsheet:
+        if file_type == "spreadsheet":
             pages = _extract_spreadsheet_text(raw_content, clean_name)
-        elif is_word:
+        elif file_type == "word":
             pages = _extract_word_text(raw_content)
+        elif file_type == "text":
+            pages = _extract_text_file(raw_content, clean_name)
         else:
             pages = extract_text_from_bytes(file_bytes)
 
@@ -1029,12 +1060,11 @@ async def upload_pdfs(
 
         _encrypt_and_save(raw_content, save_path)
 
-        if is_image:
+        if file_type == "image":
             img_save_path = UPLOAD_DIR / f"{doc_id}.img.enc"
             _encrypt_and_save(raw_content, img_save_path)
 
         content_hash = hashlib.sha256(raw_content).hexdigest()
-        file_type = "spreadsheet" if is_spreadsheet else ("word" if is_word else ("image" if is_image else "pdf"))
 
         db_doc = DBDocument(
             id=doc_id,
