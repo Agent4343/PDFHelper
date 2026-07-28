@@ -338,6 +338,7 @@ PDF_MAGIC_BYTES = b"%PDF-"
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"}
 ALLOWED_SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".csv"}
+ALLOWED_WORD_EXTENSIONS = {".docx", ".doc"}
 
 
 def _verify_pdf_content(data: bytes) -> bool:
@@ -385,6 +386,54 @@ def _detect_image_media_type(image_bytes: bytes) -> str:
 
 def _is_spreadsheet_file(filename: str) -> bool:
     return any(filename.lower().endswith(ext) for ext in ALLOWED_SPREADSHEET_EXTENSIONS)
+
+
+def _is_word_file(filename: str) -> bool:
+    return any(filename.lower().endswith(ext) for ext in ALLOWED_WORD_EXTENSIONS)
+
+
+def _extract_word_text(content: bytes) -> list[dict]:
+    """Extract text from a Word document (.docx), one page-equivalent per ~3000 chars."""
+    import io
+    from docx import Document
+
+    try:
+        doc = Document(io.BytesIO(content))
+    except Exception:
+        raise HTTPException(status_code=400,
+                            detail="Could not read Word document. Only .docx format is supported (not legacy .doc).")
+    parts = []
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        style = para.style.name if para.style else ""
+        if "Heading" in style:
+            parts.append(f"[HEADING] {text}")
+        elif style.startswith("List"):
+            parts.append(f"[LIST] {text}")
+        else:
+            parts.append(text)
+
+    for table in doc.tables:
+        rows = []
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            rows.append(" | ".join(cells))
+        if rows:
+            parts.append(f"[TABLE]\n" + "\n".join(rows) + "\n[/TABLE]")
+
+    full_text = "\n".join(parts)
+    if not full_text:
+        return [{"page": 1, "text": "(Empty document)"}]
+
+    page_size = 3000
+    pages = []
+    for i in range(0, len(full_text), page_size):
+        chunk = full_text[i:i + page_size]
+        pages.append({"page": len(pages) + 1, "text": chunk})
+
+    return pages
 
 
 def _extract_spreadsheet_text(content: bytes, filename: str) -> list[dict]:
@@ -691,18 +740,19 @@ class IsolationRequest(BaseModel):
 # Validation
 # ---------------------------------------------------------------------------
 
-def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool, bool]:
-    """Validate an uploaded file. Returns (sanitized_name, file_bytes, is_image, is_spreadsheet)."""
+def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool, bool, bool]:
+    """Validate an uploaded file. Returns (sanitized_name, file_bytes, is_image, is_spreadsheet, is_word)."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
 
     clean_name = _sanitize_filename(file.filename)
     is_image = _is_image_file(clean_name)
     is_spreadsheet = _is_spreadsheet_file(clean_name)
+    is_word = _is_word_file(clean_name)
 
-    if not clean_name.lower().endswith(".pdf") and not is_image and not is_spreadsheet:
+    if not clean_name.lower().endswith(".pdf") and not is_image and not is_spreadsheet and not is_word:
         raise HTTPException(status_code=400,
-                            detail=f"Only PDF, image, and Excel/CSV files allowed, got: {clean_name}")
+                            detail=f"Only PDF, Word, image, and Excel/CSV files allowed, got: {clean_name}")
 
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
@@ -711,19 +761,21 @@ def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, bool,
         )
 
     if is_spreadsheet:
-        return clean_name, content, False, True
+        return clean_name, content, False, True, False
+    elif is_word:
+        return clean_name, content, False, False, True
     elif is_image:
         try:
             pdf_bytes = _image_to_pdf(content)
         except Exception as exc:
             raise HTTPException(status_code=400,
                                 detail=f"Could not process image {clean_name}: {exc}")
-        return clean_name, pdf_bytes, True, False
+        return clean_name, pdf_bytes, True, False, False
     else:
         if not _verify_pdf_content(content):
             raise HTTPException(status_code=400,
                                 detail="File does not appear to be a valid PDF")
-        return clean_name, content, False, False
+        return clean_name, content, False, False, False
 
 
 # ---------------------------------------------------------------------------
@@ -944,10 +996,11 @@ async def upload_pdfs(
     background_tasks: BackgroundTasks = None,
     db=Depends(get_db),
 ):
-    """Upload one or more PDFs, images, or Excel/CSV files for later searching.
+    """Upload one or more PDFs, Word docs, images, or Excel/CSV files for later searching.
 
-    Supported formats: PDF, JPG, PNG, TIFF, BMP, WebP, XLSX, XLS, CSV.
+    Supported formats: PDF, DOCX, DOC, JPG, PNG, TIFF, BMP, WebP, XLSX, XLS, CSV.
     Images are automatically converted to PDF and OCR'd for text extraction.
+    Word documents are parsed for text, headings, lists, and tables.
     Spreadsheets are converted to markdown tables for AI consumption.
     """
     if len(files) > MAX_FILES_PER_REQUEST:
@@ -962,10 +1015,12 @@ async def upload_pdfs(
     uploaded = []
     for file in files:
         raw_content = await file.read()
-        clean_name, file_bytes, is_image, is_spreadsheet = validate_upload(file, raw_content)
+        clean_name, file_bytes, is_image, is_spreadsheet, is_word = validate_upload(file, raw_content)
 
         if is_spreadsheet:
             pages = _extract_spreadsheet_text(raw_content, clean_name)
+        elif is_word:
+            pages = _extract_word_text(raw_content)
         else:
             pages = extract_text_from_bytes(file_bytes)
 
@@ -979,7 +1034,7 @@ async def upload_pdfs(
             _encrypt_and_save(raw_content, img_save_path)
 
         content_hash = hashlib.sha256(raw_content).hexdigest()
-        file_type = "spreadsheet" if is_spreadsheet else ("image" if is_image else "pdf")
+        file_type = "spreadsheet" if is_spreadsheet else ("word" if is_word else ("image" if is_image else "pdf"))
 
         db_doc = DBDocument(
             id=doc_id,
