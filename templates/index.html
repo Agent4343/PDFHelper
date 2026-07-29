@@ -342,10 +342,12 @@ input[style*="width:70px"],input[style*="width:90px"],input[style*="width:140px"
 #page-code .code-mobile-tools.open{display:flex!important}
 #page-code .code-more-toggle{display:block;width:100%;padding:5px;background:none;border:1px solid var(--border);
   border-radius:6px;color:var(--muted);font-size:0.72rem;cursor:pointer;text-align:center}
-.chat-doc-bar{padding:4px 10px;gap:4px;overflow-x:auto;flex-wrap:nowrap;
-  -webkit-overflow-scrolling:touch;scrollbar-width:none}
-.chat-doc-bar::-webkit-scrollbar{display:none}
+.chat-doc-bar{padding:4px 10px;gap:4px;flex-wrap:wrap;max-height:42px;overflow:hidden;
+  transition:max-height .25s ease;position:relative}
+.chat-doc-bar.expanded{max-height:50vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .chat-doc-chip{flex-shrink:0}
+.chat-doc-toggle{display:block;width:100%;padding:3px;background:none;border:1px solid var(--border);
+  border-radius:6px;color:var(--muted);font-size:0.7rem;cursor:pointer;text-align:center;margin-top:2px}
 .chat-msgs{padding:10px;flex:1;min-height:0;overflow-y:auto;
   -webkit-overflow-scrolling:touch}
 /* Hide agent bar on mobile — accessible via menu later */
@@ -1185,9 +1187,10 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
         </div>
         <div class="code-main-split">
           <div class="chat-page">
-            <div class="chat-doc-bar">
+            <div class="chat-doc-bar" id="code-doc-bar">
               <span class="chat-doc-label">Documents:</span>
-              <div id="code-doc-chips" style="display:inline;"></div>
+              <div id="code-doc-chips" style="display:contents;"></div>
+              <button class="chat-doc-toggle" id="code-doc-toggle" onclick="toggleCodeDocBar()" style="display:none">Show all documents</button>
             </div>
             <div class="chat-msgs" id="code-msgs"></div>
             <div class="chat-input-bar">
@@ -1257,9 +1260,10 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
           <div class="sess-list" id="sess-list"></div>
         </div>
         <div class="chat-page">
-          <div class="chat-doc-bar">
+          <div class="chat-doc-bar" id="chat-doc-bar">
             <span class="chat-doc-label">Documents:</span>
-            <div id="chat-doc-chips" style="display:inline;"></div>
+            <div id="chat-doc-chips" style="display:contents;"></div>
+            <button class="chat-doc-toggle" id="chat-doc-toggle" onclick="toggleChatDocBar()" style="display:none">Show all documents</button>
           </div>
           <div class="chat-msgs" id="chat-msgs"></div>
           <div class="agent-bar">
@@ -2267,6 +2271,19 @@ function renderBotDocChips(){
     var sel=botSelectedIds.has(d.id);
     return '<button class="chat-doc-chip'+(sel?' active':'')+'" onclick="toggleBotDoc(\''+d.id+'\')">'+esc(d.filename)+'</button>';
   }).join('');
+  var toggle=document.getElementById('chat-doc-toggle');
+  if(toggle){
+    toggle.style.display=allDocs.length>3&&window.innerWidth<768?'block':'none';
+    var bar=document.getElementById('chat-doc-bar');
+    if(bar) toggle.textContent=bar.classList.contains('expanded')?'Hide documents':allDocs.length+' documents (tap to expand)';
+  }
+}
+function toggleChatDocBar(){
+  var bar=document.getElementById('chat-doc-bar');
+  if(!bar) return;
+  bar.classList.toggle('expanded');
+  var toggle=document.getElementById('chat-doc-toggle');
+  if(toggle) toggle.textContent=bar.classList.contains('expanded')?'Hide documents':allDocs.length+' documents (tap to expand)';
 }
 
 function toggleBotDoc(id){
@@ -2553,6 +2570,19 @@ function renderCodeDocChips(){
     var sel=codeSelectedIds.has(d.id);
     return '<button class="chat-doc-chip'+(sel?' active':'')+'" onclick="toggleCodeDoc(\''+d.id+'\')">'+esc(d.filename)+'</button>';
   }).join('');
+  var toggle=document.getElementById('code-doc-toggle');
+  if(toggle){
+    toggle.style.display=allDocs.length>3&&window.innerWidth<768?'block':'none';
+    var bar=document.getElementById('code-doc-bar');
+    if(bar) toggle.textContent=bar.classList.contains('expanded')?'Hide documents':allDocs.length+' documents (tap to expand)';
+  }
+}
+function toggleCodeDocBar(){
+  var bar=document.getElementById('code-doc-bar');
+  if(!bar) return;
+  bar.classList.toggle('expanded');
+  var toggle=document.getElementById('code-doc-toggle');
+  if(toggle) toggle.textContent=bar.classList.contains('expanded')?'Hide documents':allDocs.length+' documents (tap to expand)';
 }
 
 function toggleCodeDoc(id){
