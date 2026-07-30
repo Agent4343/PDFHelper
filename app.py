@@ -1315,7 +1315,10 @@ async def chat_with_documents(
     procedure_parts = []
     image_content_blocks = []  # Claude vision blocks for uploaded images
     for doc in documents:
-        decrypted_name = _decrypt_text(doc.filename)
+        try:
+            decrypted_name = _decrypt_text(doc.filename)
+        except Exception:
+            decrypted_name = f"Document {doc.id[:8]}"
         try:
             pdf_bytes = _load_pdf_bytes(doc)
             structured = extract_structured_text(pdf_bytes)
@@ -1328,10 +1331,14 @@ async def chat_with_documents(
             full_text = "\n".join(parts)
         except Exception as exc:
             logging.getLogger("pdfhelper").warning("Structured extraction failed for %s: %s", doc.id, exc)
-            pages = json.loads(_decrypt_text(doc.text_content))
-            full_text = "\n".join(
-                f"\n--- Page {p['page']} ---\n{p['text']}" for p in pages if p.get("text")
-            )
+            try:
+                pages = json.loads(_decrypt_text(doc.text_content))
+                full_text = "\n".join(
+                    f"\n--- Page {p['page']} ---\n{p['text']}" for p in pages if p.get("text")
+                )
+            except Exception as dec_exc:
+                logging.getLogger("pdfhelper").warning("Fallback text_content failed for %s: %s", doc.id, dec_exc)
+                full_text = f"(Could not load content for {decrypted_name})"
         per_doc_limit = max(120000, 800000 // max(len(documents), 1))
         if len(full_text) > per_doc_limit:
             full_text = full_text[:per_doc_limit] + "\n\n[... content truncated for context window ...]"
@@ -1363,8 +1370,11 @@ async def chat_with_documents(
 
     doc_index_lines = ["DOCUMENT INDEX:"]
     for i, doc in enumerate(documents, 1):
-        decrypted_name = _decrypt_text(doc.filename)
-        doc_index_lines.append(f"  {i}. \"{decrypted_name}\" — {doc.page_count} pages")
+        try:
+            dn = _decrypt_text(doc.filename)
+        except Exception:
+            dn = f"Document {doc.id[:8]}"
+        doc_index_lines.append(f"  {i}. \"{dn}\" — {doc.page_count} pages")
     doc_index = "\n".join(doc_index_lines)
     procedure_context = doc_index + "\n\n" + "\n\n".join(procedure_parts)
 
@@ -1377,10 +1387,12 @@ async def chat_with_documents(
     )
 
     if db_messages:
-        conversation = [
-            {"role": m.role, "content": _decrypt_text(m.content)}
-            for m in db_messages[-20:]
-        ]
+        conversation = []
+        for m in db_messages[-20:]:
+            try:
+                conversation.append({"role": m.role, "content": _decrypt_text(m.content)})
+            except Exception:
+                conversation.append({"role": m.role, "content": "(message could not be decrypted)"})
     else:
         conversation = [
             {"role": m.role, "content": m.content}
@@ -2320,7 +2332,10 @@ async def code_chat(
 
     procedure_parts = []
     for doc in documents:
-        decrypted_name = _decrypt_text(doc.filename)
+        try:
+            decrypted_name = _decrypt_text(doc.filename)
+        except Exception:
+            decrypted_name = f"Document {doc.id[:8]}"
         try:
             pdf_bytes = _load_pdf_bytes(doc)
             structured = extract_structured_text(pdf_bytes)
@@ -2332,10 +2347,13 @@ async def code_chat(
                     parts.append(f"{prefix}{block['text']}")
             full_text = "\n".join(parts)
         except Exception:
-            pages = json.loads(_decrypt_text(doc.text_content))
-            full_text = "\n".join(
-                f"\n--- Page {p['page']} ---\n{p['text']}" for p in pages if p.get("text")
-            )
+            try:
+                pages = json.loads(_decrypt_text(doc.text_content))
+                full_text = "\n".join(
+                    f"\n--- Page {p['page']} ---\n{p['text']}" for p in pages if p.get("text")
+                )
+            except Exception:
+                full_text = f"(Could not load content for {decrypted_name})"
         per_doc_limit = max(120000, 800000 // max(len(documents), 1))
         if len(full_text) > per_doc_limit:
             full_text = full_text[:per_doc_limit] + "\n\n[... content truncated ...]"
@@ -2345,8 +2363,11 @@ async def code_chat(
 
     doc_index_lines = ["DOCUMENT INDEX:"]
     for i, doc in enumerate(documents, 1):
-        decrypted_name = _decrypt_text(doc.filename)
-        doc_index_lines.append(f"  {i}. \"{decrypted_name}\" — {doc.page_count} pages")
+        try:
+            dn = _decrypt_text(doc.filename)
+        except Exception:
+            dn = f"Document {doc.id[:8]}"
+        doc_index_lines.append(f"  {i}. \"{dn}\" — {doc.page_count} pages")
     doc_index = "\n".join(doc_index_lines)
     procedure_context = doc_index + "\n\n" + "\n\n".join(procedure_parts)
 
@@ -2358,10 +2379,12 @@ async def code_chat(
     )
 
     if db_messages:
-        conversation = [
-            {"role": m.role, "content": _decrypt_text(m.content)}
-            for m in db_messages[-20:]
-        ]
+        conversation = []
+        for m in db_messages[-20:]:
+            try:
+                conversation.append({"role": m.role, "content": _decrypt_text(m.content)})
+            except Exception:
+                conversation.append({"role": m.role, "content": "(message could not be decrypted)"})
     else:
         conversation = [
             {"role": m.role, "content": m.content}
