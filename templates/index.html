@@ -1247,6 +1247,19 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
       </div>
     </div>
 
+    <div class="code-sessions-overlay" id="chat-sessions-overlay" onclick="if(event.target===this)toggleChatSessionsMobile()">
+      <div class="code-sessions-sheet">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <span style="font-weight:600;font-size:14px">Chat Sessions</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="new-chat-btn" onclick="startNewChat();toggleChatSessionsMobile()">+ New</button>
+            <button onclick="toggleChatSessionsMobile()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">&times;</button>
+          </div>
+        </div>
+        <div id="chat-sess-list-mobile"></div>
+      </div>
+    </div>
+
     <div class="page" id="page-bot">
       <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
         <p style="font-size:0.9rem"><strong>What does this do?</strong> Talk to an AI that has read all your documents. Ask it questions in plain English like "What does section 5 say about training?" or "Summarize the safety rules" — and it answers based on what's actually in your files. It's like having a helper who has memorized all your paperwork.</p>
@@ -1305,6 +1318,7 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
               <button class="chat-mob-btn" onclick="showAgentModal('codebuilder')">Build App</button>
               <button class="chat-mob-btn" onclick="exportChatToWord()">Export</button>
               <button class="chat-mob-btn" onclick="showGenDocModal()">Gen Doc</button>
+              <button class="chat-mob-btn" onclick="toggleChatSessionsMobile()">Sessions</button>
             </div>
             <button class="chat-more-toggle" id="chat-more-toggle" onclick="toggleChatMobileTools()">Tools &#9650;</button>
           </div>
@@ -2798,6 +2812,31 @@ function renderCodeSessionListMobile(){
     var date=new Date(s.updated_at).toLocaleDateString(undefined,{month:'short',day:'numeric'});
     return '<div class="sess-item" onclick="loadCodeSession(\''+s.id+'\');toggleCodeSessionsMobile()"'+active+' title="'+esc(s.title||'Untitled')+'">'+
       '<button class="sess-del" onclick="event.stopPropagation();deleteCodeSession(\''+s.id+'\')" title="Delete" style="opacity:1">&times;</button>'+
+      esc((s.title||'Untitled').substring(0,50))+(s.title&&s.title.length>50?'...':'')+
+      '<span class="sess-date">'+date+' &middot; '+s.message_count+' msg'+(s.message_count!==1?'s':'')+'</span>'+
+      '</div>';
+  }).join('');
+}
+
+function toggleChatSessionsMobile(){
+  var overlay=document.getElementById('chat-sessions-overlay');
+  if(!overlay) return;
+  overlay.classList.toggle('open');
+  if(overlay.classList.contains('open')) renderChatSessionListMobile();
+}
+
+function renderChatSessionListMobile(){
+  var el=document.getElementById('chat-sess-list-mobile');
+  if(!el) return;
+  if(!chatSessions.length){
+    el.innerHTML='<div style="padding:16px;font-size:13px;color:var(--muted);text-align:center">No conversations yet</div>';
+    return;
+  }
+  el.innerHTML=chatSessions.map(function(s){
+    var active=s.id===currentSessionId?' style="background:#3b82f618;border-color:#3b82f650;color:var(--accent)"':'';
+    var date=new Date(s.updated_at).toLocaleDateString(undefined,{month:'short',day:'numeric'});
+    return '<div class="sess-item" onclick="loadChatSession(\''+s.id+'\');toggleChatSessionsMobile()"'+active+' title="'+esc(s.title||'Untitled')+'">'+
+      '<button class="sess-del" onclick="event.stopPropagation();deleteChatSession(\''+s.id+'\')" title="Delete" style="opacity:1">&times;</button>'+
       esc((s.title||'Untitled').substring(0,50))+(s.title&&s.title.length>50?'...':'')+
       '<span class="sess-date">'+date+' &middot; '+s.message_count+' msg'+(s.message_count!==1?'s':'')+'</span>'+
       '</div>';
