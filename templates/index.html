@@ -2472,6 +2472,7 @@ var codeInited=false;
 var currentCodeSessionId=null;
 var codeSessions=[];
 var latestCodeHtml='';
+var latestCodeLang='html';
 
 async function initCode(){
   if(!allDocs.length){
@@ -2541,6 +2542,7 @@ function startNewCode(){
   codeMessages=[];
   codeInited=false;
   latestCodeHtml='';
+  latestCodeLang='html';
   codeSelectedIds=new Set(allDocs.map(function(d){return d.id;}));
   renderCodeDocChips();
   var iframe=document.getElementById('code-preview-iframe');
@@ -2641,21 +2643,42 @@ function renderCodeMessages(){
   if(ce) ce.scrollIntoView({behavior:'smooth'});
 }
 
-function extractHtmlFromContent(content){
-  var match=content.match(/```html\s*\n([\s\S]*)```/);
-  if(match) return match[1].trim();
-  match=content.match(/```\s*\n(<!DOCTYPE[\s\S]*)```/i);
-  if(match) return match[1].trim();
-  match=content.match(/```\s*\n(<html[\s\S]*)```/i);
-  if(match) return match[1].trim();
+function extractCodeFromContent(content){
+  var match=content.match(/```(\w*)\s*\n([\s\S]*)```/);
+  if(match) return {lang:match[1].toLowerCase()||'text',code:match[2].trim()};
   return null;
 }
 
-function updateCodePreview(html){
-  if(!html) return;
-  latestCodeHtml=html;
+function extractHtmlFromContent(content){
+  var result=extractCodeFromContent(content);
+  if(!result) return null;
+  if(result.lang==='html'||result.code.match(/^\s*<!DOCTYPE/i)||result.code.match(/^\s*<html/i)) return result.code;
+  return null;
+}
+
+function updateCodePreview(code,lang){
+  if(!code) return;
+  latestCodeHtml=code;
+  latestCodeLang=lang||'html';
   var iframe=document.getElementById('code-preview-iframe');
-  if(iframe) iframe.srcdoc=html;
+  var pre=document.getElementById('code-preview-pre');
+  if(lang==='html'||code.match(/^\s*<!DOCTYPE/i)||code.match(/^\s*<html/i)){
+    if(iframe){iframe.style.display='block';iframe.srcdoc=code;}
+    if(pre) pre.style.display='none';
+  } else {
+    if(iframe) iframe.style.display='none';
+    if(!pre){
+      var panel=document.querySelector('.code-preview-panel');
+      if(panel){
+        var p=document.createElement('pre');
+        p.id='code-preview-pre';
+        p.style.cssText='flex:1;overflow:auto;padding:16px;margin:0;font-size:13px;background:var(--code);color:var(--text);white-space:pre-wrap;word-break:break-word';
+        panel.appendChild(p);
+        pre=p;
+      }
+    }
+    if(pre){pre.style.display='block';pre.textContent=code;}
+  }
   var panel=document.querySelector('.code-preview-panel');
   if(panel) panel.classList.add('visible');
 }
@@ -2663,8 +2686,8 @@ function updateCodePreview(html){
 function updateCodePreviewFromMessages(){
   for(var i=codeMessages.length-1;i>=0;i--){
     if(codeMessages[i].role==='assistant'){
-      var html=extractHtmlFromContent(codeMessages[i].content);
-      if(html){updateCodePreview(html);return;}
+      var result=extractCodeFromContent(codeMessages[i].content);
+      if(result){updateCodePreview(result.code,result.lang);return;}
     }
   }
 }
@@ -2733,8 +2756,8 @@ async function codeSend(){
       codeMessages[assistantIdx].content='Sorry, I couldn\'t generate a response.';
     }
 
-    var html=extractHtmlFromContent(codeMessages[assistantIdx].content);
-    if(html) updateCodePreview(html);
+    var codeResult=extractCodeFromContent(codeMessages[assistantIdx].content);
+    if(codeResult) updateCodePreview(codeResult.code,codeResult.lang);
 
     loadCodeSessions();
   }catch(e){
@@ -2757,21 +2780,29 @@ function copyCodeOutput(){
 
 function downloadCodeOutput(){
   if(!latestCodeHtml){toast('No code generated yet','error');return;}
-  var blob=new Blob([latestCodeHtml],{type:'text/html'});
+  var extMap={html:'.html',vba:'.bas',python:'.py',py:'.py',javascript:'.js',js:'.js',css:'.css',sql:'.sql',json:'.json',xml:'.xml',yaml:'.yml',powershell:'.ps1',bash:'.sh',text:'.txt'};
+  var ext=extMap[latestCodeLang]||'.txt';
+  var mimeMap={html:'text/html',json:'application/json',xml:'application/xml'};
+  var mime=mimeMap[latestCodeLang]||'text/plain';
+  var blob=new Blob([latestCodeHtml],{type:mime});
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a');
   a.href=url;
-  var title=(codeSessions.find(function(s){return s.id===currentCodeSessionId;})||{}).title||'generated-app';
-  a.download=title.replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'-').substring(0,50)+'.html';
+  var title=(codeSessions.find(function(s){return s.id===currentCodeSessionId;})||{}).title||'generated-code';
+  a.download=title.replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'-').substring(0,50)+ext;
   document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
-  toast('HTML file downloaded');
+  toast('File downloaded');
 }
 
 function openCodeNewTab(){
   if(!latestCodeHtml){toast('No code generated yet','error');return;}
   var w=window.open('','_blank');
   if(!w){toast('Pop-up blocked','error');return;}
-  w.document.write(latestCodeHtml);
+  if(latestCodeLang==='html'||latestCodeHtml.match(/^\s*<!DOCTYPE/i)){
+    w.document.write(latestCodeHtml);
+  } else {
+    w.document.write('<html><head><title>Generated Code</title></head><body><pre style="white-space:pre-wrap;font-family:monospace;padding:20px">'+latestCodeHtml.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</pre></body></html>');
+  }
   w.document.close();
 }
 
