@@ -1170,17 +1170,19 @@ async def search_documents(
 async def list_documents(db=Depends(get_db)):
     """List all uploaded documents."""
     docs = db.query(DBDocument).order_by(DBDocument.uploaded_at.desc()).all()
-    return {
-        "documents": [
-            {
-                "id": d.id,
-                "filename": _decrypt_text(d.filename),
-                "pages": d.page_count,
-                "uploaded_at": d.uploaded_at.isoformat(),
-            }
-            for d in docs
-        ]
-    }
+    doc_list = []
+    for d in docs:
+        try:
+            fname = _decrypt_text(d.filename)
+        except Exception:
+            fname = f"Document {d.id[:8]}"
+        doc_list.append({
+            "id": d.id,
+            "filename": fname,
+            "pages": d.page_count,
+            "uploaded_at": d.uploaded_at.isoformat(),
+        })
+    return {"documents": doc_list}
 
 
 @app.get("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
@@ -1489,7 +1491,12 @@ RESPONSE FORMAT:
     db.commit()
 
     session_id = session.id
-    doc_info = [{"id": d.id, "filename": _decrypt_text(d.filename)} for d in documents]
+    doc_info = []
+    for d in documents:
+        try:
+            doc_info.append({"id": d.id, "filename": _decrypt_text(d.filename)})
+        except Exception:
+            doc_info.append({"id": d.id, "filename": f"Document {d.id[:8]}"})
 
     # Configure tools — optionally include web search
     chat_tools = []
@@ -1609,20 +1616,24 @@ async def get_chat_session(session_id: str, request: Request, db=Depends(get_db)
     current_user_id = getattr(request.state, "user_id", None)
     if current_user_id and session.user_id and session.user_id != current_user_id:
         raise HTTPException(status_code=403, detail="You do not own this chat session")
+    messages = []
+    for m in session.messages:
+        try:
+            content = _decrypt_text(m.content)
+        except Exception:
+            content = "(message could not be decrypted)"
+        messages.append({
+            "role": m.role,
+            "content": content,
+            "created_at": m.created_at.isoformat(),
+        })
     return {
         "id": session.id,
         "title": session.title,
         "doc_ids": json.loads(session.doc_ids),
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
-        "messages": [
-            {
-                "role": m.role,
-                "content": _decrypt_text(m.content),
-                "created_at": m.created_at.isoformat(),
-            }
-            for m in session.messages
-        ],
+        "messages": messages,
     }
 
 
@@ -2457,7 +2468,12 @@ RESPONSE FORMAT:
     db.commit()
 
     session_id = session.id
-    doc_info = [{"id": d.id, "filename": _decrypt_text(d.filename)} for d in documents]
+    doc_info = []
+    for d in documents:
+        try:
+            doc_info.append({"id": d.id, "filename": _decrypt_text(d.filename)})
+        except Exception:
+            doc_info.append({"id": d.id, "filename": f"Document {d.id[:8]}"})
 
     async def stream_code_chat():
         full_reply = ""
@@ -2560,20 +2576,24 @@ async def get_code_session(session_id: str, request: Request, db=Depends(get_db)
     current_user_id = getattr(request.state, "user_id", None)
     if current_user_id and session.user_id and session.user_id != current_user_id:
         raise HTTPException(status_code=403, detail="You do not own this code session")
+    messages = []
+    for m in session.messages:
+        try:
+            content = _decrypt_text(m.content)
+        except Exception:
+            content = "(message could not be decrypted)"
+        messages.append({
+            "role": m.role,
+            "content": content,
+            "created_at": m.created_at.isoformat(),
+        })
     return {
         "id": session.id,
         "title": session.title,
         "doc_ids": json.loads(session.doc_ids),
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
-        "messages": [
-            {
-                "role": m.role,
-                "content": _decrypt_text(m.content),
-                "created_at": m.created_at.isoformat(),
-            }
-            for m in session.messages
-        ],
+        "messages": messages,
     }
 
 
@@ -4214,7 +4234,7 @@ def _agent_error(msg: str):
 
 AGENT_MODELS = {
     "sonnet": "claude-sonnet-5",
-    "haiku": "claude-haiku-4-5-20251001",
+    "haiku": "claude-haiku-4-5",
 }
 
 
