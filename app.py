@@ -1052,8 +1052,10 @@ async def upload_pdfs(
             pages = _extract_word_text(raw_content)
         elif file_type == "text":
             pages = _extract_text_file(raw_content, clean_name)
-        else:
+        elif file_type == "image":
             pages = extract_text_from_bytes(file_bytes)
+        else:
+            pages = extract_structured_text(file_bytes)
 
         doc_id = str(uuid.uuid4())
         save_path = UPLOAD_DIR / f"{doc_id}.pdf.enc"
@@ -1201,18 +1203,65 @@ async def get_document(doc_id: str, db=Depends(get_db)):
 
 @app.delete("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])
 async def delete_document(doc_id: str, request: Request, db=Depends(get_db)):
-    """Delete an uploaded document and its encrypted file."""
+    """Delete an uploaded document, its files, and all related sessions."""
     doc = db.query(DBDocument).filter(DBDocument.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    # Delete encrypted files from disk
     _safe_unlink(Path(doc.filepath))
+    img_path = Path(doc.filepath.replace(".pdf.enc", ".img.enc"))
+    _safe_unlink(img_path)
 
-    log_delete(_get_client_ip(request), doc_id, _decrypt_text(doc.filename))
+    try:
+        log_delete(_get_client_ip(request), doc_id, _decrypt_text(doc.filename))
+    except Exception:
+        log_delete(_get_client_ip(request), doc_id, f"Document {doc_id[:8]}")
+
+    # Cascade: delete chat sessions referencing this document
+    chat_sessions = db.query(DBChatSession).all()
+    for cs in chat_sessions:
+        try:
+            session_doc_ids = json.loads(cs.doc_ids)
+        except Exception:
+            session_doc_ids = []
+        if doc_id in session_doc_ids:
+            db.delete(cs)
+
+    # Cascade: delete code sessions referencing this document
+    code_sessions = db.query(DBCodeSession).all()
+    for cs in code_sessions:
+        try:
+            session_doc_ids = json.loads(cs.doc_ids)
+        except Exception:
+            session_doc_ids = []
+        if doc_id in session_doc_ids:
+            db.delete(cs)
+
+    # Cascade: delete update sessions for this document
+    db.query(DBUpdateSession).filter(DBUpdateSession.doc_id == doc_id).delete()
+
+    # Cascade: delete analysis reports referencing this document
+    for report in db.query(DBAnalysisReport).all():
+        try:
+            report_doc_ids = json.loads(report.doc_ids)
+        except Exception:
+            report_doc_ids = []
+        if doc_id in report_doc_ids:
+            db.delete(report)
+
+    # Cascade: delete agent cache entries referencing this document
+    for cache in db.query(DBAgentCache).all():
+        try:
+            cache_doc_ids = json.loads(cache.doc_ids)
+        except Exception:
+            cache_doc_ids = []
+        if doc_id in cache_doc_ids:
+            db.delete(cache)
 
     db.delete(doc)
     db.commit()
-    return {"deleted": doc_id}
+    return {"deleted": doc_id, "cascade": True}
 
 
 @app.get("/history", dependencies=[Depends(verify_api_key)])
@@ -1313,7 +1362,7 @@ async def chat_with_documents(
         db.add(session)
         db.flush()
 
-    # Build procedure context from selected documents using structured extraction
+    # Build procedure context from stored document text (extracted once at upload)
     procedure_parts = []
     image_content_blocks = []  # Claude vision blocks for uploaded images
     for doc in documents:
@@ -1322,25 +1371,11 @@ async def chat_with_documents(
         except Exception:
             decrypted_name = f"Document {doc.id[:8]}"
         try:
-            pdf_bytes = _load_pdf_bytes(doc)
-            structured = extract_structured_text(pdf_bytes)
-            parts = []
-            for page_data in structured:
-                parts.append(f"\n--- Page {page_data['page']} ---")
-                for block in page_data.get("blocks", []):
-                    prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
-                    parts.append(f"{prefix}{block['text']}")
-            full_text = "\n".join(parts)
+            pages = _load_stored_text(doc)
+            full_text = _stored_text_to_structured(pages)
         except Exception as exc:
-            logging.getLogger("pdfhelper").warning("Structured extraction failed for %s: %s", doc.id, exc)
-            try:
-                pages = json.loads(_decrypt_text(doc.text_content))
-                full_text = "\n".join(
-                    f"\n--- Page {p['page']} ---\n{p['text']}" for p in pages if p.get("text")
-                )
-            except Exception as dec_exc:
-                logging.getLogger("pdfhelper").warning("Fallback text_content failed for %s: %s", doc.id, dec_exc)
-                full_text = f"(Could not load content for {decrypted_name})"
+            logging.getLogger("pdfhelper").warning("text_content failed for %s: %s", doc.id, exc)
+            full_text = f"(Could not load content for {decrypted_name})"
         per_doc_limit = max(200000, 2500000 // max(len(documents), 1))
         if len(full_text) > per_doc_limit:
             full_text = full_text[:per_doc_limit] + "\n\n[... content truncated for context window ...]"
@@ -2348,23 +2383,10 @@ async def code_chat(
         except Exception:
             decrypted_name = f"Document {doc.id[:8]}"
         try:
-            pdf_bytes = _load_pdf_bytes(doc)
-            structured = extract_structured_text(pdf_bytes)
-            parts = []
-            for page_data in structured:
-                parts.append(f"\n--- Page {page_data['page']} ---")
-                for block in page_data.get("blocks", []):
-                    prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
-                    parts.append(f"{prefix}{block['text']}")
-            full_text = "\n".join(parts)
+            pages = _load_stored_text(doc)
+            full_text = _stored_text_to_structured(pages)
         except Exception:
-            try:
-                pages = json.loads(_decrypt_text(doc.text_content))
-                full_text = "\n".join(
-                    f"\n--- Page {p['page']} ---\n{p['text']}" for p in pages if p.get("text")
-                )
-            except Exception:
-                full_text = f"(Could not load content for {decrypted_name})"
+            full_text = f"(Could not load content for {decrypted_name})"
         per_doc_limit = max(200000, 2500000 // max(len(documents), 1))
         if len(full_text) > per_doc_limit:
             full_text = full_text[:per_doc_limit] + "\n\n[... content truncated ...]"
@@ -3298,6 +3320,25 @@ def _load_pdf_bytes(doc) -> bytes:
     return _decrypt_and_load(filepath)
 
 
+def _load_stored_text(doc) -> list[dict]:
+    """Load pre-extracted text from the database (no PDF re-processing)."""
+    return json.loads(_decrypt_text(doc.text_content))
+
+
+def _stored_text_to_structured(pages: list[dict]) -> str:
+    """Convert stored page data (with or without blocks) to annotated text."""
+    parts = []
+    for page_data in pages:
+        parts.append(f"\n--- Page {page_data['page']} ---")
+        if page_data.get("blocks"):
+            for block in page_data["blocks"]:
+                prefix = f"[{block['type'].upper()}] " if block['type'] != 'paragraph' else ""
+                parts.append(f"{prefix}{block['text']}")
+        elif page_data.get("text"):
+            parts.append(page_data["text"])
+    return "\n".join(parts)
+
+
 @app.get("/documents/{doc_id}/download", dependencies=[Depends(verify_api_key)])
 async def download_document(doc_id: str, db=Depends(get_db)):
     """Download the original PDF file."""
@@ -3531,7 +3572,7 @@ async def merge_documents(body: MergeRequest, request: Request, db=Depends(get_d
     save_path = UPLOAD_DIR / f"{doc_id}.pdf.enc"
     _encrypt_and_save(merged_bytes, save_path)
 
-    pages = extract_text_from_bytes(merged_bytes)
+    pages = extract_structured_text(merged_bytes)
     content_hash = hashlib.sha256(merged_bytes).hexdigest()
 
     db_doc = DBDocument(
@@ -3602,7 +3643,7 @@ async def split_document(doc_id: str, body: SplitRequest, request: Request, db=D
     save_path = UPLOAD_DIR / f"{new_id}.pdf.enc"
     _encrypt_and_save(split_bytes, save_path)
 
-    pages = extract_text_from_bytes(split_bytes)
+    pages = extract_structured_text(split_bytes)
     content_hash = hashlib.sha256(split_bytes).hexdigest()
 
     db_doc = DBDocument(
@@ -3690,7 +3731,7 @@ async def annotate_document(
         save_path = UPLOAD_DIR / f"{new_id}.pdf.enc"
         _encrypt_and_save(annotated_bytes, save_path)
 
-        pages_data = extract_text_from_bytes(annotated_bytes)
+        pages_data = extract_structured_text(annotated_bytes)
         content_hash = hashlib.sha256(annotated_bytes).hexdigest()
 
         db_doc = DBDocument(
