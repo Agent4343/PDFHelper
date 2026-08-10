@@ -1341,7 +1341,7 @@ async def chat_with_documents(
             except Exception as dec_exc:
                 logging.getLogger("pdfhelper").warning("Fallback text_content failed for %s: %s", doc.id, dec_exc)
                 full_text = f"(Could not load content for {decrypted_name})"
-        per_doc_limit = max(120000, 800000 // max(len(documents), 1))
+        per_doc_limit = max(200000, 2500000 // max(len(documents), 1))
         if len(full_text) > per_doc_limit:
             full_text = full_text[:per_doc_limit] + "\n\n[... content truncated for context window ...]"
         procedure_parts.append(
@@ -1417,7 +1417,7 @@ async def chat_with_documents(
     # Reserve chars for the system prompt template, response tokens, and safety margin.
     # Approximate: 1 token ≈ 4 chars.  Model context ≈ 200K tokens ≈ 800K chars.
     # Each image ≈ 1600 tokens, so subtract from budget when included.
-    MAX_TOTAL_CHARS = 900000  # ~225K tokens; leaves headroom in the 1M-token context
+    MAX_TOTAL_CHARS = 3200000  # ~800K tokens; uses most of the 1M-token context window
     if include_images:
         image_char_budget = len(image_content_blocks) // 2 * 6400  # ~1600 tokens * 4 chars per image
         MAX_TOTAL_CHARS -= image_char_budget
@@ -2365,7 +2365,7 @@ async def code_chat(
                 )
             except Exception:
                 full_text = f"(Could not load content for {decrypted_name})"
-        per_doc_limit = max(120000, 800000 // max(len(documents), 1))
+        per_doc_limit = max(200000, 2500000 // max(len(documents), 1))
         if len(full_text) > per_doc_limit:
             full_text = full_text[:per_doc_limit] + "\n\n[... content truncated ...]"
         procedure_parts.append(
@@ -2406,7 +2406,7 @@ async def code_chat(
         conversation.pop(0)
     conversation.append({"role": "user", "content": body.message})
 
-    MAX_TOTAL_CHARS = 900000
+    MAX_TOTAL_CHARS = 3200000
     def _msg_text_len(m):
         c = m["content"]
         return len(c) if isinstance(c, str) else 0
