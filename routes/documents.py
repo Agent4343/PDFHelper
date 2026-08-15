@@ -1,5 +1,6 @@
 """Document management routes — upload, search, list, download, merge, split, annotate."""
 
+import asyncio
 import hashlib
 import json
 import secrets
@@ -147,6 +148,28 @@ async def upload_pdfs(
 # ---------------------------------------------------------------------------
 
 
+def _search_sync(documents, search_terms, ai_query, case_sensitive):
+    """Sync helper for heavy decrypt+parse work — run via asyncio.to_thread."""
+    all_keyword_results = []
+    all_ai_results = []
+    for doc in documents:
+        pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
+        decrypted_name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
+        if search_terms:
+            matches = keyword_search(pages, search_terms, case_sensitive)
+            for m in matches:
+                m["document_id"] = doc.id
+                m["filename"] = decrypted_name
+            all_keyword_results.extend(matches)
+        if ai_query:
+            findings = ai_search(pages, ai_query, decrypted_name)
+            for f in findings:
+                f["document_id"] = doc.id
+                f["filename"] = decrypted_name
+            all_ai_results.extend(findings)
+    return all_keyword_results, all_ai_results
+
+
 @router.post("/search", dependencies=[Depends(verify_api_key)])
 async def search_documents(
     request: Request,
@@ -168,26 +191,10 @@ async def search_documents(
         raise HTTPException(status_code=404, detail="No documents found")
 
     client_ip = _get_client_ip(request)
-    all_keyword_results = []
-    all_ai_results = []
 
-    for doc in documents:
-        pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
-        decrypted_name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
-
-        if body.search_terms:
-            matches = keyword_search(pages, body.search_terms, body.case_sensitive)
-            for m in matches:
-                m["document_id"] = doc.id
-                m["filename"] = decrypted_name
-            all_keyword_results.extend(matches)
-
-        if body.ai_query:
-            findings = ai_search(pages, body.ai_query, decrypted_name)
-            for f in findings:
-                f["document_id"] = doc.id
-                f["filename"] = decrypted_name
-            all_ai_results.extend(findings)
+    all_keyword_results, all_ai_results = await asyncio.to_thread(
+        _search_sync, documents, body.search_terms, body.ai_query, body.case_sensitive
+    )
 
     search_id = str(uuid.uuid4())
     flagged_count = len([r for r in all_ai_results if r.get("needs_review")])
@@ -228,10 +235,8 @@ async def search_documents(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/documents", dependencies=[Depends(verify_api_key)])
-async def list_documents(db=Depends(get_db)):
-    """List all uploaded documents."""
-    docs = db.query(DBDocument).order_by(DBDocument.uploaded_at.desc()).all()
+def _list_documents_sync(docs):
+    """Sync helper — decrypt document metadata off the event loop."""
     doc_list = []
     for d in docs:
         try:
@@ -244,7 +249,26 @@ async def list_documents(db=Depends(get_db)):
             "pages": d.page_count,
             "uploaded_at": d.uploaded_at.isoformat(),
         })
-    return {"documents": doc_list}
+    return doc_list
+
+
+@router.get("/documents", dependencies=[Depends(verify_api_key)])
+async def list_documents(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    db=Depends(get_db),
+):
+    """List all uploaded documents."""
+    total = db.query(DBDocument).count()
+    docs = (
+        db.query(DBDocument)
+        .order_by(DBDocument.uploaded_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    doc_list = await asyncio.to_thread(_list_documents_sync, docs)
+    return {"documents": doc_list, "total": total}
 
 
 @router.get("/documents/{doc_id}", dependencies=[Depends(verify_api_key)])

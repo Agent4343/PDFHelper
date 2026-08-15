@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import uuid
@@ -193,25 +194,40 @@ async def upload_drawings_batch(
     }
 
 
+def _list_drawings_sync(drawings):
+    """Sync helper — decrypt drawing metadata off the event loop."""
+    return [
+        {
+            "id": d.id,
+            "filename": _safe_decrypt(d.filename, f"Drawing {d.id[:8]}"),
+            "title": _safe_decrypt(d.title) if d.title else None,
+            "drawing_number": _safe_decrypt(d.drawing_number) if d.drawing_number else None,
+            "equipment_tags": _safe_decrypt(d.equipment_tags) if d.equipment_tags else None,
+            "description": _safe_decrypt(d.description) if d.description else None,
+            "page_count": d.page_count,
+            "uploaded_at": d.uploaded_at.isoformat(),
+        }
+        for d in drawings
+    ]
+
+
 @router.get("/drawings", dependencies=[Depends(verify_api_key)])
-async def list_drawings(db=Depends(get_db)):
+async def list_drawings(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    db=Depends(get_db),
+):
     """List all uploaded P&ID drawings."""
-    drawings = db.query(DBDrawing).order_by(DBDrawing.uploaded_at.desc()).all()
-    return {
-        "drawings": [
-            {
-                "id": d.id,
-                "filename": _safe_decrypt(d.filename, f"Drawing {d.id[:8]}"),
-                "title": _safe_decrypt(d.title) if d.title else None,
-                "drawing_number": _safe_decrypt(d.drawing_number) if d.drawing_number else None,
-                "equipment_tags": _safe_decrypt(d.equipment_tags) if d.equipment_tags else None,
-                "description": _safe_decrypt(d.description) if d.description else None,
-                "page_count": d.page_count,
-                "uploaded_at": d.uploaded_at.isoformat(),
-            }
-            for d in drawings
-        ]
-    }
+    total = db.query(DBDrawing).count()
+    drawings = (
+        db.query(DBDrawing)
+        .order_by(DBDrawing.uploaded_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    drawing_list = await asyncio.to_thread(_list_drawings_sync, drawings)
+    return {"drawings": drawing_list, "total": total}
 
 
 @router.delete("/drawings/{drawing_id}", dependencies=[Depends(verify_api_key)])

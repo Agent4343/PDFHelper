@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -5,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 import anthropic
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.responses import StreamingResponse
 
 from auth import verify_api_key, get_db
@@ -208,8 +209,27 @@ async def update_poster(poster_id: str, body: PosterUpdateRequest, request: Requ
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+def _list_posters_sync(posters):
+    """Sync helper — decrypt poster metadata off the event loop."""
+    return [
+        {
+            "id": p.id,
+            "title": _safe_decrypt(p.title, "Untitled Poster"),
+            "prompt_count": len(json.loads(_safe_decrypt(p.prompt_history, "[]"))),
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        }
+        for p in posters
+    ]
+
+
 @router.get("/posters", dependencies=[Depends(verify_api_key)])
-async def list_posters(request: Request, db=Depends(get_db)):
+async def list_posters(
+    request: Request,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    db=Depends(get_db),
+):
     """List all posters for the current user."""
     current_user_id = getattr(request.state, "user_id", None)
     q = db.query(DBPoster)
@@ -217,19 +237,10 @@ async def list_posters(request: Request, db=Depends(get_db)):
         q = q.filter(DBPoster.user_id == current_user_id)
     else:
         q = q.filter(DBPoster.user_id.is_(None))
-    posters = q.order_by(DBPoster.updated_at.desc()).all()
-    return {
-        "posters": [
-            {
-                "id": p.id,
-                "title": _safe_decrypt(p.title, "Untitled Poster"),
-                "prompt_count": len(json.loads(_safe_decrypt(p.prompt_history, "[]"))),
-                "created_at": p.created_at.isoformat() if p.created_at else None,
-                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
-            }
-            for p in posters
-        ]
-    }
+    total = q.count()
+    posters = q.order_by(DBPoster.updated_at.desc()).offset(skip).limit(limit).all()
+    poster_list = await asyncio.to_thread(_list_posters_sync, posters)
+    return {"posters": poster_list, "total": total}
 
 
 @router.get("/posters/{poster_id}", dependencies=[Depends(verify_api_key)])

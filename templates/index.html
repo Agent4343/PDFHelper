@@ -4,8 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>PDFHelper</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;
@@ -503,10 +501,23 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
 .dash-actions{flex-direction:column}
 .pdf-viewer-box{width:100%;height:100%;border-radius:0}
 }
+.hamburger{display:none;position:fixed;top:12px;left:12px;z-index:1001;background:var(--card);
+border:1px solid var(--border);border-radius:8px;padding:6px;cursor:pointer;color:var(--text)}
+@media(max-width:768px){
+.hamburger{display:flex;align-items:center;justify-content:center}
+.sidebar.mobile-open{display:flex;position:fixed;top:0;left:0;bottom:0;z-index:1000;
+width:220px;box-shadow:4px 0 20px rgba(0,0,0,0.5)}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999}
+.sidebar-overlay.visible{display:block}
+}
 </style>
 </head>
 <body>
 <div class="app">
+<button class="hamburger" id="hamburger-btn" onclick="toggleMobileSidebar()">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+</button>
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleMobileSidebar()"></div>
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="logo"><span>PDF</span>Helper</div>
@@ -1668,7 +1679,15 @@ function requireKey(errorContainerId){
   }
   return false;
 }
+function toggleMobileSidebar(){
+  var sb=document.querySelector('.sidebar');
+  var ov=document.getElementById('sidebar-overlay');
+  sb.classList.toggle('mobile-open');
+  ov.classList.toggle('visible');
+}
 function showPage(name){
+  var sb=document.querySelector('.sidebar');
+  if(sb&&sb.classList.contains('mobile-open')) toggleMobileSidebar();
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
   /* Update sidebar nav */
@@ -2149,7 +2168,16 @@ async function checkHealth(){
     document.getElementById('health-status').innerHTML='<span class="status-dot bad"></span><span>Offline</span>';
   }
 }
-checkHealth();setInterval(checkHealth,30000);
+checkHealth();
+var _healthInterval = setInterval(checkHealth, 30000);
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+        clearInterval(_healthInterval);
+    } else {
+        checkHealth();
+        _healthInterval = setInterval(checkHealth, 30000);
+    }
+});
 
 function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
 
@@ -2306,6 +2334,15 @@ function toggleBotDoc(id){
   renderBotDocChips();
 }
 
+var _renderRAF = null;
+function scheduleRender() {
+    if (_renderRAF) return;
+    _renderRAF = requestAnimationFrame(function() {
+        _renderRAF = null;
+        renderBotMessages();
+    });
+}
+
 function renderBotMessages(){
   var el=document.getElementById('chat-msgs');
   if(!el) return;
@@ -2439,11 +2476,11 @@ async function botSend(){
           } else if(evt.type==='status'){
             if(!botMessages[assistantIdx]._status) botMessages[assistantIdx]._status='';
             botMessages[assistantIdx]._status=evt.message||'Thinking...';
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='chunk'){
             botMessages[assistantIdx]._status='';
             botMessages[assistantIdx].content+=evt.text;
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='error'){
             botMessages[assistantIdx].content+=(botMessages[assistantIdx].content?'\n\n':'')+'Error: '+detailStr(evt.detail);
           }
@@ -3165,15 +3202,15 @@ async function runAgent(){
           if(evt.type==='cached'){
             botMessages[assistantIdx]._cached=true;
             botMessages[assistantIdx]._status=evt.message||'Cached result';
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='agent_step'){
             var steps=botMessages[assistantIdx]._agentSteps;
             var existing=steps.findIndex(function(s){return s.step===evt.step;});
             if(existing>=0) steps[existing]=evt; else steps.push(evt);
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='chunk'){
             botMessages[assistantIdx].content+=evt.text;
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='error'){
             botMessages[assistantIdx].content+=(botMessages[assistantIdx].content?'\n\n':'')+'Error: '+detailStr(evt.detail);
           } else if(evt.type==='done'){
@@ -4338,10 +4375,36 @@ function downloadPosterHTML(){
   toast('HTML downloaded — open in any browser to view or print');
 }
 
+var _html2canvasLoaded = false;
+var _jspdfLoaded = false;
+async function loadPosterLibs() {
+    if (!_html2canvasLoaded) {
+        await new Promise(function(resolve, reject) {
+            var s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+        _html2canvasLoaded = true;
+    }
+    if (!_jspdfLoaded) {
+        await new Promise(function(resolve, reject) {
+            var s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+        _jspdfLoaded = true;
+    }
+}
+
 async function downloadPosterPDF(){
   if(!currentPosterId){toast('No poster selected','error');return;}
   var iframe=document.getElementById('poster-iframe');
   if(!iframe||!iframe.srcdoc){toast('No poster to download','error');return;}
+  await loadPosterLibs();
   toast('Generating PDF...');
   try{
     // Render poster in a hidden container at full size
