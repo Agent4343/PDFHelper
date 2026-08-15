@@ -27,4 +27,4 @@ USER appuser
 ENV PYTHONUNBUFFERED=1
 
 # Railway sets PORT automatically
-CMD ["sh", "-c", "exec python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "exec python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]

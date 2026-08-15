@@ -6,6 +6,7 @@ Deployed on Railway. This module creates the FastAPI app, configures
 middleware, and mounts all route modules.
 """
 
+import asyncio
 import os
 import time
 import uuid
@@ -191,30 +192,32 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.requests: dict[str, list[float]] = {}
         self._last_cleanup = time.time()
         self._cleanup_interval = 300
+        self._lock = asyncio.Lock()
 
     async def dispatch(self, request: Request, call_next):
         client_ip = _get_client_ip(request)
         now = time.time()
         window_start = now - self.window
 
-        if now - self._last_cleanup > self._cleanup_interval:
-            self.requests = {
-                ip: [t for t in ts if t > window_start]
-                for ip, ts in self.requests.items()
-                if any(t > window_start for t in ts)
-            }
-            self._last_cleanup = now
+        async with self._lock:
+            if now - self._last_cleanup > self._cleanup_interval:
+                self.requests = {
+                    ip: [t for t in ts if t > window_start]
+                    for ip, ts in self.requests.items()
+                    if any(t > window_start for t in ts)
+                }
+                self._last_cleanup = now
 
-        hits = self.requests.get(client_ip, [])
-        hits = [t for t in hits if t > window_start]
+            hits = self.requests.get(client_ip, [])
+            hits = [t for t in hits if t > window_start]
 
-        if len(hits) >= self.max_requests:
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "Too many requests. Try again later."},
-            )
-        hits.append(now)
-        self.requests[client_ip] = hits
+            if len(hits) >= self.max_requests:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many requests. Try again later."},
+                )
+            hits.append(now)
+            self.requests[client_ip] = hits
 
         response = await call_next(request)
         log_access(client_ip, request.method, request.url.path, response.status_code)
