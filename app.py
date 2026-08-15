@@ -634,6 +634,14 @@ def _decrypt_text(stored: str) -> str:
     return stored
 
 
+def _safe_decrypt(stored: str, fallback: str = "") -> str:
+    """Decrypt with a fallback value if decryption fails."""
+    try:
+        return _decrypt_text(stored)
+    except Exception:
+        return fallback
+
+
 # ---------------------------------------------------------------------------
 # PDF processing
 # ---------------------------------------------------------------------------
@@ -1117,8 +1125,8 @@ async def search_documents(
     all_ai_results = []
 
     for doc in documents:
-        pages = json.loads(_decrypt_text(doc.text_content))
-        decrypted_name = _decrypt_text(doc.filename)
+        pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
+        decrypted_name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
 
         if body.search_terms:
             matches = keyword_search(pages, body.search_terms, body.case_sensitive)
@@ -1195,7 +1203,7 @@ async def get_document(doc_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=404, detail="Document not found")
     return {
         "id": doc.id,
-        "filename": _decrypt_text(doc.filename),
+        "filename": _safe_decrypt(doc.filename, f"Document {doc.id[:8]}"),
         "pages": doc.page_count,
         "uploaded_at": doc.uploaded_at.isoformat(),
     }
@@ -1244,8 +1252,8 @@ async def search_history(limit: int = Query(default=20, le=100), db=Depends(get_
         "searches": [
             {
                 "id": r.id,
-                "search_terms": json.loads(_decrypt_text(r.search_terms)) if r.search_terms else [],
-                "ai_query": _decrypt_text(r.ai_query) if r.ai_query else None,
+                "search_terms": json.loads(_safe_decrypt(r.search_terms, "[]")) if r.search_terms else [],
+                "ai_query": _safe_decrypt(r.ai_query) if r.ai_query else None,
                 "total_keyword_matches": r.total_keyword_matches,
                 "total_ai_findings": r.total_ai_findings,
                 "flagged_for_review": r.flagged_for_review,
@@ -1264,10 +1272,10 @@ async def get_search_result(search_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=404, detail="Search result not found")
     return {
         "id": result.id,
-        "search_terms": json.loads(_decrypt_text(result.search_terms)) if result.search_terms else [],
-        "ai_query": _decrypt_text(result.ai_query) if result.ai_query else None,
-        "keyword_results": json.loads(_decrypt_text(result.keyword_results)),
-        "ai_results": json.loads(_decrypt_text(result.ai_results)),
+        "search_terms": json.loads(_safe_decrypt(result.search_terms, "[]")) if result.search_terms else [],
+        "ai_query": _safe_decrypt(result.ai_query) if result.ai_query else None,
+        "keyword_results": json.loads(_safe_decrypt(result.keyword_results, "[]")),
+        "ai_results": json.loads(_safe_decrypt(result.ai_results, "[]")),
         "summary": {
             "total_keyword_matches": result.total_keyword_matches,
             "total_ai_findings": result.total_ai_findings,
@@ -1777,7 +1785,7 @@ async def export_chat_to_docx(body: ExportChatRequest, request: Request, db=Depe
     # Build document content from the conversation
     parts = []
     for m in messages:
-        content = _decrypt_text(m.content)
+        content = _safe_decrypt(m.content)
         if m.role == "user":
             parts.append(f"**Question:** {content}")
         else:
@@ -1844,7 +1852,7 @@ async def generate_document_from_chat(body: GenerateDocRequest, request: Request
         .all()
     )
     chat_context = "\n\n".join(
-        f"{'User' if m.role == 'user' else 'Assistant'}: {_decrypt_text(m.content)}"
+        f"{'User' if m.role == 'user' else 'Assistant'}: {_safe_decrypt(m.content)}"
         for m in db_messages[-10:]
     )
 
@@ -1856,8 +1864,8 @@ async def generate_document_from_chat(body: GenerateDocRequest, request: Request
 
     procedure_parts = []
     for doc in documents:
-        decrypted_name = _decrypt_text(doc.filename)
-        pages = json.loads(_decrypt_text(doc.text_content))
+        decrypted_name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
+        pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
         full_text = "\n".join(p["text"] for p in pages if p.get("text"))
         if len(full_text) > 40000:
             full_text = full_text[:40000] + "\n[... truncated ...]"
@@ -2160,8 +2168,8 @@ async def improve_procedure(body: ImproveProcedureRequest, request: Request, db=
     proc_doc = db.query(DBDocument).filter(DBDocument.id == body.procedure_doc_id).first()
     if not proc_doc:
         raise HTTPException(status_code=404, detail="Procedure document not found")
-    proc_name = _decrypt_text(proc_doc.filename)
-    proc_pages = json.loads(_decrypt_text(proc_doc.text_content))
+    proc_name = _safe_decrypt(proc_doc.filename, f"Document {proc_doc.id[:8]}")
+    proc_pages = json.loads(_safe_decrypt(proc_doc.text_content, "[]"))
     proc_text = "\n".join(p["text"] for p in proc_pages if p.get("text"))
     if len(proc_text) > 100000:
         proc_text = proc_text[:100000] + "\n[... truncated ...]"
@@ -2171,8 +2179,8 @@ async def improve_procedure(body: ImproveProcedureRequest, request: Request, db=
     if body.reference_doc_ids:
         ref_docs = db.query(DBDocument).filter(DBDocument.id.in_(body.reference_doc_ids)).all()
         for doc in ref_docs:
-            name = _decrypt_text(doc.filename)
-            pages = json.loads(_decrypt_text(doc.text_content))
+            name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
+            pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
             text = "\n".join(p["text"] for p in pages if p.get("text"))
             if len(text) > 60000:
                 text = text[:60000] + "\n[... truncated ...]"
@@ -2193,7 +2201,7 @@ async def improve_procedure(body: ImproveProcedureRequest, request: Request, db=
             .all()
         )
         chat_context = "\n\n".join(
-            f"{'User' if m.role == 'user' else 'Assistant'}: {_decrypt_text(m.content)}"
+            f"{'User' if m.role == 'user' else 'Assistant'}: {_safe_decrypt(m.content)}"
             for m in db_messages[-10:]
         )
 
@@ -2649,13 +2657,13 @@ async def analyze_documents(
         .first()
     )
     if cached_report:
-        cached_analysis = json.loads(_decrypt_text(cached_report.report_data))
+        cached_analysis = json.loads(_safe_decrypt(cached_report.report_data, "{}"))
         # Re-run search if requested (cheap), but reuse the cached analysis
         if body.search_terms or body.ai_query:
             docs_for_agents: dict[str, list[dict]] = {}
             for doc in documents:
-                decrypted_name = _decrypt_text(doc.filename)
-                pages = json.loads(_decrypt_text(doc.text_content))
+                decrypted_name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
+                pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
                 docs_for_agents[decrypted_name] = pages
             from search import keyword_search, ai_search
             search_results = {"keyword_results": [], "ai_results": []}
@@ -2686,8 +2694,8 @@ async def analyze_documents(
     # Build documents dict for the agent pipeline
     docs_for_agents: dict[str, list[dict]] = {}
     for doc in documents:
-        decrypted_name = _decrypt_text(doc.filename)
-        pages = json.loads(_decrypt_text(doc.text_content))
+        decrypted_name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
+        pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
         docs_for_agents[decrypted_name] = pages
 
     # Run the full pipeline in a thread pool to avoid blocking the event loop
@@ -2766,7 +2774,7 @@ async def get_report(report_id: str, db=Depends(get_db)):
     report = db.query(DBAnalysisReport).filter(DBAnalysisReport.id == report_id).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
-    full_data = json.loads(_decrypt_text(report.report_data))
+    full_data = json.loads(_safe_decrypt(report.report_data, "{}"))
     return {
         "id": report.id,
         "documents_analyzed": report.documents_analyzed,
@@ -2953,11 +2961,11 @@ async def list_drawings(db=Depends(get_db)):
         "drawings": [
             {
                 "id": d.id,
-                "filename": _decrypt_text(d.filename),
-                "title": _decrypt_text(d.title) if d.title else None,
-                "drawing_number": _decrypt_text(d.drawing_number) if d.drawing_number else None,
-                "equipment_tags": _decrypt_text(d.equipment_tags) if d.equipment_tags else None,
-                "description": _decrypt_text(d.description) if d.description else None,
+                "filename": _safe_decrypt(d.filename, f"Drawing {d.id[:8]}"),
+                "title": _safe_decrypt(d.title) if d.title else None,
+                "drawing_number": _safe_decrypt(d.drawing_number) if d.drawing_number else None,
+                "equipment_tags": _safe_decrypt(d.equipment_tags) if d.equipment_tags else None,
+                "description": _safe_decrypt(d.description) if d.description else None,
                 "page_count": d.page_count,
                 "uploaded_at": d.uploaded_at.isoformat(),
             }
@@ -3201,10 +3209,10 @@ async def list_isolations(
         "isolations": [
             {
                 "id": p.id,
-                "cert_number": _decrypt_text(p.cert_number),
-                "equipment_tag": _decrypt_text(p.equipment_tag),
-                "work_description": _decrypt_text(p.work_description),
-                "work_type": _decrypt_text(p.work_type),
+                "cert_number": _safe_decrypt(p.cert_number),
+                "equipment_tag": _safe_decrypt(p.equipment_tag),
+                "work_description": _safe_decrypt(p.work_description),
+                "work_type": _safe_decrypt(p.work_type),
                 "hazard_classification": p.hazard_classification,
                 "valve_count": p.valve_count,
                 "blind_count": p.blind_count,
@@ -3225,7 +3233,7 @@ async def get_isolation(isolation_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=404, detail="Isolation package not found")
 
     # Try to parse the package data as JSON
-    raw_data = _decrypt_text(pkg.package_data)
+    raw_data = _safe_decrypt(pkg.package_data, "{}")
     try:
         package_json = json.loads(raw_data)
     except (json.JSONDecodeError, ValueError):
@@ -3233,14 +3241,14 @@ async def get_isolation(isolation_id: str, db=Depends(get_db)):
 
     return {
         "id": pkg.id,
-        "cert_number": _decrypt_text(pkg.cert_number),
-        "equipment_tag": _decrypt_text(pkg.equipment_tag),
-        "work_description": _decrypt_text(pkg.work_description),
-        "work_type": _decrypt_text(pkg.work_type),
-        "fluid_service": _decrypt_text(pkg.fluid_service) if pkg.fluid_service else None,
-        "facility": _decrypt_text(pkg.facility) if pkg.facility else None,
-        "regime": _decrypt_text(pkg.regime) if pkg.regime else None,
-        "special_requirements": _decrypt_text(pkg.special_requirements) if pkg.special_requirements else None,
+        "cert_number": _safe_decrypt(pkg.cert_number),
+        "equipment_tag": _safe_decrypt(pkg.equipment_tag),
+        "work_description": _safe_decrypt(pkg.work_description),
+        "work_type": _safe_decrypt(pkg.work_type),
+        "fluid_service": _safe_decrypt(pkg.fluid_service) if pkg.fluid_service else None,
+        "facility": _safe_decrypt(pkg.facility) if pkg.facility else None,
+        "regime": _safe_decrypt(pkg.regime) if pkg.regime else None,
+        "special_requirements": _safe_decrypt(pkg.special_requirements) if pkg.special_requirements else None,
         "drawing_ids": json.loads(pkg.drawing_ids),
         "hazard_classification": pkg.hazard_classification,
         "valve_count": pkg.valve_count,
@@ -3289,7 +3297,7 @@ def _load_pdf_bytes(doc) -> bytes:
 
 def _load_stored_text(doc) -> list[dict]:
     """Load pre-extracted text from the database (no PDF re-processing)."""
-    return json.loads(_decrypt_text(doc.text_content))
+    return json.loads(_safe_decrypt(doc.text_content, "[]"))
 
 
 def _stored_text_to_structured(pages: list[dict]) -> str:
@@ -3313,7 +3321,7 @@ async def download_document(doc_id: str, db=Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     pdf_bytes = _load_pdf_bytes(doc)
-    filename = _decrypt_text(doc.filename)
+    filename = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}.pdf")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -3358,7 +3366,7 @@ async def view_document_pdf(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     pdf_bytes = _load_pdf_bytes(doc)
-    filename = _decrypt_text(doc.filename)
+    filename = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}.pdf")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -3386,7 +3394,7 @@ async def dashboard_stats(db=Depends(get_db)):
         "searches": search_count,
         "analyses": analysis_count,
         "recent_documents": [
-            {"id": d.id, "filename": _decrypt_text(d.filename),
+            {"id": d.id, "filename": _safe_decrypt(d.filename, f"Document {d.id[:8]}"),
              "page_count": d.page_count, "uploaded_at": d.uploaded_at.isoformat() if d.uploaded_at else None}
             for d in recent_docs
         ],
@@ -3437,7 +3445,7 @@ async def agent_bulk_audit(body: BulkAuditRequest, request: Request, db=Depends(
         yield f"data: {json.dumps({'type': 'bulk_start', 'total': total})}\n\n"
 
         for idx, doc in enumerate(docs):
-            doc_name = _decrypt_text(doc.filename)
+            doc_name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
             yield f"data: {json.dumps({'type': 'bulk_progress', 'current': idx + 1, 'total': total, 'doc_name': doc_name, 'status': 'running'})}\n\n"
 
             doc_hash = _get_doc_hash(doc)
@@ -3688,7 +3696,7 @@ async def annotate_document(
     pdf.close()
 
     client_ip = _get_client_ip(request)
-    original_name = _decrypt_text(doc.filename)
+    original_name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}.pdf")
 
     if save_as_new:
         clean_name = _sanitize_filename(output_filename or f"annotated_{original_name}")
@@ -3738,7 +3746,7 @@ async def get_document_structure(doc_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=404, detail="Document not found")
     pdf_bytes = _load_pdf_bytes(doc)
     structured = extract_structured_text(pdf_bytes)
-    return {"doc_id": doc_id, "filename": _decrypt_text(doc.filename), "pages": structured}
+    return {"doc_id": doc_id, "filename": _safe_decrypt(doc.filename, f"Document {doc.id[:8]}"), "pages": structured}
 
 
 @app.get("/documents/{doc_id}/html", dependencies=[Depends(verify_api_key)])
@@ -3793,7 +3801,7 @@ async def detect_regulations(doc_id: str, db=Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    pages = json.loads(_decrypt_text(doc.text_content))
+    pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
     full_text = "\n".join(p["text"] for p in pages if p.get("text"))
 
     patterns = [
@@ -3842,7 +3850,7 @@ async def search_regulations(body: RegulationSearchRequest, db=Depends(get_db)):
     if body.doc_id:
         doc = db.query(DBDocument).filter(DBDocument.id == body.doc_id).first()
         if doc:
-            pages = json.loads(_decrypt_text(doc.text_content))
+            pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
             full_text = "\n".join(p["text"] for p in pages if p.get("text"))
             if len(full_text) > 30000:
                 full_text = full_text[:30000] + "\n[... truncated ...]"
@@ -3995,7 +4003,7 @@ async def review_section(doc_id: str, body: ReviewSectionRequest, db=Depends(get
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    pages = json.loads(_decrypt_text(doc.text_content))
+    pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
     full_text = "\n".join(p["text"] for p in pages if p.get("text"))
     if len(full_text) > 40000:
         full_text = full_text[:40000] + "\n[... truncated ...]"
@@ -4070,7 +4078,7 @@ async def apply_updates_to_document(doc_id: str, body: ApplyUpdatesRequest, db=D
     if not api_key:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server")
 
-    pages = json.loads(_decrypt_text(doc.text_content))
+    pages = json.loads(_safe_decrypt(doc.text_content, "[]"))
     full_text = "\n".join(p["text"] for p in pages if p.get("text"))
     if len(full_text) > 80000:
         full_text = full_text[:80000] + "\n[... truncated ...]"
@@ -4199,8 +4207,8 @@ async def get_update_session(session_id: str, request: Request, db=Depends(get_d
     return {
         "id": session.id, "doc_id": session.doc_id, "title": session.title,
         "regulation_query": session.regulation_query,
-        "regulation_results": _decrypt_text(session.regulation_results) if session.regulation_results else "",
-        "updates_json": _decrypt_text(session.updates_json) if session.updates_json else "[]",
+        "regulation_results": _safe_decrypt(session.regulation_results) if session.regulation_results else "",
+        "updates_json": _safe_decrypt(session.updates_json, "[]") if session.updates_json else "[]",
         "accepted_ids": json.loads(session.accepted_ids) if session.accepted_ids else [],
         "status": session.status,
     }
@@ -4328,7 +4336,7 @@ def _check_agent_cache(db, cache_key: str, user_id: str | None = None):
         db.delete(cached)
         db.commit()
         return None
-    return _decrypt_text(cached.result_data)
+    return _safe_decrypt(cached.result_data)
 
 
 def _save_agent_cache(db, cache_key: str, agent_type: str, model: str,
@@ -4383,7 +4391,7 @@ async def agent_compliance_audit(body: ComplianceAuditRequest, request: Request,
 
     pdf_bytes = _load_pdf_bytes(doc)
     structured = extract_structured_text(pdf_bytes)
-    doc_name = _decrypt_text(doc.filename)
+    doc_name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
     focus = body.focus_areas
 
     doc_content = ""
@@ -4553,8 +4561,8 @@ async def agent_compare_docs(body: CompareDocsRequest, request: Request, db=Depe
                 text += f"{prefix}{block['text']}\n"
         return text[:60000] if len(text) > 60000 else text
 
-    name1 = _decrypt_text(doc1.filename)
-    name2 = _decrypt_text(doc2.filename)
+    name1 = _safe_decrypt(doc1.filename, f"Document {doc1.id[:8]}")
+    name2 = _safe_decrypt(doc2.filename, f"Document {doc2.id[:8]}")
     content1 = _get_content(doc1)
     content2 = _get_content(doc2)
     focus = body.focus_areas
@@ -4690,7 +4698,7 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, request: Request,
     if body.source_doc_id:
         source_doc = db.query(DBDocument).filter(DBDocument.id == body.source_doc_id).first()
         if source_doc:
-            source_name = _decrypt_text(source_doc.filename)
+            source_name = _safe_decrypt(source_doc.filename, f"Document {source_doc.id[:8]}")
             doc_hashes.append(_get_doc_hash(source_doc))
             pdf_bytes = _load_pdf_bytes(source_doc)
             structured = extract_structured_text(pdf_bytes)
@@ -4710,7 +4718,7 @@ async def agent_procedure_writer(body: ProcedureWriterRequest, request: Request,
         if ref_ids:
             docs = db.query(DBDocument).filter(DBDocument.id.in_(ref_ids)).all()
             for doc in docs[:3]:
-                name = _decrypt_text(doc.filename)
+                name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
                 ref_names.append(name)
                 doc_hashes.append(_get_doc_hash(doc))
                 pdf_bytes = _load_pdf_bytes(doc)
@@ -4886,7 +4894,7 @@ async def agent_code_builder(body: CodeBuilderRequest, request: Request, db=Depe
         ).all() if current_user_id else []
 
     for doc in selected_docs[:5]:
-        name = _decrypt_text(doc.filename)
+        name = _safe_decrypt(doc.filename, f"Document {doc.id[:8]}")
         doc_names.append(name)
         doc_hashes.append(_get_doc_hash(doc))
         pdf_bytes = _load_pdf_bytes(doc)
@@ -5235,8 +5243,8 @@ async def update_poster(poster_id: str, body: PosterUpdateRequest, request: Requ
     client = anthropic.Anthropic(api_key=api_key)
     model = _resolve_agent_model(body.model)
 
-    current_html = _decrypt_text(poster.html_content)
-    prompt_history = json.loads(_decrypt_text(poster.prompt_history))
+    current_html = _safe_decrypt(poster.html_content)
+    prompt_history = json.loads(_safe_decrypt(poster.prompt_history, "[]"))
 
     user_msg = f"CURRENT POSTER HTML:\n{current_html}\n\nREQUESTED CHANGES:\n{body.prompt}"
 
@@ -5259,7 +5267,7 @@ async def update_poster(poster_id: str, body: PosterUpdateRequest, request: Requ
 
         prompt_history.append(body.prompt)
         title_match = re.search(r"<title>(.*?)</title>", new_html, re.IGNORECASE)
-        title = title_match.group(1) if title_match else _decrypt_text(poster.title)
+        title = title_match.group(1) if title_match else _safe_decrypt(poster.title, "Untitled Poster")
 
         poster.title = _encrypt_text(title)
         poster.prompt_history = _encrypt_text(json.dumps(prompt_history))
@@ -5287,8 +5295,8 @@ async def list_posters(request: Request, db=Depends(get_db)):
         "posters": [
             {
                 "id": p.id,
-                "title": _decrypt_text(p.title),
-                "prompt_count": len(json.loads(_decrypt_text(p.prompt_history))),
+                "title": _safe_decrypt(p.title, "Untitled Poster"),
+                "prompt_count": len(json.loads(_safe_decrypt(p.prompt_history, "[]"))),
                 "created_at": p.created_at.isoformat() if p.created_at else None,
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None,
             }
@@ -5308,9 +5316,9 @@ async def get_poster(poster_id: str, request: Request, db=Depends(get_db)):
         raise HTTPException(status_code=403, detail="Access denied")
     return {
         "id": poster.id,
-        "title": _decrypt_text(poster.title),
-        "html": _decrypt_text(poster.html_content),
-        "prompts": json.loads(_decrypt_text(poster.prompt_history)),
+        "title": _safe_decrypt(poster.title, "Untitled Poster"),
+        "html": _safe_decrypt(poster.html_content),
+        "prompts": json.loads(_safe_decrypt(poster.prompt_history, "[]")),
         "created_at": poster.created_at.isoformat() if poster.created_at else None,
         "updated_at": poster.updated_at.isoformat() if poster.updated_at else None,
     }
@@ -5350,13 +5358,13 @@ async def save_poster_html(poster_id: str, body: PosterSaveHTMLRequest, request:
     if title_match:
         poster.title = _encrypt_text(title_match.group(1))
 
-    prompt_history = json.loads(_decrypt_text(poster.prompt_history))
+    prompt_history = json.loads(_safe_decrypt(poster.prompt_history, "[]"))
     prompt_history.append("[Manual HTML edit]")
     poster.prompt_history = _encrypt_text(json.dumps(prompt_history))
     poster.html_content = _encrypt_text(body.html)
     poster.updated_at = datetime.now(timezone.utc)
     db.commit()
-    return {"saved": True, "title": _decrypt_text(poster.title)}
+    return {"saved": True, "title": _safe_decrypt(poster.title, "Untitled Poster")}
 
 
 @app.post("/posters/{poster_id}/duplicate", dependencies=[Depends(verify_api_key)])
@@ -5370,7 +5378,7 @@ async def duplicate_poster(poster_id: str, request: Request, db=Depends(get_db))
         raise HTTPException(status_code=403, detail="Access denied")
 
     now = datetime.now(timezone.utc)
-    orig_title = _decrypt_text(poster.title)
+    orig_title = _safe_decrypt(poster.title, "Untitled Poster")
     new_poster = DBPoster(
         id=str(uuid.uuid4()),
         user_id=current_user_id,
