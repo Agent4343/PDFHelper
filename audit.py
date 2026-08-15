@@ -5,10 +5,24 @@ Logs all sensitive operations (uploads, searches, deletes, auth failures)
 to a structured log that can be reviewed later.
 """
 
+import json
 import logging
 import os
 import sys
 from datetime import datetime, timezone
+
+from config import IS_PRODUCTION
+
+
+class _JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        return json.dumps(log_entry)
 
 
 def setup_audit_logger() -> logging.Logger:
@@ -18,26 +32,47 @@ def setup_audit_logger() -> logging.Logger:
 
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s | AUDIT | %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%SZ",
-        ))
-        logger.addHandler(handler)
-
-        # Also log to file if configured
-        log_file = os.getenv("AUDIT_LOG_FILE")
-        if log_file:
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setFormatter(logging.Formatter(
+        if IS_PRODUCTION:
+            handler.setFormatter(_JSONFormatter())
+        else:
+            handler.setFormatter(logging.Formatter(
                 "%(asctime)s | AUDIT | %(message)s",
                 datefmt="%Y-%m-%dT%H:%M:%SZ",
             ))
+        logger.addHandler(handler)
+
+        log_file = os.getenv("AUDIT_LOG_FILE")
+        if log_file:
+            file_handler = logging.FileHandler(log_file)
+            if IS_PRODUCTION:
+                file_handler.setFormatter(_JSONFormatter())
+            else:
+                file_handler.setFormatter(logging.Formatter(
+                    "%(asctime)s | AUDIT | %(message)s",
+                    datefmt="%Y-%m-%dT%H:%M:%SZ",
+                ))
             logger.addHandler(file_handler)
 
     return logger
 
 
+def setup_app_logger():
+    logger = logging.getLogger("pdfhelper")
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        if IS_PRODUCTION:
+            handler.setFormatter(_JSONFormatter())
+        else:
+            handler.setFormatter(logging.Formatter(
+                "%(asctime)s | %(levelname)s | %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%SZ",
+            ))
+        logger.addHandler(handler)
+    return logger
+
 audit_log = setup_audit_logger()
+app_log = setup_app_logger()
 
 
 def log_upload(client_ip: str, filename: str, doc_id: str, pages: int):

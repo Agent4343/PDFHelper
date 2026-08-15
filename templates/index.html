@@ -4,12 +4,29 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>PDFHelper</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;
 --accent:#3b82f6;--green:#22c55e;--red:#ef4444;--orange:#f59e0b;--code:#0d1117}
+:root[data-theme="light"]{--bg:#f8fafc;--card:#ffffff;--border:#e2e8f0;--text:#1e293b;--muted:#64748b;
+--accent:#2563eb;--green:#16a34a;--red:#dc2626;--orange:#d97706;--code:#f1f5f9}
+:root[data-theme="light"] .sidebar nav button:hover{background:#0000000a}
+:root[data-theme="light"] .sidebar nav button.active{background:#2563eb14}
+:root[data-theme="light"] .chat-msg.user .chat-bbl{background:#2563eb;color:#fff}
+:root[data-theme="light"] .card{box-shadow:0 1px 3px rgba(0,0,0,0.08)}
+:root[data-theme="light"] input,:root[data-theme="light"] select,:root[data-theme="light"] textarea{background:#fff;border-color:var(--border);color:var(--text)}
+:root[data-theme="light"] .top-nav button:hover{background:#0000000a}
+:root[data-theme="light"] .chat-msg.assistant .chat-bbl{background:#e2e8f0;border:1px solid var(--border);color:var(--text)}
+:root[data-theme="light"] .chat-sessions{background:#f1f5f9}
+:root[data-theme="light"] .chat-input-bar textarea{background:#fff}
+:root[data-theme="light"] .chat-sug{background:#e2e8f0}
+:root[data-theme="light"] .agent-modal select,:root[data-theme="light"] .agent-modal textarea,:root[data-theme="light"] .agent-modal input{background:#fff}
+:root[data-theme="light"] .doc-gen-box input,:root[data-theme="light"] .doc-gen-box textarea{background:#fff}
+:root[data-theme="light"] .agent-steps{background:#f1f5f9}
+:root[data-theme="light"] .poster-item:hover{background:#0000000a}
+:root[data-theme="light"] .sess-item:hover{background:#0000000a}
+:root[data-theme="light"] .sess-item.active{background:#2563eb14}
+:root[data-theme="light"] .chat-doc-chip.active{background:#2563eb14}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 background:var(--bg);color:var(--text);line-height:1.6;margin:0}
 .app{display:flex;height:100vh;height:100dvh}
@@ -503,12 +520,29 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
 .dash-actions{flex-direction:column}
 .pdf-viewer-box{width:100%;height:100%;border-radius:0}
 }
+.hamburger{display:none;position:fixed;top:12px;left:12px;z-index:1001;background:var(--card);
+border:1px solid var(--border);border-radius:8px;padding:6px;cursor:pointer;color:var(--text)}
+@media(max-width:768px){
+.hamburger{display:flex;align-items:center;justify-content:center}
+.sidebar.mobile-open{display:flex;position:fixed;top:0;left:0;bottom:0;z-index:1000;
+width:220px;box-shadow:4px 0 20px rgba(0,0,0,0.5)}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999}
+.sidebar-overlay.visible{display:block}
+}
+.skip-link{position:absolute;top:-40px;left:0;background:var(--accent);color:#fff;
+padding:8px 16px;z-index:10000;transition:top 0.2s}
+.skip-link:focus{top:0}
 </style>
 </head>
 <body>
+<a href="#main-content" class="skip-link">Skip to content</a>
 <div class="app">
+<button class="hamburger" id="hamburger-btn" onclick="toggleMobileSidebar()">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+</button>
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleMobileSidebar()"></div>
   <!-- Sidebar -->
-  <aside class="sidebar">
+  <aside class="sidebar" role="navigation" aria-label="Main navigation">
     <div class="logo"><span>PDF</span>Helper</div>
     <nav>
       <button class="active" onclick="showPage('dashboard')" id="nav-dashboard">
@@ -558,11 +592,14 @@ table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0
         <span>AI Chat</span>
       </button>
     </nav>
-    <div class="status" id="health-status"></div>
+    <button onclick="toggleTheme()" id="theme-toggle" style="background:none;border:1px solid var(--border);color:var(--muted);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem;margin:0 1rem 6px;width:calc(100% - 2rem)" title="Toggle light/dark mode">
+      <span id="theme-icon">☀️</span> Light mode
+    </button>
+    <div class="status" id="health-status" role="status" aria-live="polite"></div>
   </aside>
 
   <!-- Main content -->
-  <main class="main">
+  <main class="main" role="main" id="main-content">
 
     <!-- Top navigation tabs -->
     <div class="top-nav-wrap" id="top-nav-wrap">
@@ -1192,7 +1229,7 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
               <div id="code-doc-chips" style="display:contents;"></div>
               <button class="chat-doc-toggle" id="code-doc-toggle" onclick="toggleCodeDocBar()" style="display:none">Show all documents</button>
             </div>
-            <div class="chat-msgs" id="code-msgs"></div>
+            <div class="chat-msgs" id="code-msgs" role="log" aria-live="polite" aria-label="Code chat messages"></div>
             <div class="chat-input-bar">
               <div class="chat-input-row">
                 <textarea id="code-input" rows="1" placeholder="Describe what you want to build or change..."
@@ -1278,7 +1315,7 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
             <div id="chat-doc-chips" style="display:contents;"></div>
             <button class="chat-doc-toggle" id="chat-doc-toggle" onclick="toggleChatDocBar()" style="display:none">Show all documents</button>
           </div>
-          <div class="chat-msgs" id="chat-msgs"></div>
+          <div class="chat-msgs" id="chat-msgs" role="log" aria-live="polite" aria-label="Chat messages"></div>
           <div class="agent-bar">
             <span style="font-size:0.72rem;color:var(--muted);font-weight:600;align-self:center">Agents:</span>
             <button class="agent-btn" onclick="showAgentModal('audit')" id="agent-audit-btn">
@@ -1329,7 +1366,7 @@ Example: Create a safety poster about confined space entry. Title: 'DANGER - CON
   </main>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="alert" aria-live="assertive"></div>
 
 <!-- Agent Config Modal -->
 <div class="agent-modal-overlay" id="agent-modal" style="display:none" onclick="if(event.target===this)hideAgentModal()">
@@ -1668,7 +1705,15 @@ function requireKey(errorContainerId){
   }
   return false;
 }
+function toggleMobileSidebar(){
+  var sb=document.querySelector('.sidebar');
+  var ov=document.getElementById('sidebar-overlay');
+  sb.classList.toggle('mobile-open');
+  ov.classList.toggle('visible');
+}
 function showPage(name){
+  var sb=document.querySelector('.sidebar');
+  if(sb&&sb.classList.contains('mobile-open')) toggleMobileSidebar();
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
   /* Update sidebar nav */
@@ -1691,6 +1736,26 @@ function showPage(name){
   if(name==='posters') loadPosterList();
   if(name==='bot') initBot();
   if(name==='code') initCode();
+  /* Focus management for accessibility */
+  var newPage=document.getElementById('page-'+name);
+  var firstHeading=newPage.querySelector('h2, h3, [tabindex="-1"]');
+  if(firstHeading) firstHeading.focus();
+}
+/* ---- Theme toggle ---- */
+function toggleTheme(){
+  var html=document.documentElement;
+  var current=html.getAttribute('data-theme');
+  var next=current==='light'?'dark':'light';
+  if(next==='dark'){html.removeAttribute('data-theme');} else {html.setAttribute('data-theme','light');}
+  localStorage.setItem('pdfhelper-theme',next);
+  updateThemeButton(next);
+}
+function updateThemeButton(theme){
+  var btn=document.getElementById('theme-toggle');
+  var icon=document.getElementById('theme-icon');
+  if(!btn)return;
+  if(theme==='light'){icon.textContent='🌙';btn.childNodes[1].textContent=' Dark mode';}
+  else{icon.textContent='☀️';btn.childNodes[1].textContent=' Light mode';}
 }
 function toggleKeyVisibility(e){
   const inp=document.getElementById('apikey');
@@ -2149,9 +2214,21 @@ async function checkHealth(){
     document.getElementById('health-status').innerHTML='<span class="status-dot bad"></span><span>Offline</span>';
   }
 }
-checkHealth();setInterval(checkHealth,30000);
+checkHealth();
+var _healthInterval = setInterval(checkHealth, 30000);
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+        clearInterval(_healthInterval);
+    } else {
+        checkHealth();
+        _healthInterval = setInterval(checkHealth, 30000);
+    }
+});
 
 function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+
+/* ---- Theme initialization ---- */
+(function(){var t=localStorage.getItem('pdfhelper-theme');if(t==='light'){document.documentElement.setAttribute('data-theme','light');}updateThemeButton(t||'dark');})();
 
 /* ---- Load saved API key on startup ---- */
 loadKey().then(function(){
@@ -2306,6 +2383,15 @@ function toggleBotDoc(id){
   renderBotDocChips();
 }
 
+var _renderRAF = null;
+function scheduleRender() {
+    if (_renderRAF) return;
+    _renderRAF = requestAnimationFrame(function() {
+        _renderRAF = null;
+        renderBotMessages();
+    });
+}
+
 function renderBotMessages(){
   var el=document.getElementById('chat-msgs');
   if(!el) return;
@@ -2439,11 +2525,11 @@ async function botSend(){
           } else if(evt.type==='status'){
             if(!botMessages[assistantIdx]._status) botMessages[assistantIdx]._status='';
             botMessages[assistantIdx]._status=evt.message||'Thinking...';
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='chunk'){
             botMessages[assistantIdx]._status='';
             botMessages[assistantIdx].content+=evt.text;
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='error'){
             botMessages[assistantIdx].content+=(botMessages[assistantIdx].content?'\n\n':'')+'Error: '+detailStr(evt.detail);
           }
@@ -3165,15 +3251,15 @@ async function runAgent(){
           if(evt.type==='cached'){
             botMessages[assistantIdx]._cached=true;
             botMessages[assistantIdx]._status=evt.message||'Cached result';
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='agent_step'){
             var steps=botMessages[assistantIdx]._agentSteps;
             var existing=steps.findIndex(function(s){return s.step===evt.step;});
             if(existing>=0) steps[existing]=evt; else steps.push(evt);
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='chunk'){
             botMessages[assistantIdx].content+=evt.text;
-            renderBotMessages();
+            scheduleRender();
           } else if(evt.type==='error'){
             botMessages[assistantIdx].content+=(botMessages[assistantIdx].content?'\n\n':'')+'Error: '+detailStr(evt.detail);
           } else if(evt.type==='done'){
@@ -4338,10 +4424,36 @@ function downloadPosterHTML(){
   toast('HTML downloaded — open in any browser to view or print');
 }
 
+var _html2canvasLoaded = false;
+var _jspdfLoaded = false;
+async function loadPosterLibs() {
+    if (!_html2canvasLoaded) {
+        await new Promise(function(resolve, reject) {
+            var s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+        _html2canvasLoaded = true;
+    }
+    if (!_jspdfLoaded) {
+        await new Promise(function(resolve, reject) {
+            var s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js';
+            s.onload = resolve;
+            s.onerror = reject;
+            document.head.appendChild(s);
+        });
+        _jspdfLoaded = true;
+    }
+}
+
 async function downloadPosterPDF(){
   if(!currentPosterId){toast('No poster selected','error');return;}
   var iframe=document.getElementById('poster-iframe');
   if(!iframe||!iframe.srcdoc){toast('No poster to download','error');return;}
+  await loadPosterLibs();
   toast('Generating PDF...');
   try{
     // Render poster in a hidden container at full size
