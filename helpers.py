@@ -453,18 +453,20 @@ def _check_agent_cache(db, cache_key: str, user_id: str | None = None):
 def _save_agent_cache(db, cache_key: str, agent_type: str, model: str,
                       result: str, doc_ids: list[str], params_summary: str,
                       user_id: str | None = None):
-    db.add(DBAgentCache(
+    docs = db.query(DBDocument).filter(DBDocument.id.in_(doc_ids)).all() if doc_ids else []
+    cache = DBAgentCache(
         id=str(uuid.uuid4()),
         user_id=user_id,
         cache_key=cache_key,
         agent_type=agent_type,
         model_used=model,
         result_data=_encrypt_text(result),
-        doc_ids=json.dumps(doc_ids),
+        documents=docs,
         params_summary=params_summary[:200] if params_summary else "",
         created_at=datetime.now(timezone.utc),
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
-    ))
+    )
+    db.add(cache)
     db.commit()
 
 

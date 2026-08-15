@@ -45,13 +45,24 @@ from routes.posters import router as posters_router
 _startup_errors: list[str] = []
 
 
+def _run_migrations(logger):
+    try:
+        from alembic.config import Config
+        from alembic import command
+        cfg = Config("alembic.ini")
+        command.upgrade(cfg, "head")
+        logger.info("Alembic migrations applied successfully.")
+    except Exception as exc:
+        logger.warning("Alembic migration failed: %s — falling back to create_all", exc)
+        Base.metadata.create_all(bind=engine)
+
+
 async def _retry_db_init(logger):
     import asyncio
     for attempt in range(2, 6):
         await asyncio.sleep(2 ** attempt)
         try:
-            Base.metadata.create_all(bind=engine)
-            logger.info("Database tables initialized successfully (attempt %d).", attempt)
+            _run_migrations(logger)
             return
         except Exception as exc:
             logger.warning("Database init attempt %d/5 failed: %s", attempt, exc)
@@ -89,8 +100,7 @@ async def lifespan(app: FastAPI):
         _startup_errors.append(msg)
 
     try:
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables initialized successfully.")
+        _run_migrations(logger)
     except Exception as exc:
         logger.warning("Database init failed on first attempt: %s — retrying in background", exc)
         asyncio.create_task(_retry_db_init(logger))

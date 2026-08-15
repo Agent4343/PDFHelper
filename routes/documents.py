@@ -33,6 +33,10 @@ from database import (
     DBUpdateSession,
     DBAnalysisReport,
     DBAgentCache,
+    chat_session_documents,
+    code_session_documents,
+    analysis_report_documents,
+    agent_cache_documents,
 )
 from models import SearchRequest, AnalyzeRequest, MergeRequest, SplitRequest
 from helpers import (
@@ -302,13 +306,32 @@ async def delete_document(doc_id: str, request: Request, db=Depends(get_db)):
     except Exception:
         log_delete(_get_client_ip(request), doc_id, f"Document {doc_id[:8]}")
 
-    # Cascade: delete sessions referencing this document (SQL filter, not .all())
-    doc_id_pattern = f'"{doc_id}"'
-    db.query(DBChatSession).filter(DBChatSession.doc_ids.contains(doc_id_pattern)).delete(synchronize_session="fetch")
-    db.query(DBCodeSession).filter(DBCodeSession.doc_ids.contains(doc_id_pattern)).delete(synchronize_session="fetch")
+    # Cascade: delete sessions/reports/cache referencing this document
+    chat_ids = [r.session_id for r in db.execute(
+        chat_session_documents.select().where(chat_session_documents.c.document_id == doc_id)
+    ).fetchall()]
+    if chat_ids:
+        db.query(DBChatSession).filter(DBChatSession.id.in_(chat_ids)).delete(synchronize_session="fetch")
+
+    code_ids = [r.session_id for r in db.execute(
+        code_session_documents.select().where(code_session_documents.c.document_id == doc_id)
+    ).fetchall()]
+    if code_ids:
+        db.query(DBCodeSession).filter(DBCodeSession.id.in_(code_ids)).delete(synchronize_session="fetch")
+
     db.query(DBUpdateSession).filter(DBUpdateSession.doc_id == doc_id).delete(synchronize_session="fetch")
-    db.query(DBAnalysisReport).filter(DBAnalysisReport.doc_ids.contains(doc_id_pattern)).delete(synchronize_session="fetch")
-    db.query(DBAgentCache).filter(DBAgentCache.doc_ids.contains(doc_id_pattern)).delete(synchronize_session="fetch")
+
+    report_ids = [r.report_id for r in db.execute(
+        analysis_report_documents.select().where(analysis_report_documents.c.document_id == doc_id)
+    ).fetchall()]
+    if report_ids:
+        db.query(DBAnalysisReport).filter(DBAnalysisReport.id.in_(report_ids)).delete(synchronize_session="fetch")
+
+    cache_ids = [r.cache_id for r in db.execute(
+        agent_cache_documents.select().where(agent_cache_documents.c.document_id == doc_id)
+    ).fetchall()]
+    if cache_ids:
+        db.query(DBAgentCache).filter(DBAgentCache.id.in_(cache_ids)).delete(synchronize_session="fetch")
 
     db.delete(doc)
     db.commit()

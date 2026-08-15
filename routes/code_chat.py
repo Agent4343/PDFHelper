@@ -11,7 +11,7 @@ from starlette.responses import StreamingResponse
 
 from auth import verify_auth, verify_api_key, get_db
 from config import CHAT_MODEL, CHAT_MAX_TOKENS, AGENT_MODELS, IS_PRODUCTION
-from database import DBDocument, DBCodeSession, DBCodeMessage, SessionLocal
+from database import DBDocument, DBCodeSession, DBCodeMessage, SessionLocal, code_session_documents
 from models import CodeChatRequest
 from helpers import _encrypt_text, _decrypt_text, _safe_decrypt, _load_stored_text, _stored_text_to_structured
 
@@ -50,11 +50,12 @@ async def code_chat(
             raise HTTPException(status_code=403, detail="You do not own this code session")
 
     if session is None:
+        docs = db.query(DBDocument).filter(DBDocument.id.in_(body.doc_ids)).all() if body.doc_ids else []
         session = DBCodeSession(
             id=str(uuid.uuid4()),
             user_id=current_user_id,
             title=body.message[:100],
-            doc_ids=json.dumps(body.doc_ids),
+            documents=docs,
             created_at=now,
             updated_at=now,
         )
@@ -261,7 +262,7 @@ async def list_code_sessions(request: Request, limit: int = Query(default=30, le
             {
                 "id": s.id,
                 "title": s.title,
-                "doc_ids": json.loads(s.doc_ids),
+                "doc_ids": [d.id for d in s.documents],
                 "message_count": len(s.messages),
                 "created_at": s.created_at.isoformat(),
                 "updated_at": s.updated_at.isoformat(),
@@ -294,7 +295,7 @@ async def get_code_session(session_id: str, request: Request, db=Depends(get_db)
     return {
         "id": session.id,
         "title": session.title,
-        "doc_ids": json.loads(session.doc_ids),
+        "doc_ids": [d.id for d in session.documents],
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
         "messages": messages,
