@@ -6,7 +6,7 @@ Uses SQLite locally, PostgreSQL on Railway (auto-detected via DATABASE_URL).
 
 import os
 
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, Boolean, create_engine
+from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, Boolean, Index, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip() or "sqlite:////tmp/pdfhelper.db"
@@ -49,8 +49,8 @@ class DBDocument(Base):
     filepath = Column(String, nullable=False)
     page_count = Column(Integer, nullable=False)
     text_content = Column(Text, nullable=False)  # JSON of extracted pages
-    content_hash = Column(String, nullable=True)  # SHA-256 of PDF bytes for cache lookups
-    uploaded_at = Column(DateTime, nullable=False)
+    content_hash = Column(String, nullable=True, index=True)
+    uploaded_at = Column(DateTime, nullable=False, index=True)
 
 
 class DBSearchResult(Base):
@@ -86,11 +86,11 @@ class DBChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(String, primary_key=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String, nullable=True)              # auto-generated from first message
     doc_ids = Column(Text, nullable=False)              # JSON list of document IDs
     created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False, index=True)
 
     messages = relationship("DBChatMessage", back_populates="session",
                             order_by="DBChatMessage.created_at",
@@ -101,7 +101,7 @@ class DBChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(String, primary_key=True)
-    session_id = Column(String, ForeignKey("chat_sessions.id"), nullable=False)
+    session_id = Column(String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String, nullable=False)               # "user" or "assistant"
     content = Column(Text, nullable=False)              # encrypted
     created_at = Column(DateTime, nullable=False)
@@ -126,7 +126,7 @@ class DBDrawing(Base):
     description = Column(Text, nullable=True)            # encrypted — what system this covers
     page_count = Column(Integer, default=1)
     text_content = Column(Text, nullable=True)           # encrypted JSON — OCR extracted text
-    uploaded_at = Column(DateTime, nullable=False)
+    uploaded_at = Column(DateTime, nullable=False, index=True)
 
 
 class DBIsolationPackage(Base):
@@ -149,8 +149,8 @@ class DBIsolationPackage(Base):
     blind_count = Column(Integer, default=0)
     step_count = Column(Integer, default=0)
     energy_source_count = Column(Integer, default=0)
-    status = Column(String, default="draft")                    # draft / approved / closed
-    created_at = Column(DateTime, nullable=False)
+    status = Column(String, default="draft", index=True)        # draft / approved / closed
+    created_at = Column(DateTime, nullable=False, index=True)
     updated_at = Column(DateTime, nullable=False)
 
 
@@ -163,8 +163,8 @@ class DBUpdateSession(Base):
     __tablename__ = "update_sessions"
 
     id = Column(String, primary_key=True)
-    doc_id = Column(String, ForeignKey("documents.id"), nullable=False)
-    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    doc_id = Column(String, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String, nullable=True)
     regulation_query = Column(Text, nullable=True)
     regulation_results = Column(Text, nullable=True)       # encrypted
@@ -180,7 +180,7 @@ class DBAgentCache(Base):
     __tablename__ = "agent_cache"
 
     id = Column(String, primary_key=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     cache_key = Column(String, nullable=False, index=True)               # SHA-256 of inputs
     agent_type = Column(String, nullable=False)                          # audit / compare / writer
     model_used = Column(String, nullable=False)
@@ -188,7 +188,7 @@ class DBAgentCache(Base):
     doc_ids = Column(Text, nullable=False)                               # JSON list for lookup
     params_summary = Column(String, nullable=True)                       # human-readable params
     created_at = Column(DateTime, nullable=False)
-    expires_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True, index=True)
 
 
 class DBCodeSession(Base):
@@ -196,11 +196,11 @@ class DBCodeSession(Base):
     __tablename__ = "code_sessions"
 
     id = Column(String, primary_key=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String, nullable=True)
     doc_ids = Column(Text, nullable=False)
     created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False, index=True)
 
     messages = relationship("DBCodeMessage", back_populates="session",
                             order_by="DBCodeMessage.created_at",
@@ -212,7 +212,7 @@ class DBCodeMessage(Base):
     __tablename__ = "code_messages"
 
     id = Column(String, primary_key=True)
-    session_id = Column(String, ForeignKey("code_sessions.id"), nullable=False)
+    session_id = Column(String, ForeignKey("code_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(String, nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, nullable=False)
@@ -225,7 +225,7 @@ class DBPoster(Base):
     __tablename__ = "posters"
 
     id = Column(String, primary_key=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String, nullable=False)                               # encrypted
     prompt_history = Column(Text, nullable=False)                        # encrypted JSON list of prompts
     html_content = Column(Text, nullable=False)                          # encrypted — full HTML/CSS poster

@@ -16,8 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Create upload directory
-RUN mkdir -p /tmp/pdfhelper_uploads
+# Create upload directory and non-root user
+RUN mkdir -p /tmp/pdfhelper_uploads && \
+    useradd -r -s /usr/sbin/nologin appuser && \
+    chown -R appuser:appuser /tmp/pdfhelper_uploads
+
+USER appuser
 
 # Flush Python output immediately so Railway deploy logs show errors
 ENV PYTHONUNBUFFERED=1

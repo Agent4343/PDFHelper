@@ -1218,46 +1218,13 @@ async def delete_document(doc_id: str, request: Request, db=Depends(get_db)):
     except Exception:
         log_delete(_get_client_ip(request), doc_id, f"Document {doc_id[:8]}")
 
-    # Cascade: delete chat sessions referencing this document
-    chat_sessions = db.query(DBChatSession).all()
-    for cs in chat_sessions:
-        try:
-            session_doc_ids = json.loads(cs.doc_ids)
-        except Exception:
-            session_doc_ids = []
-        if doc_id in session_doc_ids:
-            db.delete(cs)
-
-    # Cascade: delete code sessions referencing this document
-    code_sessions = db.query(DBCodeSession).all()
-    for cs in code_sessions:
-        try:
-            session_doc_ids = json.loads(cs.doc_ids)
-        except Exception:
-            session_doc_ids = []
-        if doc_id in session_doc_ids:
-            db.delete(cs)
-
-    # Cascade: delete update sessions for this document
-    db.query(DBUpdateSession).filter(DBUpdateSession.doc_id == doc_id).delete()
-
-    # Cascade: delete analysis reports referencing this document
-    for report in db.query(DBAnalysisReport).all():
-        try:
-            report_doc_ids = json.loads(report.doc_ids)
-        except Exception:
-            report_doc_ids = []
-        if doc_id in report_doc_ids:
-            db.delete(report)
-
-    # Cascade: delete agent cache entries referencing this document
-    for cache in db.query(DBAgentCache).all():
-        try:
-            cache_doc_ids = json.loads(cache.doc_ids)
-        except Exception:
-            cache_doc_ids = []
-        if doc_id in cache_doc_ids:
-            db.delete(cache)
+    # Cascade: delete sessions referencing this document (SQL filter, not .all())
+    doc_id_pattern = f'"{doc_id}"'
+    db.query(DBChatSession).filter(DBChatSession.doc_ids.contains(doc_id_pattern)).delete(synchronize_session="fetch")
+    db.query(DBCodeSession).filter(DBCodeSession.doc_ids.contains(doc_id_pattern)).delete(synchronize_session="fetch")
+    db.query(DBUpdateSession).filter(DBUpdateSession.doc_id == doc_id).delete(synchronize_session="fetch")
+    db.query(DBAnalysisReport).filter(DBAnalysisReport.doc_ids.contains(doc_id_pattern)).delete(synchronize_session="fetch")
+    db.query(DBAgentCache).filter(DBAgentCache.doc_ids.contains(doc_id_pattern)).delete(synchronize_session="fetch")
 
     db.delete(doc)
     db.commit()
