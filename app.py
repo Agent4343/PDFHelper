@@ -169,6 +169,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         if IS_PRODUCTION:
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self'; "
+            "font-src 'self'; "
+            "frame-ancestors 'none'"
+        )
         if "server" in response.headers:
             del response.headers["server"]
         return response
@@ -203,6 +212,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._last_cleanup = time.time()
         self._cleanup_interval = 300
         self._lock = asyncio.Lock()
+        self._auth_paths = {"/login", "/register", "/setup"}
+        self._auth_max = 10
+        self._auth_requests: dict[str, list[float]] = {}
 
     async def dispatch(self, request: Request, call_next):
         client_ip = _get_client_ip(request)
@@ -216,7 +228,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     for ip, ts in self.requests.items()
                     if any(t > window_start for t in ts)
                 }
+                self._auth_requests = {
+                    ip: [t for t in ts if t > window_start]
+                    for ip, ts in self._auth_requests.items()
+                    if any(t > window_start for t in ts)
+                }
                 self._last_cleanup = now
+
+            if request.url.path in self._auth_paths and request.method == "POST":
+                auth_hits = self._auth_requests.get(client_ip, [])
+                auth_hits = [t for t in auth_hits if t > window_start]
+                if len(auth_hits) >= self._auth_max:
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "Too many authentication attempts. Try again later."},
+                    )
+                auth_hits.append(now)
+                self._auth_requests[client_ip] = auth_hits
 
             hits = self.requests.get(client_ip, [])
             hits = [t for t in hits if t > window_start]
