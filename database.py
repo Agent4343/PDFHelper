@@ -259,3 +259,41 @@ class DBPoster(Base):
     thumbnail = Column(Text, nullable=True)                              # optional base64 preview
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# Procedure Builder
+# ---------------------------------------------------------------------------
+
+class DBProcedureSession(Base):
+    """An AI-guided procedure writing session."""
+    __tablename__ = "procedure_sessions"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    title = Column(String, nullable=True)
+    source_doc_id = Column(String, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
+    status = Column(String, nullable=False, default="gathering")  # gathering, drafting, complete
+    gathered_data = Column(Text, nullable=True)     # encrypted JSON — answers collected from user
+    style_config = Column(Text, nullable=True)      # encrypted JSON — writing style rules
+    template_config = Column(Text, nullable=True)   # encrypted JSON — business template structure
+    output_content = Column(Text, nullable=True)    # encrypted — final generated procedure content
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False, index=True)
+
+    messages = relationship("DBProcedureMessage", back_populates="session",
+                            order_by="DBProcedureMessage.created_at",
+                            cascade="all, delete-orphan")
+
+
+class DBProcedureMessage(Base):
+    """A message in a procedure building conversation."""
+    __tablename__ = "procedure_messages"
+
+    id = Column(String, primary_key=True)
+    session_id = Column(String, ForeignKey("procedure_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String, nullable=False)           # "user" or "assistant"
+    content = Column(Text, nullable=False)          # encrypted
+    created_at = Column(DateTime, nullable=False)
+
+    session = relationship("DBProcedureSession", back_populates="messages")

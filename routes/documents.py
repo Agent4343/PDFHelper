@@ -38,6 +38,8 @@ from database import (
     DBDrawing,
     DBIsolationPackage,
     DBPoster,
+    DBProcedureSession,
+    DBProcedureMessage,
     chat_session_documents,
     code_session_documents,
     analysis_report_documents,
@@ -743,6 +745,7 @@ async def wipe_all_data(request: Request, db=Depends(get_db)):
         DBCodeMessage, DBCodeSession,
         DBSearchResult, DBAnalysisReport, DBAgentCache,
         DBUpdateSession, DBDrawing, DBIsolationPackage,
+        DBProcedureMessage, DBProcedureSession,
         DBPoster, DBDocument,
     ]:
         db.query(model).delete()
