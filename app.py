@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import (
@@ -135,6 +136,12 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+# ---------------------------------------------------------------------------
+# Compression
+# ---------------------------------------------------------------------------
+
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # ---------------------------------------------------------------------------
 # Security middleware
