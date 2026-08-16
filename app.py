@@ -121,6 +121,10 @@ async def lifespan(app: FastAPI):
                 db.add(admin)
                 db.commit()
                 logger.info("Admin account '%s' created from env vars.", ADMIN_USERNAME)
+            elif not existing.is_admin:
+                existing.is_admin = True
+                db.commit()
+                logger.info("Existing account '%s' promoted to admin.", ADMIN_USERNAME)
             db.close()
         except Exception as exc:
             logger.warning("Failed to auto-create admin account: %s", exc)
