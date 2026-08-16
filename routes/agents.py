@@ -21,6 +21,8 @@ from database import (
     DBAnalysisReport,
     DBAgentCache,
     SessionLocal,
+    analysis_report_documents,
+    agent_cache_documents,
 )
 from models import (
     AnalyzeRequest,
@@ -158,7 +160,7 @@ async def analyze_documents(
     report_id = str(uuid.uuid4())
     db_report = DBAnalysisReport(
         id=report_id,
-        doc_ids=json.dumps([d.id for d in documents]),
+        documents=documents,
         compliance_context=_encrypt_text(body.compliance_context) if body.compliance_context else None,
         report_data=_encrypt_text(json.dumps(analysis)),
         documents_analyzed=len(documents),
@@ -995,7 +997,7 @@ async def list_agent_cache(request: Request, db=Depends(get_db)):
                 "id": e.id,
                 "agent_type": e.agent_type,
                 "model_used": e.model_used,
-                "doc_ids": json.loads(e.doc_ids),
+                "doc_ids": [d.id for d in e.documents],
                 "params_summary": e.params_summary,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
                 "expires_at": e.expires_at.isoformat() if e.expires_at else None,

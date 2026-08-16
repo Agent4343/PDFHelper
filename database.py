@@ -6,7 +6,7 @@ Uses SQLite locally, PostgreSQL on Railway (auto-detected via DATABASE_URL).
 
 import os
 
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, Boolean, Index, create_engine
+from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, Boolean, Index, Table, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip() or "sqlite:////tmp/pdfhelper.db"
@@ -28,6 +28,31 @@ engine = create_engine(
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# Junction tables for many-to-many document references
+chat_session_documents = Table(
+    "chat_session_documents", Base.metadata,
+    Column("session_id", String, ForeignKey("chat_sessions.id", ondelete="CASCADE"), primary_key=True),
+    Column("document_id", String, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True),
+)
+
+code_session_documents = Table(
+    "code_session_documents", Base.metadata,
+    Column("session_id", String, ForeignKey("code_sessions.id", ondelete="CASCADE"), primary_key=True),
+    Column("document_id", String, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True),
+)
+
+analysis_report_documents = Table(
+    "analysis_report_documents", Base.metadata,
+    Column("report_id", String, ForeignKey("analysis_reports.id", ondelete="CASCADE"), primary_key=True),
+    Column("document_id", String, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True),
+)
+
+agent_cache_documents = Table(
+    "agent_cache_documents", Base.metadata,
+    Column("cache_id", String, ForeignKey("agent_cache.id", ondelete="CASCADE"), primary_key=True),
+    Column("document_id", String, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class DBUser(Base):
@@ -71,7 +96,6 @@ class DBAnalysisReport(Base):
     __tablename__ = "analysis_reports"
 
     id = Column(String, primary_key=True)
-    doc_ids = Column(Text, nullable=False)            # JSON list of document IDs
     compliance_context = Column(Text, nullable=True)   # encrypted
     report_data = Column(Text, nullable=False)         # encrypted JSON of full analysis
     documents_analyzed = Column(Integer, default=0)
@@ -81,17 +105,19 @@ class DBAnalysisReport(Base):
     cache_key = Column(String, nullable=True, index=True)  # SHA-256 of doc hashes + params
     analyzed_at = Column(DateTime, nullable=False)
 
+    documents = relationship("DBDocument", secondary=analysis_report_documents, lazy="selectin")
+
 
 class DBChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(String, primary_key=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    title = Column(String, nullable=True)              # auto-generated from first message
-    doc_ids = Column(Text, nullable=False)              # JSON list of document IDs
+    title = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False, index=True)
 
+    documents = relationship("DBDocument", secondary=chat_session_documents, lazy="selectin")
     messages = relationship("DBChatMessage", back_populates="session",
                             order_by="DBChatMessage.created_at",
                             cascade="all, delete-orphan")
@@ -181,14 +207,15 @@ class DBAgentCache(Base):
 
     id = Column(String, primary_key=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    cache_key = Column(String, nullable=False, index=True)               # SHA-256 of inputs
-    agent_type = Column(String, nullable=False)                          # audit / compare / writer
+    cache_key = Column(String, nullable=False, index=True)
+    agent_type = Column(String, nullable=False)
     model_used = Column(String, nullable=False)
-    result_data = Column(Text, nullable=False)                           # encrypted report text
-    doc_ids = Column(Text, nullable=False)                               # JSON list for lookup
-    params_summary = Column(String, nullable=True)                       # human-readable params
+    result_data = Column(Text, nullable=False)
+    params_summary = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False)
     expires_at = Column(DateTime, nullable=True, index=True)
+
+    documents = relationship("DBDocument", secondary=agent_cache_documents, lazy="selectin")
 
 
 class DBCodeSession(Base):
@@ -198,10 +225,10 @@ class DBCodeSession(Base):
     id = Column(String, primary_key=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String, nullable=True)
-    doc_ids = Column(Text, nullable=False)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False, index=True)
 
+    documents = relationship("DBDocument", secondary=code_session_documents, lazy="selectin")
     messages = relationship("DBCodeMessage", back_populates="session",
                             order_by="DBCodeMessage.created_at",
                             cascade="all, delete-orphan")
