@@ -29,10 +29,15 @@ from database import (
     DBDocument,
     DBSearchResult,
     DBChatSession,
+    DBChatMessage,
     DBCodeSession,
+    DBCodeMessage,
     DBUpdateSession,
     DBAnalysisReport,
     DBAgentCache,
+    DBDrawing,
+    DBIsolationPackage,
+    DBPoster,
     chat_session_documents,
     code_session_documents,
     analysis_report_documents,
@@ -713,3 +718,40 @@ async def annotate_document(
         doc.content_hash = hashlib.sha256(annotated_bytes).hexdigest()
         db.commit()
         return {"id": doc_id, "filename": original_name, "pages": len(pages_data), "updated": True}
+
+
+# ---------------------------------------------------------------------------
+# Factory reset — wipe all data (admin only)
+# ---------------------------------------------------------------------------
+
+@router.delete("/wipe-all")
+async def wipe_all_data(request: Request, db=Depends(get_db)):
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    payload = _decode_jwt(token)
+    if not payload or not payload.get("admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    import shutil
+
+    db.execute(chat_session_documents.delete())
+    db.execute(code_session_documents.delete())
+    db.execute(analysis_report_documents.delete())
+    db.execute(agent_cache_documents.delete())
+
+    for model in [
+        DBChatMessage, DBChatSession,
+        DBCodeMessage, DBCodeSession,
+        DBSearchResult, DBAnalysisReport, DBAgentCache,
+        DBUpdateSession, DBDrawing, DBIsolationPackage,
+        DBPoster, DBDocument,
+    ]:
+        db.query(model).delete()
+
+    db.commit()
+
+    upload_dir = Path(UPLOAD_DIR)
+    if upload_dir.exists():
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+    return {"detail": "All data wiped successfully"}
