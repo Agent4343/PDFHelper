@@ -21,9 +21,54 @@ from database import (
     DBProcedureMessage,
     SessionLocal,
 )
-from helpers import _encrypt_text, _decrypt_text, _safe_decrypt, _load_stored_text
+from helpers import _encrypt_text, _decrypt_text, _safe_decrypt, _load_stored_text, _stored_text_to_structured
 
 router = APIRouter(dependencies=[Depends(verify_auth)])
+
+
+def _extract_docx_structured(file_bytes: bytes) -> str:
+    """Extract structured text from a .docx file preserving headings, tables, notes."""
+    from docx import Document as DocxDocument
+    import io
+
+    doc = DocxDocument(io.BytesIO(file_bytes))
+    parts = []
+
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        style_name = (para.style.name or "").lower()
+        if "heading 1" in style_name or "proc - heading 1" in style_name:
+            parts.append(f"# {text}")
+        elif "heading 2" in style_name or "proc - heading 2" in style_name:
+            parts.append(f"## {text}")
+        elif "heading 3" in style_name or "proc - heading 3" in style_name:
+            parts.append(f"### {text}")
+        elif "caution" in style_name:
+            parts.append(f"CAUTION: {text}")
+        elif "warning" in style_name:
+            parts.append(f"WARNING: {text}")
+        elif "bullet" in style_name or "list" in style_name:
+            parts.append(f"- {text}")
+        else:
+            parts.append(text)
+
+    for table in doc.tables:
+        header_cells = [cell.text.strip() for cell in table.rows[0].cells]
+        parts.append("")
+        parts.append("| " + " | ".join(header_cells) + " |")
+        parts.append("| " + " | ".join(["---"] * len(header_cells)) + " |")
+        for row in table.rows[1:]:
+            cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+            note_text = " ".join(cells).upper()
+            if note_text.startswith("NOTE:") or note_text.startswith("CAUTION:"):
+                parts.append(" ".join(c for c in cells if c))
+            else:
+                parts.append("| " + " | ".join(cells) + " |")
+        parts.append("")
+
+    return "\n".join(parts)
 
 PROCEDURE_SYSTEM_PROMPT = """You are an expert technical procedure writer for upstream oil and gas operations, trained on:
 - PPA AP-907-005 Procedure Writer's Manual (Rev. 3)
@@ -276,6 +321,7 @@ async def create_procedure(request: Request, db=Depends(get_db)):
     body = await request.json()
     title = body.get("title", "").strip() or "New Procedure"
     source_doc_id = body.get("source_doc_id")
+    mode = body.get("mode", "new")
 
     if source_doc_id:
         doc = db.query(DBDocument).filter(DBDocument.id == source_doc_id).first()
@@ -295,9 +341,27 @@ async def create_procedure(request: Request, db=Depends(get_db)):
     db.add(session)
     db.commit()
 
-    initial_msg = "I'm ready to help you write a procedure"
-    if source_doc_id:
-        initial_msg = "I can see you've attached an existing procedure to update. Let me review it and ask you about the changes needed."
+    if mode == "update" and source_doc_id:
+        initial_msg = (
+            "I've loaded the existing procedure for review. I'll analyze it against "
+            "PPA AP-907-005, OIMS 6.1, and CTE Playbook standards, then guide you through "
+            "the updates needed. Let me start by reviewing what's there.\n\n"
+            "What changes or updates are you looking to make to this procedure?"
+        )
+    elif source_doc_id:
+        initial_msg = (
+            "I can see you've attached a reference document. I'll use it as a starting "
+            "point. Let me begin gathering the information needed for the procedure.\n\n"
+            "What is the procedure title and designation number?"
+        )
+    else:
+        initial_msg = (
+            "I'm ready to help you write a new procedure. I'll guide you through "
+            "each section, asking the right questions to build a complete document "
+            "that meets PPA AP-907-005 and OIMS 6.1 standards.\n\n"
+            "Let's start — what facility and craft/discipline is this for? "
+            "(e.g., Facility: Hebron, Craft: Operations)"
+        )
 
     assistant_msg = DBProcedureMessage(
         id=str(uuid.uuid4()),
@@ -313,6 +377,70 @@ async def create_procedure(request: Request, db=Depends(get_db)):
         "id": session.id,
         "title": title,
         "status": session.status,
+        "mode": mode,
+        "messages": [{"role": "assistant", "content": initial_msg}],
+    }
+
+
+@router.post("/procedures/upload")
+async def upload_procedure_doc(
+    request: Request,
+    file: UploadFile = File(...),
+    db=Depends(get_db),
+):
+    """Upload a .docx procedure file and create a session for updating it."""
+    if not file.filename or not file.filename.lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Only .docx files are supported")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 20MB)")
+
+    try:
+        extracted = _extract_docx_structured(file_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse .docx: {str(e)}")
+
+    title_match = None
+    for line in extracted.split("\n"):
+        if line.startswith("# "):
+            title_match = line[2:].strip()
+            break
+    proc_title = title_match or file.filename.rsplit(".", 1)[0]
+
+    now = datetime.now(timezone.utc)
+    session = DBProcedureSession(
+        id=str(uuid.uuid4()),
+        user_id=getattr(request.state, "user_id", None),
+        title=_encrypt_text(f"Update: {proc_title}"),
+        status="gathering",
+        gathered_data=_encrypt_text(extracted),
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(session)
+    db.commit()
+
+    initial_msg = (
+        f"I've loaded **{proc_title}** for review. I'll analyze it against "
+        "PPA AP-907-005, OIMS 6.1, and CTE Playbook standards.\n\n"
+        "What changes or updates are you looking to make to this procedure?"
+    )
+    assistant_msg = DBProcedureMessage(
+        id=str(uuid.uuid4()),
+        session_id=session.id,
+        role="assistant",
+        content=_encrypt_text(initial_msg),
+        created_at=now,
+    )
+    db.add(assistant_msg)
+    db.commit()
+
+    return {
+        "id": session.id,
+        "title": f"Update: {proc_title}",
+        "status": session.status,
+        "mode": "update",
         "messages": [{"role": "assistant", "content": initial_msg}],
     }
 
@@ -381,12 +509,17 @@ async def procedure_chat(session_id: str, request: Request, db=Depends(get_db)):
         template_config = f"Template structure:\n{_safe_decrypt(session.template_config) or ''}"
 
     source_context = ""
-    if session.source_doc_id:
+    if session.gathered_data:
+        gathered = _safe_decrypt(session.gathered_data) or ""
+        if gathered:
+            source_context = f"\n\n--- EXISTING PROCEDURE (to update/reference) ---\n{gathered[:12000]}\n--- END ---"
+    elif session.source_doc_id:
         doc = db.query(DBDocument).filter(DBDocument.id == session.source_doc_id).first()
         if doc:
-            text = _load_stored_text(doc)
-            if text:
-                source_context = f"\n\n--- EXISTING PROCEDURE (to update) ---\n{text[:8000]}\n--- END ---"
+            pages = _load_stored_text(doc)
+            if pages:
+                text = _stored_text_to_structured(pages)
+                source_context = f"\n\n--- EXISTING PROCEDURE (to update) ---\n{text[:12000]}\n--- END ---"
 
     system_prompt = PROCEDURE_SYSTEM_PROMPT.format(
         style_config=style_config,
