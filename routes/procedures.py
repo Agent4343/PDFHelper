@@ -59,21 +59,40 @@ Ask focused questions ONE AT A TIME in this order:
     - State consequence of failure for each safeguard critical step
 17. Who performs each step? Use standard job roles (e.g., CCR Operator, Operations Technician, Instr Tech, FGS Operator)
 
-=== PROCEDURE STRUCTURE (Table 1 — PPA AP-907-005) ===
-Required sections for technical procedures in this order:
-1. Cover Page (title, number, revision, level of use, effective date, approver)
-2. Table of Contents
-3. Purpose (R)
-4. Scope (R)
-5. References and Commitments (R)
-6. Definitions (O)
-7. Responsibilities (O)
-8. Precautions and Limitations (R)
-9. Prerequisites (R)
-10. Instructions (R)
-11. Acceptance Criteria (R for testing, O for maintenance)
-12. Summary of Alterations (O)
-13. Attachments (O)
+=== PROCEDURE STRUCTURE ===
+The document generator automatically creates the header table, TOC, and page numbering.
+Output the procedure content using these EXACT section headings and numbers:
+
+# 1. PURPOSE AND SCOPE
+## 1.1. Purpose
+## 1.2. Scope
+
+# 2. PRECAUTIONS AND LIMITATIONS
+## 2.1. Precautions
+## 2.2. Limitations
+
+# 3. PREREQUISITES
+## 3.1. Personal Protective Equipment, PPE
+## 3.2. Materials
+## 3.3. Special Tools and Equipment
+## 3.4. Other Prerequisites
+
+| Step | Action / Remarks | Who | Check |
+(use this table for prerequisite verification steps like LMRA, JSA, valve line-up)
+
+# 4. INSTRUCTIONS
+## 4.1. [First procedure section]
+## 4.2. [Second procedure section]
+(each subsection gets its own action step table)
+
+# 5. REFERENCES AND COMMITMENT
+## 5.1. Performance References
+## 5.2. Commitments References
+## 5.3. Developmental References
+
+## Attachment 1 - [Title]
+## Attachment 2 - [Title]
+(attachments start on a new page automatically)
 
 === WRITING RULES ===
 
@@ -83,9 +102,10 @@ ACTION STEPS:
 - Active voice only — the step directs the user to act
 - Include WHO performs the action and a checkbox
 
-Step format (upstream table style):
-No. | Action | Who | Check
-1.  | OPEN inlet valve XX-XXX-001 to Amine Circulating Pump XX-XXXX | Ops | [ ]
+Step format — output as a markdown table with these 4 columns:
+| Step | Action / Remarks | Who | Check |
+| 1 | OPEN inlet valve XX-XXX-001 to Amine Circulating Pump XX-XXXX | Ops Tech | ☐ |
+(Step numbers auto-increment; leave Step column empty or use "-" for auto-numbering)
 
 EMPHASIS TECHNIQUES:
 - Action verbs: UPPERCASE BOLD (e.g., OPEN, CLOSE, VERIFY)
@@ -106,9 +126,9 @@ CONDITIONAL STEPS:
 - For 3+ conditions, use a decision table
 
 IF/THEN table format:
-No. | Action | Who | Check
-1.  | IF Temperature exceeds 100C | |
-    | THEN OPEN XX-XXX-0011 inlet to XXX exchanger | Ops | [ ]
+| Step | Action / Remarks | Who | Check |
+| - | IF Temperature exceeds 100C | | |
+| - | THEN OPEN XX-XXX-0011 inlet to XXX exchanger | Ops Tech | ☐ |
 
 NOTES, CAUTIONS, AND WARNINGS:
 - Place BEFORE the step they apply to (never after)
@@ -589,6 +609,7 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
     section.bottom_margin = Emu(457200)
     section.left_margin = Emu(635000)
     section.right_margin = Emu(635000)
+    section.different_first_page_header_footer = True
 
     def _make_field(parent, instr):
         fld = etree.SubElement(parent, qn("w:fldSimple"))
@@ -616,79 +637,125 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
             r.underline = True
         return r
 
-    def _set_cell_width(cell, width_emu):
-        tc_pr = cell._element.get_or_add_tcPr()
-        tcw = tc_pr.makeelement(qn("w:tcW"), {
-            qn("w:w"): str(width_emu), qn("w:type"): "dxa",
-        })
-        tc_pr.append(tcw)
+    def _set_col_widths(tbl, widths_twips):
+        for row in tbl.rows:
+            for i, w in enumerate(widths_twips):
+                if i < len(row.cells):
+                    tc_pr = row.cells[i]._element.get_or_add_tcPr()
+                    tcw = tc_pr.makeelement(qn("w:tcW"), {
+                        qn("w:w"): str(w), qn("w:type"): "dxa",
+                    })
+                    tc_pr.append(tcw)
 
-    # --- PAGE 1 HEADER: 6-row title block table ---
-    header = section.header
-    header.is_linked_to_previous = False
-    for p in header.paragraphs:
+    def _build_header_table_xml(element_parent, cells_data):
+        h_tbl = element_parent.makeelement(qn("w:tbl"), {})
+        tbl_pr = h_tbl.makeelement(qn("w:tblPr"), {})
+        tbl_w = tbl_pr.makeelement(qn("w:tblW"), {qn("w:w"): "5000", qn("w:type"): "pct"})
+        tbl_pr.append(tbl_w)
+        tbl_borders = tbl_pr.makeelement(qn("w:tblBorders"), {})
+        for edge in ["top", "left", "bottom", "right", "insideH", "insideV"]:
+            b = tbl_borders.makeelement(qn(f"w:{edge}"), {
+                qn("w:val"): "single", qn("w:sz"): "4",
+                qn("w:color"): "000000", qn("w:space"): "0",
+            })
+            tbl_borders.append(b)
+        tbl_pr.append(tbl_borders)
+        h_tbl.append(tbl_pr)
+        for row_data in cells_data:
+            tr = h_tbl.makeelement(qn("w:tr"), {})
+            for text, bold, size in row_data:
+                tc = tr.makeelement(qn("w:tc"), {})
+                p = tc.makeelement(qn("w:p"), {})
+                if text:
+                    r = p.makeelement(qn("w:r"), {})
+                    rpr = r.makeelement(qn("w:rPr"), {})
+                    rfont = rpr.makeelement(qn("w:rFonts"), {qn("w:ascii"): FONT, qn("w:hAnsi"): FONT})
+                    rpr.append(rfont)
+                    rsz = rpr.makeelement(qn("w:sz"), {qn("w:val"): str(size * 2)})
+                    rpr.append(rsz)
+                    if bold:
+                        rpr.append(rpr.makeelement(qn("w:b"), {}))
+                    r.append(rpr)
+                    t = r.makeelement(qn("w:t"), {})
+                    t.text = text
+                    t.set(qn("xml:space"), "preserve")
+                    r.append(t)
+                    p.append(r)
+                tc.append(p)
+                tr.append(tc)
+            h_tbl.append(tr)
+        element_parent.append(h_tbl)
+
+    # --- 1. PAGE 1 HEADER: 6-row title block table ---
+    first_header = section.first_page_header
+    first_header.is_linked_to_previous = False
+    for p in first_header.paragraphs:
         p.clear()
 
-    h_tbl = header._element.makeelement(qn("w:tbl"), {})
-    tbl_pr = h_tbl.makeelement(qn("w:tblPr"), {})
-    tbl_w = tbl_pr.makeelement(qn("w:tblW"), {qn("w:w"): "5000", qn("w:type"): "pct"})
-    tbl_pr.append(tbl_w)
-    tbl_borders = tbl_pr.makeelement(qn("w:tblBorders"), {})
-    for edge in ["top", "left", "bottom", "right", "insideH", "insideV"]:
-        b = tbl_borders.makeelement(qn(f"w:{edge}"), {
-            qn("w:val"): "single", qn("w:sz"): "4",
-            qn("w:color"): "000000", qn("w:space"): "0",
-        })
-        tbl_borders.append(b)
-    tbl_pr.append(tbl_borders)
-    h_tbl.append(tbl_pr)
+    _build_header_table_xml(first_header._element, [
+        [("Facility:", False, 9), ("", False, 9), ("", False, 9)],
+        [(facility or "—", True, 11), (title, True, 14), ("", False, 9)],
+        [("Craft:", False, 9), (title, True, 14), ("", False, 9)],
+        [(craft or "—", True, 11), ("", False, 9), ("", False, 9)],
+        [("Revalidation Date:", False, 9), (doc_number_display, False, 10), ("", False, 9)],
+        [(reval_date or "—", True, 11), (doc_number_display, False, 10), ("", False, 9)],
+    ])
 
-    def _add_header_row(tbl, cells_data):
-        tr = tbl.makeelement(qn("w:tr"), {})
-        for text, bold, size in cells_data:
-            tc = tr.makeelement(qn("w:tc"), {})
-            p = tc.makeelement(qn("w:p"), {})
-            if text:
-                r = p.makeelement(qn("w:r"), {})
-                rpr = r.makeelement(qn("w:rPr"), {})
-                rfont = rpr.makeelement(qn("w:rFonts"), {qn("w:ascii"): FONT, qn("w:hAnsi"): FONT})
-                rpr.append(rfont)
-                rsz = rpr.makeelement(qn("w:sz"), {qn("w:val"): str(size * 2)})
-                rpr.append(rsz)
-                if bold:
-                    rpr.append(rpr.makeelement(qn("w:b"), {}))
-                r.append(rpr)
-                t = r.makeelement(qn("w:t"), {})
-                t.text = text
-                r.append(t)
-                p.append(r)
-            tc.append(p)
-            tr.append(tc)
-        tbl.append(tr)
+    # --- 1. CONTINUATION HEADER (page 2+): compact 1-row table ---
+    cont_header = section.header
+    cont_header.is_linked_to_previous = False
+    for p in cont_header.paragraphs:
+        p.clear()
 
-    _add_header_row(h_tbl, [("Facility:", False, 9), ("", False, 9), ("", False, 9)])
-    _add_header_row(h_tbl, [(facility or "—", True, 11), (title, True, 14), ("", False, 9)])
-    _add_header_row(h_tbl, [("Craft:", False, 9), (title, True, 14), ("", False, 9)])
-    _add_header_row(h_tbl, [(craft or "—", True, 11), ("", False, 9), ("", False, 9)])
-    _add_header_row(h_tbl, [("Revalidation Date:", False, 9), (doc_number_display, False, 10), ("", False, 9)])
-    _add_header_row(h_tbl, [(reval_date or "—", True, 11), (doc_number_display, False, 10), ("", False, 9)])
+    _build_header_table_xml(cont_header._element, [
+        [(doc_number_display, False, 10), (title, True, 11), (craft or "—", False, 10)],
+    ])
 
-    header._element.append(h_tbl)
+    # --- FOOTER (all pages): centered "X of Y" page numbering ---
+    for ftr in [section.footer, section.first_page_footer]:
+        ftr.is_linked_to_previous = False
+        fp = ftr.paragraphs[0] if ftr.paragraphs else ftr.add_paragraph()
+        fp.text = ""
+        fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        frun = fp.add_run()
+        frun.font.name = FONT
+        frun.font.size = Pt(8)
+        _make_field(fp._element, " PAGE ")
+        frun2 = fp.add_run(" of ")
+        frun2.font.name = FONT
+        frun2.font.size = Pt(8)
+        _make_field(fp._element, " NUMPAGES ")
 
-    # --- FOOTER: "X of Y" page numbering ---
-    footer = section.footer
-    footer.is_linked_to_previous = False
-    fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
-    fp.text = ""
-    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    frun = fp.add_run()
-    frun.font.name = FONT
-    frun.font.size = Pt(8)
-    _make_field(fp._element, " PAGE ")
-    frun2 = fp.add_run(" of ")
-    frun2.font.name = FONT
-    frun2.font.size = Pt(8)
-    _make_field(fp._element, " NUMPAGES ")
+    # --- 2. TABLE OF CONTENTS ---
+    toc_heading = doc.add_paragraph()
+    toc_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    toc_run = toc_heading.add_run("TABLE OF CONTENTS")
+    toc_run.bold = True
+    toc_run.font.name = FONT
+    toc_run.font.size = Pt(14)
+
+    toc_para = doc.add_paragraph()
+    fld_begin = etree.SubElement(toc_para._element, qn("w:r"))
+    fld_char_begin = etree.SubElement(fld_begin, qn("w:fldChar"))
+    fld_char_begin.set(qn("w:fldCharType"), "begin")
+    instr_run = etree.SubElement(toc_para._element, qn("w:r"))
+    instr_text = etree.SubElement(instr_run, qn("w:instrText"))
+    instr_text.set(qn("xml:space"), "preserve")
+    instr_text.text = ' TOC \\o "1-2" \\h \\z \\u '
+    fld_sep = etree.SubElement(toc_para._element, qn("w:r"))
+    fld_char_sep = etree.SubElement(fld_sep, qn("w:fldChar"))
+    fld_char_sep.set(qn("w:fldCharType"), "separate")
+    placeholder_run = etree.SubElement(toc_para._element, qn("w:r"))
+    placeholder_text = etree.SubElement(placeholder_run, qn("w:t"))
+    placeholder_text.text = "Right-click and select 'Update Field' to generate table of contents"
+    fld_end = etree.SubElement(toc_para._element, qn("w:r"))
+    fld_char_end = etree.SubElement(fld_end, qn("w:fldChar"))
+    fld_char_end.set(qn("w:fldCharType"), "end")
+
+    doc.add_paragraph("")
+
+    # --- 8. Step auto-numbering counter ---
+    step_counter = [0]
 
     # --- Helper: NOTE row inside a step table (merged, light blue) ---
     def _add_note_row(tbl, text, num_cols):
@@ -702,6 +769,13 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         _styled_run(p, "NOTE: ", font_size=11, bold=True)
         _styled_run(p, text, font_size=11)
 
+    def _add_wingdings_triangle(paragraph):
+        r = paragraph.add_run("p")
+        r.font.name = "Wingdings 3"
+        r.font.size = Pt(11)
+        r.font.color.rgb = AMBER
+        paragraph.add_run(" ")
+
     # --- Helper: CAUTION row inside a step table (merged, light yellow) ---
     def _add_caution_row(tbl, text, num_cols):
         row = tbl.add_row()
@@ -711,6 +785,7 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         _set_cell_shading(first_cell, "FFF2CC")
         p = first_cell.paragraphs[0]
         p.text = ""
+        _add_wingdings_triangle(p)
         _styled_run(p, "CAUTION: ", font_size=11, bold=True, color=AMBER)
         _styled_run(p, text, font_size=11)
 
@@ -743,6 +818,7 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         cell = tbl.cell(0, 0)
         _set_cell_shading(cell, "FFF2CC")
         p = cell.paragraphs[0]
+        _add_wingdings_triangle(p)
         _styled_run(p, "CAUTION: ", bold=True, color=AMBER)
         _styled_run(p, text)
 
@@ -831,8 +907,13 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         is_action_table = False
         table_col_count = 0
 
+    # Column widths in twips (1 inch = 1440 twips, page ~6.5" usable)
+    # Step: 0.6", Action/Remarks: 4.1", Who: 1.1", Check: 0.7"
+    ACTION_COL_WIDTHS = [864, 5904, 1584, 1008]
+
     def _build_action_table_header(doc, cells):
         nonlocal table_ref, table_active, is_action_table, table_col_count
+        step_counter[0] = 0
         has_check = any("check" in c.lower() for c in cells)
         cols = list(cells)
         if not has_check:
@@ -846,6 +927,8 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
             cell.text = ""
             p = cell.paragraphs[0]
             _styled_run(p, val, font_size=11, bold=True, color=WHITE)
+        if len(cols) == 4:
+            _set_col_widths(tbl, ACTION_COL_WIDTHS)
         table_ref = tbl
         table_active = True
         is_action_table = True
@@ -857,14 +940,23 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         row_cells = list(cells)
         if has_check_col:
             row_cells.append("☐")
+        step_counter[0] += 1
         row = table_ref.add_row()
         for i, val in enumerate(row_cells):
             if i < len(row.cells):
                 row.cells[i].text = ""
                 p = row.cells[i].paragraphs[0]
+                step_col_lower = val.strip().lower()
                 if val.strip() in ("☐", "[ ]", "[x]", "[]"):
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     _styled_run(p, "☐", font_size=12)
+                elif i == 0 and (not val.strip() or step_col_lower in ("", "-")):
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    _styled_run(p, str(step_counter[0]), font_size=11)
+                elif i == 0 and val.strip().isdigit():
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    step_counter[0] = int(val.strip())
+                    _styled_run(p, val.strip(), font_size=11)
                 else:
                     _add_formatted_text(p, val)
 
@@ -928,6 +1020,35 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
             i += 1
         if buf:
             _styled_run(paragraph, " ".join(buf), font_size=11)
+
+    # --- 5. Standard section number mapping for heading normalization ---
+    STANDARD_SECTIONS = {
+        "PURPOSE AND SCOPE": "1",
+        "PURPOSE": "1.1",
+        "SCOPE": "1.2",
+        "PRECAUTIONS AND LIMITATIONS": "2",
+        "PRECAUTIONS": "2.1",
+        "LIMITATIONS": "2.2",
+        "PREREQUISITES": "3",
+        "PERSONAL PROTECTIVE EQUIPMENT": "3.1",
+        "PPE": "3.1",
+        "MATERIALS": "3.2",
+        "SPECIAL TOOLS AND EQUIPMENT": "3.3",
+        "OTHER PREREQUISITES": "3.4",
+        "INSTRUCTIONS": "4",
+        "REFERENCES AND COMMITMENT": "5",
+        "REFERENCES AND COMMITMENTS": "5",
+        "PERFORMANCE REFERENCES": "5.1",
+        "COMMITMENTS REFERENCES": "5.2",
+        "DEVELOPMENTAL REFERENCES": "5.3",
+    }
+
+    def _normalize_heading(text):
+        clean = re.sub(r'^[\d.]+\s*', '', text).strip()
+        upper = clean.upper()
+        if upper in STANDARD_SECTIONS:
+            return f"{STANDARD_SECTIONS[upper]}. {clean}"
+        return text
 
     # --- MAIN CONTENT LOOP ---
     for line in content.split("\n"):
@@ -993,15 +1114,29 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
             text = re.sub(r'^NOTE:\s*', '', line_stripped, flags=re.IGNORECASE)
             _add_note_box(doc, text)
 
-        # Headings
+        # 7. Attachment headings — page break and centered title
+        elif re.match(r'^#{1,2}\s*Attachment\s+\d+', line_stripped, re.IGNORECASE) or \
+                (line_stripped.startswith("**") and re.match(r'\*{2}\s*Attachment\s+\d+', line_stripped, re.IGNORECASE)):
+            if table_active:
+                _finish_table()
+            doc.add_page_break()
+            att_text = re.sub(r'^#{1,3}\s*', '', line_stripped).strip().strip("*")
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(att_text)
+            run.bold = True
+            run.font.name = FONT
+            run.font.size = Pt(14)
+
+        # Headings (with standard section numbering)
         elif line.startswith("# "):
             if table_active:
                 _finish_table()
-            doc.add_heading(line[2:], level=1)
+            doc.add_heading(_normalize_heading(line[2:]), level=1)
         elif line.startswith("## "):
             if table_active:
                 _finish_table()
-            doc.add_heading(line[3:], level=2)
+            doc.add_heading(_normalize_heading(line[3:]), level=2)
         elif line.startswith("### "):
             if table_active:
                 _finish_table()
