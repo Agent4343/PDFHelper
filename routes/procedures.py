@@ -25,34 +25,162 @@ from helpers import _encrypt_text, _decrypt_text, _safe_decrypt, _load_stored_te
 
 router = APIRouter(dependencies=[Depends(verify_auth)])
 
-PROCEDURE_SYSTEM_PROMPT = """You are an expert technical procedure writer specializing in human performance principles. Your job is to help create clear, precise, and safe work procedures.
+PROCEDURE_SYSTEM_PROMPT = """You are an expert technical procedure writer for upstream oil and gas operations, trained on:
+- PPA AP-907-005 Procedure Writer's Manual (Rev. 3)
+- Upstream Best Practices: Procedure Writing Rules
+- Operations Integrity Protocol 6.1 (OIMS Element 6)
+- Upstream Procedure Tools: Task Analysis
+- Safety Critical Task Analysis (SCTA) programme requirements
 
-When gathering information, ask focused questions one at a time about:
-- Procedure title and number
-- Purpose and scope
-- Required personnel and qualifications
-- Tools, equipment, and materials needed
-- Precautions and safety considerations
-- Prerequisites and initial conditions
-- Step-by-step instructions (action-first, one action per step)
-- Verification and sign-off requirements
-- References and related documents
+Your job is to help create clear, precise, and safe work procedures that meet OIMS 6.1 requirements and human performance principles.
 
-Writing style principles:
-- Action-first steps (start with a verb)
-- One action per step
-- Specific and measurable language
-- Clear hold points and decision points
-- Proper use of notes, cautions, and warnings (placed BEFORE the step they apply to)
-- No ambiguous words (ensure, appropriate, proper — replace with specifics)
+=== GATHERING INFORMATION ===
+Ask focused questions ONE AT A TIME in this order:
+1. Procedure title and designation number (use logical numbering: Unit-Type-System-Sequence)
+2. Purpose — what, when, and why (do NOT simply repeat the title)
+3. Scope — activities covered, boundaries, applicable personnel and equipment
+4. References and commitments — regulatory docs, operating experience, P&IDs, vendor manuals
+5. Definitions — terms unique to this procedure (alphabetical, do not define self-explanatory terms)
+6. Responsibilities — who does what (high-level summary, not a repeat of steps)
+7. Precautions — equipment/personnel/public protection measures (state effect AND cause)
+8. Limitations — specific regulatory or administrative limits with values
+9. Prerequisites — conditions that must exist before starting
+10. Step-by-step instructions — walk through each action
+11. Acceptance criteria — quantitative/qualitative pass/fail criteria
+12. Attachments needed — data sheets, checklists, figures, P&ID excerpts
+13. Is this an SCTA/safeguard critical task? If so, identify safety critical steps and hold points.
+14. Who needs to perform the task? Use standard job roles (e.g., CRO, OPER, INST, MECH, BCO, SUP)
+
+=== PROCEDURE STRUCTURE (Table 1 — PPA AP-907-005) ===
+Required sections for technical procedures in this order:
+1. Cover Page (title, number, revision, level of use, effective date, approver)
+2. Table of Contents
+3. Purpose (R)
+4. Scope (R)
+5. References and Commitments (R)
+6. Definitions (O)
+7. Responsibilities (O)
+8. Precautions and Limitations (R)
+9. Prerequisites (R)
+10. Instructions (R)
+11. Acceptance Criteria (R for testing, O for maintenance)
+12. Summary of Alterations (O)
+13. Attachments (O)
+
+=== WRITING RULES ===
+
+ACTION STEPS:
+- Every action step starts with an ACTION VERB in UPPERCASE BOLD (e.g., OPEN, CLOSE, VERIFY, CHECK, RECORD, PERFORM)
+- One action per step — never combine two actions
+- Active voice only — the step directs the user to act
+- Include WHO performs the action and a checkbox
+
+Step format (upstream table style):
+No. | Action | Who | Check
+1.  | OPEN inlet valve XX-XXX-001 to Amine Circulating Pump XX-XXXX | Ops | [ ]
+
+EMPHASIS TECHNIQUES:
+- Action verbs: UPPERCASE BOLD (e.g., OPEN, CLOSE, VERIFY)
+- Conditional/logic terms: UPPERCASE, UNDERLINED, BOLD (IF, THEN, WHEN, AND, OR, NOT, WHILE)
+- Component positions: UPPERCASE (OPEN, CLOSED, ON, OFF, AUTO)
+- Component noun names: Title Case (Heater Pump, Amine Discharge Valve)
+- Locations: inside parentheses — (inside the MMC)
+- Condition and action on SEPARATE lines
+
+CONDITIONAL STEPS:
+- IF introduces a condition that may or may not be true
+- WHEN introduces a condition expected to occur
+- THEN goes between condition and action (never between actions)
+- IF AT ANY TIME introduces a condition that may occur during procedure execution
+- WHILE introduces a continuous action
+- Do NOT use AND/OR construction
+- State conditions positively (IF valve is OPEN, not IF valve is NOT CLOSED)
+- For 3+ conditions, use a decision table
+
+IF/THEN table format:
+No. | Action | Who | Check
+1.  | IF Temperature exceeds 100C | |
+    | THEN OPEN XX-XXX-0011 inlet to XXX exchanger | Ops | [ ]
+
+NOTES, CAUTIONS, AND WARNINGS:
+- Place BEFORE the step they apply to (never after)
+- Sequence: Note first, then Caution, then Warning (most important closest to step)
+- Must appear on the same page as the impacted step
+- Written in passive voice, short and concise
+- Must NOT contain action steps or implied instructions
+- If removed, procedure performance would not be affected
+- WARNING: personnel injury, loss of life, health hazards — format: ! WARNING: [text]
+- CAUTION: equipment damage, process risk — format: CAUTION: [text]
+- NOTE: supplemental/explanatory information — format: Note: [text]
+
+HOLD POINTS:
+- A pre-selected step beyond which work may NOT proceed until required action is performed
+- Identified by SCTA for HC scenarios or by SME
+- Format: "Hold Point" label before the action step
+- Require explicit authorization to proceed past
+
+INDEPENDENT VERIFICATION:
+- Used for safeguard critical steps
+- Two individuals working independently to confirm component condition
+- Format includes Name/Sign fields after the step
+
+SAFEGUARD CRITICAL STEPS:
+- Only used when identified by SCTA
+- Preceded by a WARNING box: "WARNING - SAFEGUARD CRITICAL STEP"
+- State: independent verification required, what happens if step is done wrong (clear hazard/consequence)
+- Easy to understand and execute (limit potential for error)
+- Consider hold points for steps requiring additional review
+
+STEP NUMBERING:
+- Up to 4 levels: 1. / a. / (1) / (a)
+- Alphanumeric steps performed in written order unless stated otherwise
+- Bulleted steps within a single alphanumeric step may be performed in any order
+- Sections: 1.0 TITLE / 1.1 Subtitle / 1.1.1 Subtitle
+
+VOCABULARY:
+- No ambiguous words: replace "ensure," "appropriate," "proper" with specific measurable language
+- SHALL = requirement, SHOULD = recommendation, MAY = permission
+- Use action verbs from PPA Attachment 1 (ADJUST, ALIGN, CHECK, CLOSE, CONNECT, DE-ENERGIZE, DRAIN, ENERGIZE, FILL, FLUSH, INSTALL, ISOLATE, MARK, MEASURE, MONITOR, NOTIFY, OBSERVE, OPEN, OPERATE, PLACE, POSITION, PRESS, PULL, PUSH, RAISE, RECORD, RELEASE, REMOVE, REPLACE, RESET, RESTORE, ROTATE, SELECT, SET, START, STOP, TAG, TEST, TORQUE, TURN, VERIFY, etc.)
+
+ABBREVIATIONS:
+- Spell out on first reference in each major section, followed by acronym in parentheses
+- Example: Competency Assurance Standard (CAS)
+- Plurals: add lowercase s (BUs not BU's)
+- Use standard industry abbreviations: JSA, PSV, FPSO, P&ID, PFD, HAZOP
+
+FORMAT:
+- Font: Arial 11 or 12 point
+- Paper: Portrait, 8.5 x 11
+- Margins: 0.8 inch left/right, 0.5 inch top/bottom
+- Left justify all text
+- Single line spacing with white space between steps
+- Page header on every page: procedure title, number, revision, page X of Y
+- Keep steps unbroken on same page
+- Use continuation headings: "4.2 (cont.)" when content spans pages
+
+TASK ANALYSIS (when building from scratch):
+- Gather P&IDs, PFDs, vendor info, system descriptions
+- Identify operating system using engineering system numbering
+- List major equipment from P&IDs
+- Consolidate common equipment (no duplicates)
+- Populate tasks per equipment, then device actions within each task
+
+=== OIMS 6.1 COMPLIANCE ===
+Procedures must address:
+- Level of Operations Integrity risk (determines detail and verification needed)
+- Operating envelopes with consequence of deviation and response
+- Transient operations as applicable
+- Regulatory requirements
+- Human Factors including capabilities and limitations
+- Simplifying processes or tasks to reduce potential for error
 
 {style_config}
 
 {template_config}
 
-If the user provides an existing procedure to update, identify what needs changing and ask targeted questions about the updates needed.
+If the user provides an existing procedure to update, review it against these standards, identify deficiencies, and ask targeted questions about the changes needed.
 
-Always be thorough — a missing step or unclear instruction in a procedure can lead to safety incidents."""
+Always be thorough — a missing step or unclear instruction in a procedure can lead to safety incidents. Every safeguard critical step must be clearly identified with proper warnings and verification requirements."""
 
 
 @router.get("/procedures")
@@ -273,9 +401,38 @@ async def generate_procedure(session_id: str, request: Request, db=Depends(get_d
 
     generation_prompt = """Based on all the information gathered in this conversation, generate the complete procedure document now.
 
-Format it with clear sections, numbered steps, and proper use of Notes/Cautions/Warnings.
-Output the procedure in a structured format that can be converted to a Word document.
-Use the template structure and style rules provided."""
+OUTPUT FORMAT RULES:
+- Use # for main sections (e.g., # 1.0 PURPOSE)
+- Use ## for subsections (e.g., ## 6.1 Equipment Lineup)
+- Use ### for sub-subsections
+- Action steps as numbered list: "1. OPEN valve XX-XXX-001"
+- Action verbs in UPPERCASE: OPEN, CLOSE, VERIFY, CHECK, RECORD, PERFORM, etc.
+- Conditional terms in UPPERCASE: IF, THEN, WHEN, AND, OR, NOT, WHILE
+- Component positions in UPPERCASE: OPEN, CLOSED, ON, OFF, AUTO
+- Component names in Title Case: Amine Discharge Valve
+- Warnings as: ! WARNING: [text]
+- Cautions as: CAUTION: [text]
+- Notes as: NOTE: [text]
+- Place warnings/cautions/notes BEFORE the step they apply to
+- Tables as markdown tables with | pipes |
+- Use the action step table format where applicable:
+| No. | Action | Who | Check |
+| --- | --- | --- | --- |
+| 1. | OPEN inlet valve XX-XXX-001 | Ops | [ ] |
+
+Include ALL required sections per PPA AP-907-005:
+1. Purpose
+2. Scope
+3. References and Commitments
+4. Definitions (if needed)
+5. Responsibilities
+6. Precautions and Limitations
+7. Prerequisites
+8. Instructions (step-by-step with proper formatting)
+9. Acceptance Criteria (if applicable)
+10. Attachments (if applicable)
+
+Use the template structure and style rules provided. Every action step must start with an uppercase bold action verb and contain only one action."""
 
     history.append({"role": "user", "content": generation_prompt})
 
@@ -323,41 +480,170 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=400, detail="Procedure not yet generated")
 
     from docx import Document
-    from docx.shared import Pt, Inches
+    from docx.shared import Pt, Inches, Cm, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml.ns import qn
     import io
+    import re
 
     content = _safe_decrypt(session.output_content) or ""
     title = _safe_decrypt(session.title) or "Procedure"
 
     doc = Document()
+
     style = doc.styles["Normal"]
     style.font.name = "Arial"
     style.font.size = Pt(11)
+    style.paragraph_format.space_after = Pt(6)
 
-    doc.add_heading(title, level=0)
+    for section in doc.sections:
+        section.top_margin = Cm(1.27)
+        section.bottom_margin = Cm(1.27)
+        section.left_margin = Cm(2.0)
+        section.right_margin = Cm(2.0)
+        header = section.header
+        header.is_linked_to_previous = False
+        hp = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+        hp.text = title
+        hp.style = doc.styles["Normal"]
+        hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        run = hp.runs[0] if hp.runs else hp.add_run()
+        run.font.size = Pt(9)
+        run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(title)
+    run.bold = True
+    run.font.size = Pt(16)
+    doc.add_paragraph()
+
+    def _add_warning_box(doc, text):
+        tbl = doc.add_table(rows=1, cols=1)
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        cell = tbl.cell(0, 0)
+        shading = cell._element.get_or_add_tcPr()
+        shading_elm = shading.makeelement(qn("w:shd"), {
+            qn("w:fill"): "FFE0E0", qn("w:val"): "clear",
+        })
+        shading.append(shading_elm)
+        p = cell.paragraphs[0]
+        run = p.add_run("! WARNING: ")
+        run.bold = True
+        run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
+        run.font.size = Pt(11)
+        run2 = p.add_run(text)
+        run2.font.size = Pt(11)
+
+    def _add_caution_box(doc, text):
+        tbl = doc.add_table(rows=1, cols=1)
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        cell = tbl.cell(0, 0)
+        shading = cell._element.get_or_add_tcPr()
+        shading_elm = shading.makeelement(qn("w:shd"), {
+            qn("w:fill"): "FFF3CD", qn("w:val"): "clear",
+        })
+        shading.append(shading_elm)
+        p = cell.paragraphs[0]
+        run = p.add_run("CAUTION: ")
+        run.bold = True
+        run.font.color.rgb = RGBColor(0xCC, 0x88, 0x00)
+        run.font.size = Pt(11)
+        run2 = p.add_run(text)
+        run2.font.size = Pt(11)
+
+    def _add_note_box(doc, text):
+        tbl = doc.add_table(rows=1, cols=1)
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        cell = tbl.cell(0, 0)
+        shading = cell._element.get_or_add_tcPr()
+        shading_elm = shading.makeelement(qn("w:shd"), {
+            qn("w:fill"): "E8F0FE", qn("w:val"): "clear",
+        })
+        shading.append(shading_elm)
+        p = cell.paragraphs[0]
+        run = p.add_run("NOTE: ")
+        run.bold = True
+        run.font.color.rgb = RGBColor(0x00, 0x55, 0xCC)
+        run.font.size = Pt(11)
+        run2 = p.add_run(text)
+        run2.font.size = Pt(11)
 
     for line in content.split("\n"):
         line = line.rstrip()
         if not line:
             doc.add_paragraph("")
+            continue
+
+        line_upper = line.strip().upper()
+        if line_upper.startswith("! WARNING:") or line_upper.startswith("WARNING:"):
+            text = re.sub(r'^!?\s*WARNING:\s*', '', line.strip(), flags=re.IGNORECASE)
+            _add_warning_box(doc, text)
+        elif line_upper.startswith("CAUTION:"):
+            text = re.sub(r'^CAUTION:\s*', '', line.strip(), flags=re.IGNORECASE)
+            _add_caution_box(doc, text)
+        elif line_upper.startswith("NOTE:"):
+            text = re.sub(r'^NOTE:\s*', '', line.strip(), flags=re.IGNORECASE)
+            _add_note_box(doc, text)
         elif line.startswith("# "):
-            doc.add_heading(line[2:], level=1)
+            h = doc.add_heading(line[2:], level=1)
+            for run in h.runs:
+                run.font.name = "Arial"
         elif line.startswith("## "):
-            doc.add_heading(line[3:], level=2)
+            h = doc.add_heading(line[3:], level=2)
+            for run in h.runs:
+                run.font.name = "Arial"
         elif line.startswith("### "):
-            doc.add_heading(line[4:], level=3)
-        elif line.startswith("**") and line.endswith("**"):
+            h = doc.add_heading(line[4:], level=3)
+            for run in h.runs:
+                run.font.name = "Arial"
+        elif line.strip().startswith("**") and line.strip().endswith("**"):
             p = doc.add_paragraph()
-            run = p.add_run(line.strip("*"))
+            run = p.add_run(line.strip().strip("*"))
             run.bold = True
-        elif line.startswith("- ") or line.startswith("• "):
-            doc.add_paragraph(line[2:], style="List Bullet")
-        elif line[0:1].isdigit() and ". " in line[:5]:
-            idx = line.index(". ")
-            doc.add_paragraph(line[idx + 2:], style="List Number")
+        elif line.strip().startswith("- ") or line.strip().startswith("• "):
+            text = line.strip()[2:]
+            doc.add_paragraph(text, style="List Bullet")
+        elif re.match(r'^\d+\.\s', line.strip()):
+            text = re.sub(r'^\d+\.\s+', '', line.strip())
+            doc.add_paragraph(text, style="List Number")
+        elif line.strip().startswith("|") and line.strip().endswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if all(set(c) <= set("- :") for c in cells):
+                continue
+            if not hasattr(doc, '_proc_table_active'):
+                doc._proc_table_active = False
+            if not doc._proc_table_active:
+                tbl = doc.add_table(rows=1, cols=len(cells))
+                tbl.style = "Table Grid"
+                tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+                for i, val in enumerate(cells):
+                    cell = tbl.cell(0, i)
+                    cell.text = val
+                    for p in cell.paragraphs:
+                        for run in p.runs:
+                            run.bold = True
+                            run.font.size = Pt(10)
+                doc._proc_table_active = True
+                doc._proc_table_ref = tbl
+            else:
+                row = doc._proc_table_ref.add_row()
+                for i, val in enumerate(cells):
+                    if i < len(row.cells):
+                        row.cells[i].text = val
+                        for p in row.cells[i].paragraphs:
+                            for run in p.runs:
+                                run.font.size = Pt(10)
         else:
+            if hasattr(doc, '_proc_table_active') and doc._proc_table_active:
+                doc._proc_table_active = False
             doc.add_paragraph(line)
+
+    if hasattr(doc, '_proc_table_active'):
+        del doc._proc_table_active
+    if hasattr(doc, '_proc_table_ref'):
+        del doc._proc_table_ref
 
     buf = io.BytesIO()
     doc.save(buf)
