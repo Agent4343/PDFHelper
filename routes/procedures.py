@@ -493,6 +493,49 @@ async def upload_procedure_doc(
     }
 
 
+@router.post("/procedures/logo")
+async def upload_logo(
+    request: Request,
+    file: UploadFile = File(...),
+    db=Depends(get_db),
+):
+    """Upload a company logo for procedure headers."""
+    import base64
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    lower = file.filename.lower()
+    if not any(lower.endswith(ext) for ext in (".png", ".jpg", ".jpeg")):
+        raise HTTPException(status_code=400, detail="Only PNG/JPG images are supported")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Logo too large (max 2MB)")
+
+    encoded = base64.b64encode(file_bytes).decode("ascii")
+    ext = "png" if lower.endswith(".png") else "jpeg"
+    logo_data = f"data:image/{ext};base64,{encoded}"
+
+    now = datetime.now(timezone.utc)
+    existing = db.query(DBAppSetting).filter(DBAppSetting.key == "company_logo").first()
+    if existing:
+        existing.value = _encrypt_text(logo_data)
+        existing.updated_at = now
+    else:
+        setting = DBAppSetting(key="company_logo", value=_encrypt_text(logo_data), updated_at=now)
+        db.add(setting)
+    db.commit()
+
+    return {"detail": "Logo uploaded successfully"}
+
+
+@router.get("/procedures/logo")
+async def get_logo(db=Depends(get_db)):
+    """Check if a company logo is uploaded."""
+    setting = db.query(DBAppSetting).filter(DBAppSetting.key == "company_logo").first()
+    return {"has_logo": setting is not None}
+
+
 @router.get("/procedures/{session_id}")
 async def get_procedure(session_id: str, db=Depends(get_db)):
     session = db.query(DBProcedureSession).filter(DBProcedureSession.id == session_id).first()
@@ -500,7 +543,7 @@ async def get_procedure(session_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=404, detail="Procedure session not found")
 
     messages = [
-        {"role": m.role, "content": _safe_decrypt(m.content) or m.content}
+        {"role": m.role, "content": _safe_decrypt(m.content) or ""}
         for m in session.messages
     ]
 
@@ -529,10 +572,10 @@ async def delete_procedure(session_id: str, db=Depends(get_db)):
 
 # --- 7. Status workflow ---
 VALID_TRANSITIONS = {
-    "gathering": ["drafting"],
-    "drafting": ["review", "gathering"],
+    "gathering": ["drafting", "complete"],
+    "drafting": ["review", "gathering", "complete"],
     "review": ["approved", "drafting"],
-    "approved": ["drafting"],
+    "approved": ["drafting", "complete"],
     "complete": ["review", "drafting"],
 }
 
@@ -599,7 +642,7 @@ async def attach_file_to_procedure(
         except Exception:
             raise HTTPException(status_code=400, detail="Failed to read text file")
     else:
-        raise HTTPException(status_code=400, detail="Supported formats: .docx, .pdf, .txt")
+        raise HTTPException(status_code=400, detail="Supported formats: .docx, .pdf, .txt, .csv")
 
     truncated = extracted[:10000]
     now = datetime.now(timezone.utc)
@@ -784,50 +827,6 @@ async def preview_procedure(session_id: str, db=Depends(get_db)):
     return HTMLResponse("\n".join(html_parts))
 
 
-# --- 9. Company logo upload ---
-@router.post("/procedures/logo")
-async def upload_logo(
-    request: Request,
-    file: UploadFile = File(...),
-    db=Depends(get_db),
-):
-    """Upload a company logo for procedure headers."""
-    import base64
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
-    lower = file.filename.lower()
-    if not any(lower.endswith(ext) for ext in (".png", ".jpg", ".jpeg")):
-        raise HTTPException(status_code=400, detail="Only PNG/JPG images are supported")
-
-    file_bytes = await file.read()
-    if len(file_bytes) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Logo too large (max 2MB)")
-
-    encoded = base64.b64encode(file_bytes).decode("ascii")
-    ext = "png" if lower.endswith(".png") else "jpeg"
-    logo_data = f"data:image/{ext};base64,{encoded}"
-
-    now = datetime.now(timezone.utc)
-    existing = db.query(DBAppSetting).filter(DBAppSetting.key == "company_logo").first()
-    if existing:
-        existing.value = _encrypt_text(logo_data)
-        existing.updated_at = now
-    else:
-        setting = DBAppSetting(key="company_logo", value=_encrypt_text(logo_data), updated_at=now)
-        db.add(setting)
-    db.commit()
-
-    return {"detail": "Logo uploaded successfully"}
-
-
-@router.get("/procedures/logo")
-async def get_logo(db=Depends(get_db)):
-    """Check if a company logo is uploaded."""
-    setting = db.query(DBAppSetting).filter(DBAppSetting.key == "company_logo").first()
-    return {"has_logo": setting is not None}
-
-
 @router.post("/procedures/{session_id}/chat")
 async def procedure_chat(session_id: str, request: Request, db=Depends(get_db)):
     session = db.query(DBProcedureSession).filter(DBProcedureSession.id == session_id).first()
@@ -881,13 +880,10 @@ async def procedure_chat(session_id: str, request: Request, db=Depends(get_db)):
 
     history = []
     for m in session.messages:
-        content = _safe_decrypt(m.content) or m.content
-        if m.role == "user":
-            history.append({"role": "user", "content": content})
-        else:
-            history.append({"role": "assistant", "content": content})
-
-    history.append({"role": "user", "content": user_message})
+        content = _safe_decrypt(m.content) or ""
+        if not content:
+            continue
+        history.append({"role": m.role, "content": content})
 
     client = Anthropic()
 
@@ -942,7 +938,9 @@ async def generate_procedure(session_id: str, request: Request, db=Depends(get_d
 
     history = []
     for m in session.messages:
-        content = _safe_decrypt(m.content) or m.content
+        content = _safe_decrypt(m.content) or ""
+        if not content:
+            continue
         history.append({"role": m.role, "content": content})
 
     is_update = bool(session.gathered_data or session.source_doc_id)
