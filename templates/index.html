@@ -1783,6 +1783,7 @@ function headers(json){
   if(json) h['Content-Type']='application/json';
   return h;
 }
+function uploadHeaders(){return headers(false);}
 function detailStr(d){if(!d)return'';if(typeof d==='string')return d;if(Array.isArray(d))return d.map(function(e){return e&&e.msg?e.msg:JSON.stringify(e)}).join('; ');return JSON.stringify(d);}
 function escHtml(s){if(!s)return '';var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function toast(msg,type='success'){
@@ -4339,7 +4340,7 @@ async function uploadProcedureDoc(input){
   var form=new FormData();
   form.append('file',file);
   try{
-    var r=await fetch(API+'/procedures/upload',{method:'POST',headers:{'Authorization':'Bearer '+localStorage.getItem('token'),'X-API-Key':localStorage.getItem('apiKey')},body:form});
+    var r=await fetch(API+'/procedures/upload',{method:'POST',headers:uploadHeaders(),body:form});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Upload failed');}
     var data=await r.json();
     toast('Procedure loaded for review','success');
@@ -4405,7 +4406,7 @@ async function attachProcFile(input){
   var form=new FormData();
   form.append('file',file);
   try{
-    var r=await fetch(API+'/procedures/'+currentProcId+'/attach',{method:'POST',headers:{'Authorization':'Bearer '+localStorage.getItem('token'),'X-API-Key':localStorage.getItem('apiKey')},body:form});
+    var r=await fetch(API+'/procedures/'+currentProcId+'/attach',{method:'POST',headers:uploadHeaders(),body:form});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
     var data=await r.json();
     var msgs=document.getElementById('proc-messages');
@@ -4438,6 +4439,7 @@ async function previewProcedure(){
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
     var html=await r.text();
     var w=window.open('','_blank');
+    if(!w){toast('Please allow popups for preview','error');return;}
     w.document.write(html);
     w.document.close();
   }catch(e){toast(e.message,'error');}
@@ -4448,7 +4450,7 @@ async function uploadLogo(input){
   var form=new FormData();
   form.append('file',file);
   try{
-    var r=await fetch(API+'/procedures/logo',{method:'POST',headers:{'Authorization':'Bearer '+localStorage.getItem('token'),'X-API-Key':localStorage.getItem('apiKey')},body:form});
+    var r=await fetch(API+'/procedures/logo',{method:'POST',headers:uploadHeaders(),body:form});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
     document.getElementById('logo-status').textContent='Logo uploaded';
     toast('Company logo uploaded','success');
@@ -4461,8 +4463,9 @@ async function sendProcMessage(){
   if(!msg||!currentProcId) return;
   inp.value='';
   var msgs=document.getElementById('proc-messages');
+  var streamId='proc-stream-'+Date.now();
   msgs.innerHTML+='<div style="margin-bottom:0.5rem;padding:0.5rem;border-radius:6px;background:var(--card)"><strong>You:</strong> '+esc(msg)+'</div>';
-  msgs.innerHTML+='<div id="proc-stream" style="margin-bottom:0.5rem;padding:0.5rem;border-radius:6px;background:var(--code)"><strong>Agent:</strong> <span class="proc-stream-text"></span><span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle"></span></div>';
+  msgs.innerHTML+='<div id="'+streamId+'" style="margin-bottom:0.5rem;padding:0.5rem;border-radius:6px;background:var(--code)"><strong>Agent:</strong> <span class="proc-stream-text"></span><span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle"></span></div>';
   msgs.scrollTop=msgs.scrollHeight;
   try{
     var r=await fetch(API+'/procedures/'+currentProcId+'/chat',{method:'POST',headers:headers(true),body:JSON.stringify({message:msg})});
@@ -4479,14 +4482,15 @@ async function sendProcMessage(){
         if(!line.startsWith('data: '))return;
         try{
           var ev=JSON.parse(line.slice(6));
-          if(ev.type==='text'){full+=ev.content;document.querySelector('#proc-stream .proc-stream-text').innerHTML=renderMarkdown(full);}
+          if(ev.type==='text'){full+=ev.content;document.querySelector('#'+streamId+' .proc-stream-text').innerHTML=renderMarkdown(full);}
         }catch(e){}
       });
     }
-    document.getElementById('proc-stream').querySelector('.spinner').remove();
+    var sp=document.querySelector('#'+streamId+' .spinner');
+    if(sp) sp.remove();
     msgs.scrollTop=msgs.scrollHeight;
   }catch(e){
-    var el=document.getElementById('proc-stream');
+    var el=document.getElementById(streamId);
     if(el) el.innerHTML='<strong>Agent:</strong> <span style="color:var(--red)">'+esc(e.message)+'</span>';
   }
 }
@@ -4495,7 +4499,8 @@ async function generateProcedure(){
   var btn=document.getElementById('proc-generate-btn');
   btn.disabled=true;btn.textContent='Generating...';
   var msgs=document.getElementById('proc-messages');
-  msgs.innerHTML+='<div id="proc-gen-stream" style="margin-bottom:0.5rem;padding:0.5rem;border-radius:6px;background:var(--code);border-left:3px solid var(--accent)"><strong>Generated Procedure:</strong><br><span class="proc-gen-text"></span><span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle"></span></div>';
+  var genId='proc-gen-'+Date.now();
+  msgs.innerHTML+='<div id="'+genId+'" style="margin-bottom:0.5rem;padding:0.5rem;border-radius:6px;background:var(--code);border-left:3px solid var(--accent)"><strong>Generated Procedure:</strong><br><span class="proc-gen-text"></span><span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle"></span></div>';
   msgs.scrollTop=msgs.scrollHeight;
   try{
     var r=await fetch(API+'/procedures/'+currentProcId+'/generate',{method:'POST',headers:headers(true)});
@@ -4512,15 +4517,20 @@ async function generateProcedure(){
         if(!line.startsWith('data: '))return;
         try{
           var ev=JSON.parse(line.slice(6));
-          if(ev.type==='text'){full+=ev.content;document.querySelector('#proc-gen-stream .proc-gen-text').innerHTML=renderMarkdown(full);}
+          if(ev.type==='text'){full+=ev.content;document.querySelector('#'+genId+' .proc-gen-text').innerHTML=renderMarkdown(full);}
         }catch(e){}
       });
     }
-    document.querySelector('#proc-gen-stream .spinner').remove();
+    var sp=document.querySelector('#'+genId+' .spinner');
+    if(sp) sp.remove();
     document.getElementById('proc-download-btn').style.display='';
     _updateStatusControls('complete');
     toast('Procedure generated — click Download to get the Word doc');
-  }catch(e){toast(e.message,'error');}finally{btn.disabled=false;btn.textContent='Generate Document';}
+  }catch(e){
+    var el=document.getElementById(genId);
+    if(el){var sp=el.querySelector('.spinner');if(sp)sp.remove();el.innerHTML+='<br><span style="color:var(--red)">'+esc(e.message)+'</span>';}
+    toast(e.message,'error');
+  }finally{btn.disabled=false;btn.textContent='Generate Document';}
 }
 async function downloadProcedure(){
   if(!currentProcId) return;
@@ -4539,10 +4549,11 @@ async function downloadProcedure(){
 async function deleteProcSession(id){
   if(!confirm('Delete this procedure session?')) return;
   try{
-    await fetch(API+'/procedures/'+id,{method:'DELETE',headers:headers()});
+    var r=await fetch(API+'/procedures/'+id,{method:'DELETE',headers:headers()});
+    if(!r.ok) throw new Error('Delete failed');
     loadProcSessions();
     if(currentProcId===id) closeProcChat();
-  }catch(e){}
+  }catch(e){toast(e.message,'error');}
 }
 
 /* ---- Wipe All Data ---- */
