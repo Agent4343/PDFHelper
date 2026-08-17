@@ -480,15 +480,17 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=400, detail="Procedure not yet generated")
 
     from docx import Document
-    from docx.shared import Pt, Emu, RGBColor
+    from docx.shared import Pt, Emu, RGBColor, Inches, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.oxml.ns import qn
+    from lxml import etree
     import io
     import re
 
     NAVY = RGBColor(0x0B, 0x25, 0x45)
     GREY = RGBColor(0x5B, 0x64, 0x72)
+    WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 
     content = _safe_decrypt(session.output_content) or ""
     title = _safe_decrypt(session.title) or "Procedure"
@@ -542,7 +544,6 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
             '<w:fldSimple xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
             ' w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple>'
         )
-        from lxml import etree
         fp._element.append(etree.fromstring(fld_xml))
         frun2 = fp.add_run(" of ")
         frun2.font.name = "Calibri"
@@ -554,145 +555,360 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         )
         fp._element.append(etree.fromstring(fld_xml2))
 
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    run = p.add_run(title)
-    run.bold = True
-    run.font.size = Pt(16)
-    run.font.name = "Calibri"
-    run.font.color.rgb = NAVY
+    # --- 1. COVER PAGE ---
+    proc_number = ""
+    revision = ""
+    for m in session.messages:
+        msg_text = _safe_decrypt(m.content) or ""
+        num_match = re.search(r'(?:procedure\s+(?:number|#|no\.?)\s*[:\-]?\s*)([A-Z0-9][\w\-\.]+)', msg_text, re.IGNORECASE)
+        if num_match and not proc_number:
+            proc_number = num_match.group(1)
+        rev_match = re.search(r'(?:revision|rev\.?)\s*[:\-]?\s*(\d+)', msg_text, re.IGNORECASE)
+        if rev_match and not revision:
+            revision = rev_match.group(1)
+
+    cover_tbl = doc.add_table(rows=1, cols=1)
+    cover_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+    cover_cell = cover_tbl.cell(0, 0)
+    shading = cover_cell._element.get_or_add_tcPr()
+    shading_elm = shading.makeelement(qn("w:shd"), {
+        qn("w:fill"): "0B2545", qn("w:val"): "clear",
+    })
+    shading.append(shading_elm)
+
+    cp = cover_cell.paragraphs[0]
+    cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    cp.paragraph_format.space_before = Pt(40)
+    cp.paragraph_format.space_after = Pt(8)
+    cr = cp.add_run(title)
+    cr.bold = True
+    cr.font.size = Pt(22)
+    cr.font.name = "Calibri"
+    cr.font.color.rgb = WHITE
+
+    if proc_number:
+        cp2 = cover_cell.add_paragraph()
+        cp2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cp2.paragraph_format.space_after = Pt(4)
+        cr2 = cp2.add_run(proc_number)
+        cr2.font.size = Pt(14)
+        cr2.font.name = "Calibri"
+        cr2.font.color.rgb = WHITE
+
+    if revision:
+        cp3 = cover_cell.add_paragraph()
+        cp3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cp3.paragraph_format.space_after = Pt(4)
+        cr3 = cp3.add_run(f"Revision {revision}")
+        cr3.font.size = Pt(12)
+        cr3.font.name = "Calibri"
+        cr3.font.color.rgb = WHITE
+
     doc.add_paragraph()
+    info_tbl = doc.add_table(rows=4, cols=2)
+    info_tbl.style = "Table Grid"
+    info_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+    info_labels = ["Effective Date:", "Prepared By:", "Approved By:", "Level of Use:"]
+    from datetime import date
+    info_values = [date.today().strftime("%Y-%m-%d"), "", "", "Reference Use"]
+    for i, (label, value) in enumerate(zip(info_labels, info_values)):
+        lc = info_tbl.cell(i, 0)
+        lc.text = ""
+        lp = lc.paragraphs[0]
+        lr = lp.add_run(label)
+        lr.bold = True
+        lr.font.name = "Calibri"
+        lr.font.size = Pt(10)
+        vc = info_tbl.cell(i, 1)
+        vc.text = ""
+        vp = vc.paragraphs[0]
+        vr = vp.add_run(value)
+        vr.font.name = "Calibri"
+        vr.font.size = Pt(10)
+
+    doc.add_page_break()
+
+    # --- Helper functions ---
+
+    def _set_cell_shading(cell, color):
+        tc_pr = cell._element.get_or_add_tcPr()
+        shd = tc_pr.makeelement(qn("w:shd"), {
+            qn("w:fill"): color, qn("w:val"): "clear",
+        })
+        tc_pr.append(shd)
+
+    def _styled_run(paragraph, text, font_size=10.5, bold=False, color=None):
+        r = paragraph.add_run(text)
+        r.font.name = "Calibri"
+        r.font.size = Pt(font_size)
+        r.bold = bold
+        if color:
+            r.font.color.rgb = color
+        return r
 
     def _add_warning_box(doc, text):
         tbl = doc.add_table(rows=1, cols=1)
         tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
         cell = tbl.cell(0, 0)
-        shading = cell._element.get_or_add_tcPr()
-        shading_elm = shading.makeelement(qn("w:shd"), {
-            qn("w:fill"): "FFE0E0", qn("w:val"): "clear",
-        })
-        shading.append(shading_elm)
+        _set_cell_shading(cell, "FFE0E0")
         p = cell.paragraphs[0]
-        run = p.add_run("! WARNING: ")
-        run.bold = True
-        run.font.name = "Calibri"
-        run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
-        run.font.size = Pt(10.5)
-        run2 = p.add_run(text)
-        run2.font.name = "Calibri"
-        run2.font.size = Pt(10.5)
+        _styled_run(p, "! WARNING: ", bold=True, color=RGBColor(0xCC, 0x00, 0x00))
+        _styled_run(p, text)
 
     def _add_caution_box(doc, text):
         tbl = doc.add_table(rows=1, cols=1)
         tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
         cell = tbl.cell(0, 0)
-        shading = cell._element.get_or_add_tcPr()
-        shading_elm = shading.makeelement(qn("w:shd"), {
-            qn("w:fill"): "FFF3CD", qn("w:val"): "clear",
-        })
-        shading.append(shading_elm)
+        _set_cell_shading(cell, "FFF3CD")
         p = cell.paragraphs[0]
-        run = p.add_run("CAUTION: ")
-        run.bold = True
-        run.font.name = "Calibri"
-        run.font.color.rgb = RGBColor(0xCC, 0x88, 0x00)
-        run.font.size = Pt(10.5)
-        run2 = p.add_run(text)
-        run2.font.name = "Calibri"
-        run2.font.size = Pt(10.5)
+        _styled_run(p, "CAUTION: ", bold=True, color=RGBColor(0xCC, 0x88, 0x00))
+        _styled_run(p, text)
 
     def _add_note_box(doc, text):
         tbl = doc.add_table(rows=1, cols=1)
         tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
         cell = tbl.cell(0, 0)
-        shading = cell._element.get_or_add_tcPr()
-        shading_elm = shading.makeelement(qn("w:shd"), {
-            qn("w:fill"): "E8F0FE", qn("w:val"): "clear",
-        })
-        shading.append(shading_elm)
+        _set_cell_shading(cell, "E8F0FE")
         p = cell.paragraphs[0]
-        run = p.add_run("NOTE: ")
-        run.bold = True
-        run.font.name = "Calibri"
-        run.font.color.rgb = RGBColor(0x00, 0x55, 0xCC)
-        run.font.size = Pt(10.5)
-        run2 = p.add_run(text)
-        run2.font.name = "Calibri"
-        run2.font.size = Pt(10.5)
+        _styled_run(p, "NOTE: ", bold=True, color=RGBColor(0x00, 0x55, 0xCC))
+        _styled_run(p, text)
 
+    # 5. HOLD POINT formatting
+    def _add_hold_point(doc, text):
+        tbl = doc.add_table(rows=1, cols=1)
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        cell = tbl.cell(0, 0)
+        _set_cell_shading(cell, "0B2545")
+        p = cell.paragraphs[0]
+        _styled_run(p, "HOLD POINT", font_size=11, bold=True, color=WHITE)
+        if text:
+            p2 = cell.add_paragraph()
+            _set_cell_shading(cell, "0B2545")
+            _styled_run(p2, text, color=WHITE)
+
+    # 3. SAFEGUARD CRITICAL STEP warning box
+    def _add_safeguard_warning(doc, text):
+        tbl = doc.add_table(rows=1, cols=1)
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        cell = tbl.cell(0, 0)
+        _set_cell_shading(cell, "FFE0E0")
+        tc_pr = cell._element.get_or_add_tcPr()
+        borders = tc_pr.makeelement(qn("w:tcBorders"), {})
+        for edge in ["top", "left", "bottom", "right"]:
+            b = borders.makeelement(qn(f"w:{edge}"), {
+                qn("w:val"): "single", qn("w:sz"): "12",
+                qn("w:color"): "CC0000", qn("w:space"): "0",
+            })
+            borders.append(b)
+        tc_pr.append(borders)
+        p = cell.paragraphs[0]
+        _styled_run(p, "WARNING - SAFEGUARD CRITICAL STEP", font_size=11, bold=True,
+                     color=RGBColor(0xCC, 0x00, 0x00))
+        if text:
+            p2 = cell.add_paragraph()
+            _styled_run(p2, text, color=RGBColor(0xCC, 0x00, 0x00))
+
+    # 4. INDEPENDENT VERIFICATION fields
+    def _add_iv_fields(doc):
+        tbl = doc.add_table(rows=2, cols=2)
+        tbl.style = "Table Grid"
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        header_cell = tbl.cell(0, 0)
+        header_cell.merge(tbl.cell(0, 1))
+        _set_cell_shading(header_cell, "E8F0FE")
+        hp = header_cell.paragraphs[0]
+        _styled_run(hp, "Independent Verification Required", font_size=10, bold=True, color=NAVY)
+        for col_idx, label in enumerate(["Name:", "Signature:"]):
+            c = tbl.cell(1, col_idx)
+            p = c.paragraphs[0]
+            _styled_run(p, label, font_size=9.5, bold=True)
+            _styled_run(p, "  ________________________", font_size=9.5, color=GREY)
+
+    # --- 2. ACTION STEP TABLE detection and building ---
+    table_active = False
+    table_ref = None
+    is_action_table = False
+
+    def _detect_action_table(header_cells):
+        lower = [c.lower().strip() for c in header_cells]
+        return ("action" in lower or "action/remarks" in lower) and (
+            "who" in lower or "check" in lower or "no." in lower or "no" in lower or "step" in lower
+        )
+
+    def _build_action_table_header(doc, cells):
+        nonlocal table_ref, table_active, is_action_table
+        has_check = any("check" in c.lower() for c in cells)
+        cols = list(cells)
+        if not has_check:
+            cols.append("Check")
+        tbl = doc.add_table(rows=1, cols=len(cols))
+        tbl.style = "Table Grid"
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        for i, val in enumerate(cols):
+            cell = tbl.cell(0, i)
+            _set_cell_shading(cell, "0B2545")
+            cell.text = ""
+            p = cell.paragraphs[0]
+            _styled_run(p, val, font_size=9.5, bold=True, color=WHITE)
+        table_ref = tbl
+        table_active = True
+        is_action_table = True
+
+    def _build_action_table_row(cells):
+        nonlocal table_ref
+        has_check_col = len(table_ref.columns) > len(cells)
+        row_cells = list(cells)
+        if has_check_col:
+            row_cells.append("☐")
+        row = table_ref.add_row()
+        for i, val in enumerate(row_cells):
+            if i < len(row.cells):
+                row.cells[i].text = ""
+                p = row.cells[i].paragraphs[0]
+                if val.strip() in ("☐", "[ ]", "[x]", "[]"):
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    _styled_run(p, "☐", font_size=12)
+                else:
+                    _styled_run(p, val, font_size=9.5)
+
+    def _build_generic_table_header(doc, cells):
+        nonlocal table_ref, table_active, is_action_table
+        tbl = doc.add_table(rows=1, cols=len(cells))
+        tbl.style = "Table Grid"
+        tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+        for i, val in enumerate(cells):
+            cell = tbl.cell(0, i)
+            cell.text = ""
+            p = cell.paragraphs[0]
+            _styled_run(p, val, font_size=9.5, bold=True)
+        table_ref = tbl
+        table_active = True
+        is_action_table = False
+
+    def _build_generic_table_row(cells):
+        nonlocal table_ref
+        row = table_ref.add_row()
+        for i, val in enumerate(cells):
+            if i < len(row.cells):
+                row.cells[i].text = ""
+                p = row.cells[i].paragraphs[0]
+                _styled_run(p, val, font_size=9.5)
+
+    # --- MAIN CONTENT LOOP ---
     for line in content.split("\n"):
         line = line.rstrip()
         if not line:
+            if table_active:
+                table_active = False
+                table_ref = None
+                is_action_table = False
             doc.add_paragraph("")
             continue
 
-        line_upper = line.strip().upper()
+        line_stripped = line.strip()
+        line_upper = line_stripped.upper()
+
+        # Safeguard critical step
+        if "SAFEGUARD CRITICAL STEP" in line_upper:
+            if table_active:
+                table_active = False
+            text = re.sub(r'^.*SAFEGUARD CRITICAL STEP[:\s]*', '', line_stripped, flags=re.IGNORECASE)
+            _add_safeguard_warning(doc, text)
+            continue
+
+        # Hold point
+        if line_upper.startswith("HOLD POINT") or line_upper.startswith("**HOLD POINT"):
+            if table_active:
+                table_active = False
+            text = re.sub(r'^\*{0,2}\s*HOLD POINT\s*\*{0,2}[:\s]*', '', line_stripped, flags=re.IGNORECASE)
+            _add_hold_point(doc, text)
+            continue
+
+        # Independent verification
+        if "INDEPENDENT VERIFICATION" in line_upper and ("REQUIRED" in line_upper or "NEEDED" in line_upper):
+            if table_active:
+                table_active = False
+            _add_iv_fields(doc)
+            continue
+
+        # Warning/caution/note
         if line_upper.startswith("! WARNING:") or line_upper.startswith("WARNING:"):
-            text = re.sub(r'^!?\s*WARNING:\s*', '', line.strip(), flags=re.IGNORECASE)
+            if table_active:
+                table_active = False
+            text = re.sub(r'^!?\s*WARNING:\s*', '', line_stripped, flags=re.IGNORECASE)
             _add_warning_box(doc, text)
         elif line_upper.startswith("CAUTION:"):
-            text = re.sub(r'^CAUTION:\s*', '', line.strip(), flags=re.IGNORECASE)
+            if table_active:
+                table_active = False
+            text = re.sub(r'^CAUTION:\s*', '', line_stripped, flags=re.IGNORECASE)
             _add_caution_box(doc, text)
         elif line_upper.startswith("NOTE:"):
-            text = re.sub(r'^NOTE:\s*', '', line.strip(), flags=re.IGNORECASE)
+            if table_active:
+                table_active = False
+            text = re.sub(r'^NOTE:\s*', '', line_stripped, flags=re.IGNORECASE)
             _add_note_box(doc, text)
+
+        # Headings
         elif line.startswith("# "):
+            if table_active:
+                table_active = False
             doc.add_heading(line[2:], level=1)
         elif line.startswith("## "):
+            if table_active:
+                table_active = False
             doc.add_heading(line[3:], level=2)
         elif line.startswith("### "):
+            if table_active:
+                table_active = False
             doc.add_heading(line[4:], level=3)
-        elif line.strip().startswith("**") and line.strip().endswith("**"):
+
+        # Bold section labels
+        elif line_stripped.startswith("**") and line_stripped.endswith("**"):
+            if table_active:
+                table_active = False
             p = doc.add_paragraph()
-            run = p.add_run(line.strip().strip("*"))
+            run = p.add_run(line_stripped.strip("*"))
             run.bold = True
             run.font.name = "Calibri"
             run.font.color.rgb = NAVY
             run.font.size = Pt(12)
-        elif line.strip().startswith("- ") or line.strip().startswith("• "):
-            text = line.strip()[2:]
-            doc.add_paragraph(text, style="List Bullet")
-        elif re.match(r'^\d+\.\s', line.strip()):
-            text = re.sub(r'^\d+\.\s+', '', line.strip())
+
+        # Bullets
+        elif line_stripped.startswith("- ") or line_stripped.startswith("• "):
+            if table_active:
+                table_active = False
+            doc.add_paragraph(line_stripped[2:], style="List Bullet")
+
+        # Numbered steps
+        elif re.match(r'^\d+\.\s', line_stripped):
+            if table_active:
+                table_active = False
+            text = re.sub(r'^\d+\.\s+', '', line_stripped)
             doc.add_paragraph(text, style="List Number")
-        elif line.strip().startswith("|") and line.strip().endswith("|"):
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+
+        # Tables
+        elif line_stripped.startswith("|") and line_stripped.endswith("|"):
+            cells = [c.strip() for c in line_stripped.strip("|").split("|")]
             if all(set(c) <= set("- :") for c in cells):
                 continue
-            if not hasattr(doc, '_proc_table_active'):
-                doc._proc_table_active = False
-            if not doc._proc_table_active:
-                tbl = doc.add_table(rows=1, cols=len(cells))
-                tbl.style = "Table Grid"
-                tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
-                for i, val in enumerate(cells):
-                    cell = tbl.cell(0, i)
-                    cell.text = val
-                    for p in cell.paragraphs:
-                        for run in p.runs:
-                            run.bold = True
-                            run.font.size = Pt(9.5)
-                            run.font.name = "Calibri"
-                doc._proc_table_active = True
-                doc._proc_table_ref = tbl
+            if not table_active:
+                if _detect_action_table(cells):
+                    _build_action_table_header(doc, cells)
+                else:
+                    _build_generic_table_header(doc, cells)
             else:
-                row = doc._proc_table_ref.add_row()
-                for i, val in enumerate(cells):
-                    if i < len(row.cells):
-                        row.cells[i].text = val
-                        for p in row.cells[i].paragraphs:
-                            for run in p.runs:
-                                run.font.size = Pt(9.5)
-                                run.font.name = "Calibri"
-        else:
-            if hasattr(doc, '_proc_table_active') and doc._proc_table_active:
-                doc._proc_table_active = False
-            doc.add_paragraph(line)
+                if is_action_table:
+                    _build_action_table_row(cells)
+                else:
+                    _build_generic_table_row(cells)
 
-    if hasattr(doc, '_proc_table_active'):
-        del doc._proc_table_active
-    if hasattr(doc, '_proc_table_ref'):
-        del doc._proc_table_ref
+        # Plain text
+        else:
+            if table_active:
+                table_active = False
+                table_ref = None
+                is_action_table = False
+            doc.add_paragraph(line)
 
     buf = io.BytesIO()
     doc.save(buf)
