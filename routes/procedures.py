@@ -19,9 +19,21 @@ from database import (
     DBDocument,
     DBProcedureSession,
     DBProcedureMessage,
+    DBAppSetting,
     SessionLocal,
 )
 from helpers import _encrypt_text, _decrypt_text, _safe_decrypt, _load_stored_text, _stored_text_to_structured
+
+FACILITY_PRESETS = {
+    "Hebron": {
+        "crafts": ["Operations", "Instrumentation", "Mechanical", "Electrical", "Process"],
+        "doc_prefix": "CAHE-EC-OOPRO",
+    },
+    "Hibernia": {
+        "crafts": ["Operations", "Instrumentation", "Mechanical", "Electrical", "Process"],
+        "doc_prefix": "HS-O-O",
+    },
+}
 
 router = APIRouter(dependencies=[Depends(verify_auth)])
 
@@ -288,17 +300,32 @@ If the user provides an existing procedure to update, review it against these st
 Always be thorough — a missing step or unclear instruction in a procedure can lead to safety incidents. Every safeguard critical step must be clearly identified with proper warnings and verification requirements."""
 
 
+@router.get("/procedures/presets")
+async def get_facility_presets():
+    """Return facility presets with craft options."""
+    return {"facilities": FACILITY_PRESETS}
+
+
 @router.get("/procedures")
 async def list_procedures(
     request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    facility: str = Query(None),
+    category: str = Query(None),
+    status: str = Query(None),
     db=Depends(get_db),
 ):
     user_id = getattr(request.state, "user_id", None)
     query = db.query(DBProcedureSession)
     if user_id:
         query = query.filter(DBProcedureSession.user_id == user_id)
+    if facility:
+        query = query.filter(DBProcedureSession.facility == facility)
+    if category:
+        query = query.filter(DBProcedureSession.category == category)
+    if status:
+        query = query.filter(DBProcedureSession.status == status)
     total = query.count()
     sessions = query.order_by(DBProcedureSession.updated_at.desc()).offset(skip).limit(limit).all()
     return {
@@ -307,6 +334,8 @@ async def list_procedures(
                 "id": s.id,
                 "title": _safe_decrypt(s.title) or "Untitled Procedure",
                 "status": s.status,
+                "facility": s.facility,
+                "category": s.category,
                 "created_at": s.created_at.isoformat(),
                 "updated_at": s.updated_at.isoformat(),
             }
@@ -322,6 +351,9 @@ async def create_procedure(request: Request, db=Depends(get_db)):
     title = body.get("title", "").strip() or "New Procedure"
     source_doc_id = body.get("source_doc_id")
     mode = body.get("mode", "new")
+    facility = body.get("facility", "").strip() or None
+    craft = body.get("craft", "").strip() or None
+    category = body.get("category", "").strip() or None
 
     if source_doc_id:
         doc = db.query(DBDocument).filter(DBDocument.id == source_doc_id).first()
@@ -334,6 +366,8 @@ async def create_procedure(request: Request, db=Depends(get_db)):
         user_id=getattr(request.state, "user_id", None),
         title=_encrypt_text(title),
         source_doc_id=source_doc_id,
+        facility=facility,
+        category=category,
         status="gathering",
         created_at=now,
         updated_at=now,
@@ -355,13 +389,27 @@ async def create_procedure(request: Request, db=Depends(get_db)):
             "What is the procedure title and designation number?"
         )
     else:
-        initial_msg = (
-            "I'm ready to help you write a new procedure. I'll guide you through "
-            "each section, asking the right questions to build a complete document "
-            "that meets PPA AP-907-005 and OIMS 6.1 standards.\n\n"
-            "Let's start — what facility and craft/discipline is this for? "
-            "(e.g., Facility: Hebron, Craft: Operations)"
-        )
+        if facility and craft:
+            initial_msg = (
+                f"I'm ready to help you write a new procedure for **{facility}** ({craft}). "
+                "I'll guide you through each section to build a complete document "
+                "that meets PPA AP-907-005 and OIMS 6.1 standards.\n\n"
+                "What is the procedure title and designation number?"
+            )
+        elif facility:
+            initial_msg = (
+                f"I'm ready to help you write a new procedure for **{facility}**. "
+                "I'll guide you through each section.\n\n"
+                "What craft/discipline is this for and what is the procedure title?"
+            )
+        else:
+            initial_msg = (
+                "I'm ready to help you write a new procedure. I'll guide you through "
+                "each section, asking the right questions to build a complete document "
+                "that meets PPA AP-907-005 and OIMS 6.1 standards.\n\n"
+                "Let's start — what facility and craft/discipline is this for? "
+                "(e.g., Facility: Hebron, Craft: Operations)"
+            )
 
     assistant_msg = DBProcedureMessage(
         id=str(uuid.uuid4()),
@@ -460,6 +508,8 @@ async def get_procedure(session_id: str, db=Depends(get_db)):
         "id": session.id,
         "title": _safe_decrypt(session.title) or "Untitled Procedure",
         "status": session.status,
+        "facility": session.facility,
+        "category": session.category,
         "source_doc_id": session.source_doc_id,
         "messages": messages,
         "created_at": session.created_at.isoformat(),
@@ -475,6 +525,307 @@ async def delete_procedure(session_id: str, db=Depends(get_db)):
     db.delete(session)
     db.commit()
     return {"detail": "Procedure session deleted"}
+
+
+# --- 7. Status workflow ---
+VALID_TRANSITIONS = {
+    "gathering": ["drafting"],
+    "drafting": ["review", "gathering"],
+    "review": ["approved", "drafting"],
+    "approved": ["drafting"],
+    "complete": ["review", "drafting"],
+}
+
+
+@router.post("/procedures/{session_id}/status")
+async def update_procedure_status(session_id: str, request: Request, db=Depends(get_db)):
+    session = db.query(DBProcedureSession).filter(DBProcedureSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Procedure session not found")
+    body = await request.json()
+    new_status = body.get("status", "").strip()
+    allowed = VALID_TRANSITIONS.get(session.status, [])
+    if new_status not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot transition from '{session.status}' to '{new_status}'. Allowed: {allowed}",
+        )
+    session.status = new_status
+    session.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"id": session.id, "status": session.status}
+
+
+# --- 3. Chat file attachments ---
+@router.post("/procedures/{session_id}/attach")
+async def attach_file_to_procedure(
+    session_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    db=Depends(get_db),
+):
+    """Attach a reference file (PDF, DOCX, TXT) to the procedure chat."""
+    session = db.query(DBProcedureSession).filter(DBProcedureSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Procedure session not found")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 20MB)")
+
+    filename = file.filename or "attachment"
+    lower = filename.lower()
+    extracted = ""
+
+    if lower.endswith(".docx"):
+        try:
+            extracted = _extract_docx_structured(file_bytes)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Failed to parse .docx file")
+    elif lower.endswith(".pdf"):
+        try:
+            import pymupdf
+            import io as _io
+            pdf = pymupdf.open(stream=file_bytes, filetype="pdf")
+            pages = []
+            for i in range(len(pdf)):
+                pages.append(f"--- Page {i+1} ---\n{pdf[i].get_text()}")
+            extracted = "\n".join(pages)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Failed to parse PDF file")
+    elif lower.endswith(".txt") or lower.endswith(".csv"):
+        try:
+            extracted = file_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Failed to read text file")
+    else:
+        raise HTTPException(status_code=400, detail="Supported formats: .docx, .pdf, .txt")
+
+    truncated = extracted[:10000]
+    now = datetime.now(timezone.utc)
+    attach_msg = DBProcedureMessage(
+        id=str(uuid.uuid4()),
+        session_id=session.id,
+        role="user",
+        content=_encrypt_text(f"[Attached file: {filename}]\n\n{truncated}"),
+        created_at=now,
+    )
+    db.add(attach_msg)
+    session.updated_at = now
+    db.commit()
+
+    return {
+        "detail": f"File '{filename}' attached ({len(extracted)} chars extracted)",
+        "filename": filename,
+        "chars": len(extracted),
+    }
+
+
+# --- 4. Procedure compliance report ---
+@router.post("/procedures/{session_id}/compliance")
+async def compliance_report(session_id: str, db=Depends(get_db)):
+    """Analyze procedure against PPA AP-907-005, OIMS 6.1, CTE Playbook standards."""
+    session = db.query(DBProcedureSession).filter(DBProcedureSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Procedure session not found")
+
+    content = ""
+    if session.output_content:
+        content = _safe_decrypt(session.output_content) or ""
+    elif session.gathered_data:
+        content = _safe_decrypt(session.gathered_data) or ""
+    if not content:
+        raise HTTPException(status_code=400, detail="No procedure content to analyze")
+
+    client = Anthropic()
+    analysis_prompt = f"""Analyze this procedure against the following standards and provide a structured compliance report:
+
+1. PPA AP-907-005 Procedure Writer's Manual
+2. OIMS Element 6.1 (Operations Integrity)
+3. Critical Task Execution Playbook (CTE Rev. 9)
+4. Upstream Procedure Writing Rules
+
+PROCEDURE CONTENT:
+{content[:10000]}
+
+Provide your analysis in this exact format:
+
+## Overall Score: X/10
+
+## Findings
+
+For each finding, use this format:
+- [PASS] or [FAIL] or [WARN] Category: Description
+
+Check these categories:
+1. STRUCTURE: Required sections present (Purpose, Scope, Precautions, Prerequisites, Instructions, References)
+2. ACTION STEPS: Action verbs uppercase bold, one action per step, active voice
+3. EMPHASIS: IF/WHEN/THEN uppercase underlined bold, component positions uppercase
+4. NOTES/CAUTIONS/WARNINGS: Placed before steps, correct sequence, passive voice
+5. PREREQUISITES: PPE, materials, tools, other prerequisites defined
+6. SAFEGUARD CRITICAL: SGC steps identified, hold points defined, IV method specified
+7. VOCABULARY: No ambiguous words (ensure, appropriate, proper), SHALL/SHOULD/MAY used correctly
+8. STEP NUMBERING: Up to 4 levels, consistent format
+9. ABBREVIATIONS: Spelled out on first use
+10. HUMAN FACTORS: Steps designed for human capability, error reduction considered
+
+## Recommendations
+Numbered list of specific improvements."""
+
+    response = client.messages.create(
+        model=CHAT_MODEL,
+        max_tokens=CHAT_MAX_TOKENS,
+        messages=[{"role": "user", "content": analysis_prompt}],
+    )
+
+    report_text = response.content[0].text if response.content else "Analysis failed"
+    return {"report": report_text}
+
+
+# --- 5. Browser preview ---
+@router.get("/procedures/{session_id}/preview")
+async def preview_procedure(session_id: str, db=Depends(get_db)):
+    """Return HTML preview of the procedure content."""
+    from fastapi.responses import HTMLResponse
+    import re
+
+    session = db.query(DBProcedureSession).filter(DBProcedureSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Procedure session not found")
+    if not session.output_content:
+        raise HTTPException(status_code=400, detail="Procedure not yet generated")
+
+    content = _safe_decrypt(session.output_content) or ""
+    title = _safe_decrypt(session.title) or "Procedure"
+
+    def esc(t):
+        return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    html_parts = [
+        "<!DOCTYPE html><html><head>",
+        f"<title>{esc(title)}</title>",
+        "<style>",
+        "body{font-family:Arial,sans-serif;font-size:11pt;max-width:8.5in;margin:auto;padding:1in 0.7in;color:#000}",
+        "h1{font-size:14pt;border-bottom:2px solid #000;padding-bottom:4px}",
+        "h2{font-size:12pt}h3{font-size:11pt}",
+        "table{border-collapse:collapse;width:100%;margin:8px 0}",
+        "th,td{border:1px solid #000;padding:4px 8px;text-align:left;font-size:11pt}",
+        "th{background:#000;color:#fff;font-weight:bold}",
+        ".note{background:#DEEAF6;padding:6px 10px;margin:4px 0}",
+        ".caution{background:#FFF2CC;padding:6px 10px;margin:4px 0}",
+        ".caution-label{color:#BF8F00;font-weight:bold}",
+        ".warning{background:#FFE0E0;padding:6px 10px;margin:4px 0;border:2px solid #CC0000}",
+        ".warning-label{color:#CC0000;font-weight:bold}",
+        ".hold-point{background:#000;color:#fff;padding:8px 10px;margin:4px 0;font-weight:bold}",
+        ".sgc-warning{background:#FFE0E0;border:2px solid #CC0000;padding:8px 10px;margin:4px 0}",
+        ".sgc-label{color:#CC0000;font-weight:bold}",
+        ".iv-table{background:#DEEAF6}",
+        ".end-section{text-align:center;font-weight:bold;font-size:12pt;padding:8px}",
+        "ul{list-style-type:disc;margin:4px 0 4px 20px}",
+        "@media print{body{padding:0.5in}}",
+        "</style></head><body>",
+    ]
+
+    in_table = False
+    for line in content.split("\n"):
+        line = line.rstrip()
+        if not line:
+            if in_table:
+                html_parts.append("</table>")
+                in_table = False
+            continue
+
+        stripped = line.strip()
+        upper = stripped.upper()
+
+        if "SAFEGUARD CRITICAL STEP" in upper:
+            text = re.sub(r'^.*SAFEGUARD CRITICAL STEP[:\s]*', '', stripped, flags=re.IGNORECASE)
+            html_parts.append(f'<div class="sgc-warning"><span class="sgc-label">WARNING - SAFEGUARD CRITICAL STEP</span> {esc(text)}</div>')
+        elif upper.startswith("HOLD POINT") or upper.startswith("**HOLD POINT"):
+            text = re.sub(r'^\*{0,2}\s*HOLD POINT\s*\*{0,2}[:\s]*', '', stripped, flags=re.IGNORECASE)
+            html_parts.append(f'<div class="hold-point">HOLD POINT {esc(text)}</div>')
+        elif "INDEPENDENT VERIFICATION" in upper and ("REQUIRED" in upper or "NEEDED" in upper):
+            html_parts.append('<table class="iv-table"><tr><th colspan="3" style="background:#DEEAF6;color:#000">Independent Verification Required</th></tr><tr><td><b>Name:</b> ___________</td><td><b>Signature:</b> ___________</td><td><b>Date:</b> ___________</td></tr></table>')
+        elif upper.startswith("WARNING:") or upper.startswith("! WARNING:"):
+            text = re.sub(r'^!?\s*WARNING:\s*', '', stripped, flags=re.IGNORECASE)
+            html_parts.append(f'<div class="warning"><span class="warning-label">WARNING:</span> {esc(text)}</div>')
+        elif upper.startswith("CAUTION:"):
+            text = re.sub(r'^CAUTION:\s*', '', stripped, flags=re.IGNORECASE)
+            html_parts.append(f'<div class="caution"><span class="caution-label">&#9650; CAUTION:</span> {esc(text)}</div>')
+        elif upper.startswith("NOTE:"):
+            text = re.sub(r'^NOTE:\s*', '', stripped, flags=re.IGNORECASE)
+            html_parts.append(f'<div class="note"><b>NOTE:</b> {esc(text)}</div>')
+        elif line.startswith("# "):
+            html_parts.append(f"<h1>{esc(line[2:])}</h1>")
+        elif line.startswith("## "):
+            html_parts.append(f"<h2>{esc(line[3:])}</h2>")
+        elif line.startswith("### "):
+            html_parts.append(f"<h3>{esc(line[4:])}</h3>")
+        elif stripped.startswith("**") and stripped.endswith("**"):
+            html_parts.append(f"<p><b>{esc(stripped.strip('*'))}</b></p>")
+        elif stripped.startswith("- ") or stripped.startswith("• "):
+            html_parts.append(f"<ul><li>{esc(stripped[2:])}</li></ul>")
+        elif stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if all(set(c) <= set("- :") for c in cells):
+                continue
+            if not in_table:
+                in_table = True
+                html_parts.append("<table><tr>" + "".join(f"<th>{esc(c)}</th>" for c in cells) + "</tr>")
+            else:
+                html_parts.append("<tr>" + "".join(f"<td>{esc(c)}</td>" for c in cells) + "</tr>")
+        else:
+            html_parts.append(f"<p>{esc(stripped)}</p>")
+
+    if in_table:
+        html_parts.append("</table>")
+    html_parts.append("</body></html>")
+
+    return HTMLResponse("\n".join(html_parts))
+
+
+# --- 9. Company logo upload ---
+@router.post("/procedures/logo")
+async def upload_logo(
+    request: Request,
+    file: UploadFile = File(...),
+    db=Depends(get_db),
+):
+    """Upload a company logo for procedure headers."""
+    import base64
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    lower = file.filename.lower()
+    if not any(lower.endswith(ext) for ext in (".png", ".jpg", ".jpeg")):
+        raise HTTPException(status_code=400, detail="Only PNG/JPG images are supported")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Logo too large (max 2MB)")
+
+    encoded = base64.b64encode(file_bytes).decode("ascii")
+    ext = "png" if lower.endswith(".png") else "jpeg"
+    logo_data = f"data:image/{ext};base64,{encoded}"
+
+    now = datetime.now(timezone.utc)
+    existing = db.query(DBAppSetting).filter(DBAppSetting.key == "company_logo").first()
+    if existing:
+        existing.value = _encrypt_text(logo_data)
+        existing.updated_at = now
+    else:
+        setting = DBAppSetting(key="company_logo", value=_encrypt_text(logo_data), updated_at=now)
+        db.add(setting)
+    db.commit()
+
+    return {"detail": "Logo uploaded successfully"}
+
+
+@router.get("/procedures/logo")
+async def get_logo(db=Depends(get_db)):
+    """Check if a company logo is uploaded."""
+    setting = db.query(DBAppSetting).filter(DBAppSetting.key == "company_logo").first()
+    return {"has_logo": setting is not None}
 
 
 @router.post("/procedures/{session_id}/chat")
@@ -592,40 +943,59 @@ async def generate_procedure(session_id: str, request: Request, db=Depends(get_d
         content = _safe_decrypt(m.content) or m.content
         history.append({"role": m.role, "content": content})
 
-    generation_prompt = """Based on all the information gathered in this conversation, generate the complete procedure document now.
+    is_update = bool(session.gathered_data or session.source_doc_id)
+    alteration_section = ""
+    if is_update:
+        alteration_section = """
+If this is an update to an existing procedure, include a "Summary of Alterations" section at the end listing what changed:
+## Summary of Alterations
+| Rev | Date | Description of Change | Author |
+| --- | --- | --- | --- |
+(List each change made in this revision)
+"""
+
+    generation_prompt = f"""Based on all the information gathered in this conversation, generate the complete procedure document now.
 
 OUTPUT FORMAT RULES:
-- Use # for main sections (e.g., # 1.0 PURPOSE)
-- Use ## for subsections (e.g., ## 6.1 Equipment Lineup)
+- Use # for main sections (e.g., # 1. PURPOSE AND SCOPE)
+- Use ## for subsections (e.g., ## 4.1. Equipment Lineup)
 - Use ### for sub-subsections
-- Action steps as numbered list: "1. OPEN valve XX-XXX-001"
 - Action verbs in UPPERCASE: OPEN, CLOSE, VERIFY, CHECK, RECORD, PERFORM, etc.
 - Conditional terms in UPPERCASE: IF, THEN, WHEN, AND, OR, NOT, WHILE
 - Component positions in UPPERCASE: OPEN, CLOSED, ON, OFF, AUTO
 - Component names in Title Case: Amine Discharge Valve
-- Warnings as: ! WARNING: [text]
+- Warnings as: WARNING: [text]
 - Cautions as: CAUTION: [text]
 - Notes as: NOTE: [text]
 - Place warnings/cautions/notes BEFORE the step they apply to
 - Tables as markdown tables with | pipes |
-- Use the action step table format where applicable:
-| No. | Action | Who | Check |
+- Action step tables with these exact 4 columns:
+| Step | Action / Remarks | Who | Check |
 | --- | --- | --- | --- |
-| 1. | OPEN inlet valve XX-XXX-001 | Ops | [ ] |
+| 1 | OPEN inlet valve XX-XXX-001 | Ops Tech | ☐ |
 
-Include ALL required sections per PPA AP-907-005:
-1. Purpose
-2. Scope
-3. References and Commitments
-4. Definitions (if needed)
-5. Responsibilities
-6. Precautions and Limitations
-7. Prerequisites
-8. Instructions (step-by-step with proper formatting)
-9. Acceptance Criteria (if applicable)
-10. Attachments (if applicable)
-
-Use the template structure and style rules provided. Every action step must start with an uppercase bold action verb and contain only one action."""
+Use these EXACT section headings:
+# 1. PURPOSE AND SCOPE
+## 1.1. Purpose
+## 1.2. Scope
+# 2. PRECAUTIONS AND LIMITATIONS
+## 2.1. Precautions
+## 2.2. Limitations
+# 3. PREREQUISITES
+## 3.1. Personal Protective Equipment, PPE
+## 3.2. Materials
+## 3.3. Special Tools and Equipment
+## 3.4. Other Prerequisites
+# 4. INSTRUCTIONS
+## 4.1. [First instruction section]
+(each subsection gets its own step table)
+# 5. REFERENCES AND COMMITMENT
+## 5.1. Performance References
+## 5.2. Commitments References
+## 5.3. Developmental References
+{alteration_section}
+Every action step must start with an uppercase bold action verb and contain only one action.
+Attachments start with ## Attachment N - [Title] and get a new page automatically."""
 
     history.append({"role": "user", "content": generation_prompt})
 
@@ -718,7 +1088,20 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
             if craft_match:
                 craft = craft_match.group(1).strip()
 
+    if session.facility and not facility:
+        facility = session.facility
+
     doc_number_display = f"{proc_number} Rev. {revision}" if proc_number and revision else proc_number or ""
+
+    logo_bytes = None
+    logo_setting = db.query(DBAppSetting).filter(DBAppSetting.key == "company_logo").first()
+    if logo_setting and logo_setting.value:
+        import base64
+        logo_data = _safe_decrypt(logo_setting.value) or ""
+        if logo_data.startswith("data:image"):
+            b64_part = logo_data.split(",", 1)[1] if "," in logo_data else ""
+            if b64_part:
+                logo_bytes = base64.b64decode(b64_part)
 
     doc = Document()
 
@@ -825,14 +1208,24 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
     for p in first_header.paragraphs:
         p.clear()
 
+    logo_label = "LOGO" if not logo_bytes else ""
     _build_header_table_xml(first_header._element, [
-        [("Facility:", False, 9), ("", False, 9), ("", False, 9)],
+        [("Facility:", False, 9), ("", False, 9), (logo_label, False, 9)],
         [(facility or "—", True, 11), (title, True, 14), ("", False, 9)],
         [("Craft:", False, 9), (title, True, 14), ("", False, 9)],
         [(craft or "—", True, 11), ("", False, 9), ("", False, 9)],
         [("Revalidation Date:", False, 9), (doc_number_display, False, 10), ("", False, 9)],
         [(reval_date or "—", True, 11), (doc_number_display, False, 10), ("", False, 9)],
     ])
+
+    if logo_bytes:
+        try:
+            logo_stream = io.BytesIO(logo_bytes)
+            logo_para = first_header.paragraphs[-1] if first_header.paragraphs else first_header.add_paragraph()
+            logo_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            logo_para.add_run().add_picture(logo_stream, width=Inches(1.0))
+        except Exception:
+            pass
 
     # --- 1. CONTINUATION HEADER (page 2+): compact 1-row table ---
     cont_header = section.header
