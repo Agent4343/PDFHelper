@@ -38,6 +38,7 @@ from routes.agents import router as agents_router
 from routes.drawings import router as drawings_router
 from routes.updater import router as updater_router
 from routes.posters import router as posters_router
+from routes.procedures import router as procedures_router
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -414,3 +415,4 @@ app.include_router(agents_router)
 app.include_router(drawings_router)
 app.include_router(updater_router)
 app.include_router(posters_router)
+app.include_router(procedures_router)

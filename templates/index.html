@@ -581,6 +581,8 @@ padding:8px 16px;z-index:10000;transition:top 0.2s}
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         <span>Doc Updater</span>
       </button>
+      <button onclick="showPage('procedures')" id="nav-procedures" style="border-top:1px solid var(--border)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Procedures</button>
       <button onclick="showPage('posters')" id="nav-posters" style="border-top:1px solid var(--border)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>Posters</button>
       <button onclick="showPage('code')" id="nav-code" style="margin-top:auto;border-top:1px solid var(--border)">
@@ -614,6 +616,7 @@ padding:8px 16px;z-index:10000;transition:top 0.2s}
       <button onclick="showPage('pdftools')" id="tn-pdftools">PDF Tools</button>
       <button onclick="showPage('isointel')" id="tn-isointel">IsoIntel</button>
       <button onclick="showPage('updater')" id="tn-updater">Updater</button>
+      <button onclick="showPage('procedures')" id="tn-procedures">Procedures</button>
       <button onclick="showPage('posters')" id="tn-posters">Posters</button>
       <button onclick="showPage('history')" id="tn-history">History</button>
     </div>
@@ -1114,6 +1117,41 @@ padding:8px 16px;z-index:10000;transition:top 0.2s}
             <h4><span class="step-num">4</span>Highlight &amp; Review</h4>
             <p style="font-size:0.82rem;color:var(--muted);margin-bottom:0.5rem">Select text in the viewer, then click "Review with AI" to get suggestions.</p>
             <div id="upd-review-results"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Procedure Builder page -->
+    <div class="page" id="page-procedures">
+      <h2>Procedure Builder</h2>
+      <div class="card" style="margin-bottom:0.75rem;background:var(--code);border-left:3px solid var(--accent)">
+        <p style="font-size:0.9rem"><strong>What does this do?</strong> An AI agent guides you through writing a procedure step-by-step, asking the right questions and formatting everything to your business template and human performance writing standards.</p>
+      </div>
+      <div class="card" style="margin-bottom:1rem">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+          <input type="text" id="proc-title-input" placeholder="Procedure title (optional)" style="flex:1;min-width:200px;padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--fg)">
+          <select id="proc-source-doc" style="padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--fg)">
+            <option value="">Start fresh</option>
+          </select>
+          <button class="btn btn-primary" onclick="startProcedure()">New Procedure</button>
+        </div>
+      </div>
+      <div id="proc-sessions-list" style="margin-bottom:1rem"></div>
+      <div id="proc-chat-area" style="display:none">
+        <div class="card" style="margin-bottom:0.5rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+            <h3 id="proc-chat-title" style="margin:0">Procedure</h3>
+            <div style="display:flex;gap:0.5rem">
+              <button class="btn" onclick="generateProcedure()" id="proc-generate-btn">Generate Document</button>
+              <button class="btn" onclick="downloadProcedure()" id="proc-download-btn" style="display:none">Download .docx</button>
+              <button class="btn" onclick="closeProcChat()" style="background:var(--border)">Back</button>
+            </div>
+          </div>
+          <div id="proc-messages" style="max-height:400px;overflow-y:auto;margin-bottom:0.75rem;padding:0.5rem;border:1px solid var(--border);border-radius:6px"></div>
+          <div style="display:flex;gap:0.5rem">
+            <input type="text" id="proc-input" placeholder="Answer the agent's questions..." style="flex:1;padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--fg)" onkeydown="if(event.key==='Enter')sendProcMessage()">
+            <button class="btn btn-primary" onclick="sendProcMessage()">Send</button>
           </div>
         </div>
       </div>
@@ -1765,6 +1803,7 @@ function showPage(name){
   if(name==='pdftools') loadDocuments();
   if(name==='isointel') initIsoIntel();
   if(name==='updater') initUpdater();
+  if(name==='procedures'){loadProcSessions();loadProcDocs();}
   if(name==='posters') loadPosterList();
   if(name==='bot') initBot();
   if(name==='code') initCode();
@@ -4146,6 +4185,146 @@ async function runBulkAudit(){
   }catch(e){
     statusEl.innerHTML='<span style="color:var(--red)">'+esc(e.message)+'</span>';
   }
+}
+
+/* ---- Procedure Builder ---- */
+var currentProcId=null;
+function loadProcSessions(){
+  fetch(API+'/procedures',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
+    var el=document.getElementById('proc-sessions-list');
+    if(!d.sessions||!d.sessions.length){el.innerHTML='<p style="color:var(--muted);font-size:0.85rem">No procedures yet. Start one above.</p>';return;}
+    el.innerHTML=d.sessions.map(function(s){
+      return '<div class="card" style="margin-bottom:0.5rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="openProcSession(\''+s.id+'\')"><div><strong>'+esc(s.title)+'</strong><br><span style="font-size:0.75rem;color:var(--muted)">'+s.status+' — '+new Date(s.created_at).toLocaleDateString()+'</span></div><button class="btn" style="font-size:0.75rem;background:var(--red);padding:2px 8px" onclick="event.stopPropagation();deleteProcSession(\''+s.id+'\')">Delete</button></div>';
+    }).join('');
+  }).catch(function(){});
+}
+function loadProcDocs(){
+  fetch(API+'/documents?limit=100',{headers:headers()}).then(function(r){return r.json();}).then(function(d){
+    var sel=document.getElementById('proc-source-doc');
+    sel.innerHTML='<option value="">Start fresh</option>';
+    (d.documents||[]).forEach(function(doc){
+      sel.innerHTML+='<option value="'+doc.id+'">Update: '+esc(doc.filename)+'</option>';
+    });
+  }).catch(function(){});
+}
+async function startProcedure(){
+  var title=document.getElementById('proc-title-input').value.trim();
+  var sourceId=document.getElementById('proc-source-doc').value;
+  try{
+    var r=await fetch(API+'/procedures',{method:'POST',headers:headers(true),body:JSON.stringify({title:title||'New Procedure',source_doc_id:sourceId||null})});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
+    var data=await r.json();
+    openProcSession(data.id);
+    loadProcSessions();
+  }catch(e){toast(e.message,'error');}
+}
+async function openProcSession(id){
+  currentProcId=id;
+  try{
+    var r=await fetch(API+'/procedures/'+id,{headers:headers()});
+    if(!r.ok) throw new Error('Failed to load');
+    var data=await r.json();
+    document.getElementById('proc-chat-title').textContent=data.title;
+    document.getElementById('proc-chat-area').style.display='';
+    document.getElementById('proc-download-btn').style.display=data.status==='complete'?'':'none';
+    var msgs=document.getElementById('proc-messages');
+    msgs.innerHTML=data.messages.map(function(m){
+      return '<div style="margin-bottom:0.5rem;padding:0.5rem;border-radius:6px;background:'+(m.role==='assistant'?'var(--code)':'var(--card)')+'"><strong>'+(m.role==='assistant'?'Agent':'You')+':</strong> '+renderMarkdown(m.content)+'</div>';
+    }).join('');
+    msgs.scrollTop=msgs.scrollHeight;
+  }catch(e){toast(e.message,'error');}
+}
+function closeProcChat(){
+  document.getElementById('proc-chat-area').style.display='none';
+  currentProcId=null;
+}
+async function sendProcMessage(){
+  var inp=document.getElementById('proc-input');
+  var msg=inp.value.trim();
+  if(!msg||!currentProcId) return;
+  inp.value='';
+  var msgs=document.getElementById('proc-messages');
+  msgs.innerHTML+='<div style="margin-bottom:0.5rem;padding:0.5rem;border-radius:6px;background:var(--card)"><strong>You:</strong> '+esc(msg)+'</div>';
+  msgs.innerHTML+='<div id="proc-stream" style="margin-bottom:0.5rem;padding:0.5rem;border-radius:6px;background:var(--code)"><strong>Agent:</strong> <span class="proc-stream-text"></span><span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle"></span></div>';
+  msgs.scrollTop=msgs.scrollHeight;
+  try{
+    var r=await fetch(API+'/procedures/'+currentProcId+'/chat',{method:'POST',headers:headers(true),body:JSON.stringify({message:msg})});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
+    var reader=r.body.getReader();
+    var decoder=new TextDecoder();
+    var buf='',full='';
+    while(true){
+      var chunk=await reader.read();
+      if(chunk.done) break;
+      buf+=decoder.decode(chunk.value,{stream:true});
+      var lines=buf.split('\n');buf=lines.pop();
+      lines.forEach(function(line){
+        if(!line.startsWith('data: '))return;
+        try{
+          var ev=JSON.parse(line.slice(6));
+          if(ev.type==='text'){full+=ev.content;document.querySelector('#proc-stream .proc-stream-text').innerHTML=renderMarkdown(full);}
+        }catch(e){}
+      });
+    }
+    document.getElementById('proc-stream').querySelector('.spinner').remove();
+    msgs.scrollTop=msgs.scrollHeight;
+  }catch(e){
+    var el=document.getElementById('proc-stream');
+    if(el) el.innerHTML='<strong>Agent:</strong> <span style="color:var(--red)">'+esc(e.message)+'</span>';
+  }
+}
+async function generateProcedure(){
+  if(!currentProcId) return;
+  var btn=document.getElementById('proc-generate-btn');
+  btn.disabled=true;btn.textContent='Generating...';
+  var msgs=document.getElementById('proc-messages');
+  msgs.innerHTML+='<div id="proc-gen-stream" style="margin-bottom:0.5rem;padding:0.5rem;border-radius:6px;background:var(--code);border-left:3px solid var(--accent)"><strong>Generated Procedure:</strong><br><span class="proc-gen-text"></span><span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle"></span></div>';
+  msgs.scrollTop=msgs.scrollHeight;
+  try{
+    var r=await fetch(API+'/procedures/'+currentProcId+'/generate',{method:'POST',headers:headers(true)});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
+    var reader=r.body.getReader();
+    var decoder=new TextDecoder();
+    var buf='',full='';
+    while(true){
+      var chunk=await reader.read();
+      if(chunk.done) break;
+      buf+=decoder.decode(chunk.value,{stream:true});
+      var lines=buf.split('\n');buf=lines.pop();
+      lines.forEach(function(line){
+        if(!line.startsWith('data: '))return;
+        try{
+          var ev=JSON.parse(line.slice(6));
+          if(ev.type==='text'){full+=ev.content;document.querySelector('#proc-gen-stream .proc-gen-text').innerHTML=renderMarkdown(full);}
+        }catch(e){}
+      });
+    }
+    document.querySelector('#proc-gen-stream .spinner').remove();
+    document.getElementById('proc-download-btn').style.display='';
+    toast('Procedure generated — click Download to get the Word doc');
+  }catch(e){toast(e.message,'error');}finally{btn.disabled=false;btn.textContent='Generate Document';}
+}
+async function downloadProcedure(){
+  if(!currentProcId) return;
+  try{
+    var r=await fetch(API+'/procedures/'+currentProcId+'/download',{headers:headers()});
+    if(!r.ok) throw new Error('Download failed');
+    var blob=await r.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;
+    a.download=(document.getElementById('proc-chat-title').textContent||'procedure')+'.docx';
+    a.click();
+    URL.revokeObjectURL(url);
+  }catch(e){toast(e.message,'error');}
+}
+async function deleteProcSession(id){
+  if(!confirm('Delete this procedure session?')) return;
+  try{
+    await fetch(API+'/procedures/'+id,{method:'DELETE',headers:headers()});
+    loadProcSessions();
+    if(currentProcId===id) closeProcChat();
+  }catch(e){}
 }
 
 /* ---- Wipe All Data ---- */
