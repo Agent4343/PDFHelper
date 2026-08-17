@@ -480,12 +480,15 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         raise HTTPException(status_code=400, detail="Procedure not yet generated")
 
     from docx import Document
-    from docx.shared import Pt, Inches, Cm, RGBColor
+    from docx.shared import Pt, Emu, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.oxml.ns import qn
     import io
     import re
+
+    NAVY = RGBColor(0x0B, 0x25, 0x45)
+    GREY = RGBColor(0x5B, 0x64, 0x72)
 
     content = _safe_decrypt(session.output_content) or ""
     title = _safe_decrypt(session.title) or "Procedure"
@@ -493,30 +496,71 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
     doc = Document()
 
     style = doc.styles["Normal"]
-    style.font.name = "Arial"
-    style.font.size = Pt(11)
+    style.font.name = "Calibri"
+    style.font.size = Pt(10.5)
     style.paragraph_format.space_after = Pt(6)
 
+    for hs in ["Heading 1", "Heading 2", "Heading 3"]:
+        if hs in doc.styles:
+            h_style = doc.styles[hs]
+            h_style.font.name = "Calibri"
+            h_style.font.color.rgb = NAVY
+            h_style.font.bold = True
+    if "Heading 1" in doc.styles:
+        doc.styles["Heading 1"].font.size = Pt(13.5)
+    if "Heading 2" in doc.styles:
+        doc.styles["Heading 2"].font.size = Pt(12)
+    if "Heading 3" in doc.styles:
+        doc.styles["Heading 3"].font.size = Pt(11)
+
     for section in doc.sections:
-        section.top_margin = Cm(1.27)
-        section.bottom_margin = Cm(1.27)
-        section.left_margin = Cm(2.0)
-        section.right_margin = Cm(2.0)
+        section.top_margin = Emu(635000)
+        section.bottom_margin = Emu(635000)
+        section.left_margin = Emu(698500)
+        section.right_margin = Emu(698500)
+
         header = section.header
         header.is_linked_to_previous = False
         hp = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
-        hp.text = title
-        hp.style = doc.styles["Normal"]
-        hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        run = hp.runs[0] if hp.runs else hp.add_run()
-        run.font.size = Pt(9)
-        run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+        hp.text = ""
+        hp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        run = hp.add_run(title)
+        run.font.name = "Calibri"
+        run.font.size = Pt(8)
+        run.font.color.rgb = GREY
+
+        footer = section.footer
+        footer.is_linked_to_previous = False
+        fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        fp.text = ""
+        fp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        frun = fp.add_run("Page ")
+        frun.font.name = "Calibri"
+        frun.font.size = Pt(8)
+        frun.font.color.rgb = GREY
+        fld_xml = (
+            '<w:fldSimple xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+            ' w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple>'
+        )
+        from lxml import etree
+        fp._element.append(etree.fromstring(fld_xml))
+        frun2 = fp.add_run(" of ")
+        frun2.font.name = "Calibri"
+        frun2.font.size = Pt(8)
+        frun2.font.color.rgb = GREY
+        fld_xml2 = (
+            '<w:fldSimple xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+            ' w:instr=" NUMPAGES "><w:r><w:t>1</w:t></w:r></w:fldSimple>'
+        )
+        fp._element.append(etree.fromstring(fld_xml2))
 
     p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = p.add_run(title)
     run.bold = True
     run.font.size = Pt(16)
+    run.font.name = "Calibri"
+    run.font.color.rgb = NAVY
     doc.add_paragraph()
 
     def _add_warning_box(doc, text):
@@ -531,10 +575,12 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         p = cell.paragraphs[0]
         run = p.add_run("! WARNING: ")
         run.bold = True
+        run.font.name = "Calibri"
         run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
-        run.font.size = Pt(11)
+        run.font.size = Pt(10.5)
         run2 = p.add_run(text)
-        run2.font.size = Pt(11)
+        run2.font.name = "Calibri"
+        run2.font.size = Pt(10.5)
 
     def _add_caution_box(doc, text):
         tbl = doc.add_table(rows=1, cols=1)
@@ -548,10 +594,12 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         p = cell.paragraphs[0]
         run = p.add_run("CAUTION: ")
         run.bold = True
+        run.font.name = "Calibri"
         run.font.color.rgb = RGBColor(0xCC, 0x88, 0x00)
-        run.font.size = Pt(11)
+        run.font.size = Pt(10.5)
         run2 = p.add_run(text)
-        run2.font.size = Pt(11)
+        run2.font.name = "Calibri"
+        run2.font.size = Pt(10.5)
 
     def _add_note_box(doc, text):
         tbl = doc.add_table(rows=1, cols=1)
@@ -565,10 +613,12 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         p = cell.paragraphs[0]
         run = p.add_run("NOTE: ")
         run.bold = True
+        run.font.name = "Calibri"
         run.font.color.rgb = RGBColor(0x00, 0x55, 0xCC)
-        run.font.size = Pt(11)
+        run.font.size = Pt(10.5)
         run2 = p.add_run(text)
-        run2.font.size = Pt(11)
+        run2.font.name = "Calibri"
+        run2.font.size = Pt(10.5)
 
     for line in content.split("\n"):
         line = line.rstrip()
@@ -587,21 +637,18 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
             text = re.sub(r'^NOTE:\s*', '', line.strip(), flags=re.IGNORECASE)
             _add_note_box(doc, text)
         elif line.startswith("# "):
-            h = doc.add_heading(line[2:], level=1)
-            for run in h.runs:
-                run.font.name = "Arial"
+            doc.add_heading(line[2:], level=1)
         elif line.startswith("## "):
-            h = doc.add_heading(line[3:], level=2)
-            for run in h.runs:
-                run.font.name = "Arial"
+            doc.add_heading(line[3:], level=2)
         elif line.startswith("### "):
-            h = doc.add_heading(line[4:], level=3)
-            for run in h.runs:
-                run.font.name = "Arial"
+            doc.add_heading(line[4:], level=3)
         elif line.strip().startswith("**") and line.strip().endswith("**"):
             p = doc.add_paragraph()
             run = p.add_run(line.strip().strip("*"))
             run.bold = True
+            run.font.name = "Calibri"
+            run.font.color.rgb = NAVY
+            run.font.size = Pt(12)
         elif line.strip().startswith("- ") or line.strip().startswith("• "):
             text = line.strip()[2:]
             doc.add_paragraph(text, style="List Bullet")
@@ -624,7 +671,8 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
                     for p in cell.paragraphs:
                         for run in p.runs:
                             run.bold = True
-                            run.font.size = Pt(10)
+                            run.font.size = Pt(9.5)
+                            run.font.name = "Calibri"
                 doc._proc_table_active = True
                 doc._proc_table_ref = tbl
             else:
@@ -634,7 +682,8 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
                         row.cells[i].text = val
                         for p in row.cells[i].paragraphs:
                             for run in p.runs:
-                                run.font.size = Pt(10)
+                                run.font.size = Pt(9.5)
+                                run.font.name = "Calibri"
         else:
             if hasattr(doc, '_proc_table_active') and doc._proc_table_active:
                 doc._proc_table_active = False
