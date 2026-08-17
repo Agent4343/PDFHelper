@@ -273,17 +273,28 @@ class DBProcedureSession(Base):
     user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String, nullable=True)
     source_doc_id = Column(String, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
-    status = Column(String, nullable=False, default="gathering")  # gathering, drafting, complete
-    gathered_data = Column(Text, nullable=True)     # encrypted JSON — answers collected from user
-    style_config = Column(Text, nullable=True)      # encrypted JSON — writing style rules
-    template_config = Column(Text, nullable=True)   # encrypted JSON — business template structure
-    output_content = Column(Text, nullable=True)    # encrypted — final generated procedure content
+    facility = Column(String, nullable=True)
+    category = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="gathering")
+    gathered_data = Column(Text, nullable=True)
+    style_config = Column(Text, nullable=True)
+    template_config = Column(Text, nullable=True)
+    output_content = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False, index=True)
 
     messages = relationship("DBProcedureMessage", back_populates="session",
                             order_by="DBProcedureMessage.created_at",
                             cascade="all, delete-orphan")
+
+
+class DBAppSetting(Base):
+    """Key-value application settings (logo, defaults, etc.)."""
+    __tablename__ = "app_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, nullable=False)
 
 
 class DBProcedureMessage(Base):
