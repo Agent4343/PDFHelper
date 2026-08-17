@@ -1129,12 +1129,20 @@ padding:8px 16px;z-index:10000;transition:top 0.2s}
         <p style="font-size:0.9rem"><strong>What does this do?</strong> An AI agent guides you through writing a procedure step-by-step, asking the right questions and formatting everything to your business template and human performance writing standards.</p>
       </div>
       <div class="card" style="margin-bottom:1rem">
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.5rem">
           <input type="text" id="proc-title-input" placeholder="Procedure title (optional)" style="flex:1;min-width:200px;padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--fg)">
-          <select id="proc-source-doc" style="padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--fg)">
-            <option value="">Start fresh</option>
+          <button class="btn btn-primary" onclick="startProcedure('new')">New Procedure</button>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+          <select id="proc-source-doc" style="padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--fg);flex:1;min-width:180px">
+            <option value="">Select existing document...</option>
           </select>
-          <button class="btn btn-primary" onclick="startProcedure()">New Procedure</button>
+          <button class="btn" onclick="startProcedure('update')" style="background:var(--accent);color:#fff">Update from Library</button>
+          <span style="color:var(--muted);font-size:0.85rem">or</span>
+          <label class="btn" style="background:var(--accent);color:#fff;cursor:pointer;margin:0">
+            Upload .docx
+            <input type="file" id="proc-upload-file" accept=".docx" style="display:none" onchange="uploadProcedureDoc(this)">
+          </label>
         </div>
       </div>
       <div id="proc-sessions-list" style="margin-bottom:1rem"></div>
@@ -4207,16 +4215,35 @@ function loadProcDocs(){
     });
   }).catch(function(){});
 }
-async function startProcedure(){
+async function startProcedure(mode){
   var title=document.getElementById('proc-title-input').value.trim();
   var sourceId=document.getElementById('proc-source-doc').value;
+  if(mode==='update'&&!sourceId){toast('Select a document to update','error');return;}
   try{
-    var r=await fetch(API+'/procedures',{method:'POST',headers:headers(true),body:JSON.stringify({title:title||'New Procedure',source_doc_id:sourceId||null})});
+    var body={title:title||(mode==='update'?'Update Procedure':'New Procedure'),mode:mode||'new'};
+    if(sourceId&&mode==='update') body.source_doc_id=sourceId;
+    var r=await fetch(API+'/procedures',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
     var data=await r.json();
     openProcSession(data.id);
     loadProcSessions();
   }catch(e){toast(e.message,'error');}
+}
+async function uploadProcedureDoc(input){
+  var file=input.files[0];
+  if(!file)return;
+  if(!file.name.toLowerCase().endsWith('.docx')){toast('Only .docx files are supported','error');input.value='';return;}
+  var form=new FormData();
+  form.append('file',file);
+  try{
+    var r=await fetch(API+'/procedures/upload',{method:'POST',headers:{'Authorization':'Bearer '+localStorage.getItem('token'),'X-API-Key':localStorage.getItem('apiKey')},body:form});
+    if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Upload failed');}
+    var data=await r.json();
+    toast('Procedure loaded for review','success');
+    openProcSession(data.id);
+    loadProcSessions();
+  }catch(e){toast(e.message,'error');}
+  input.value='';
 }
 async function openProcSession(id){
   currentProcId=id;
