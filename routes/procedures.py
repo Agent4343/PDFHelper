@@ -674,7 +674,7 @@ Numbered list of specific improvements."""
 
     response = client.messages.create(
         model=CHAT_MODEL,
-        max_tokens=CHAT_MAX_TOKENS,
+        max_tokens=4096,
         messages=[{"role": "user", "content": analysis_prompt}],
     )
 
@@ -891,12 +891,14 @@ async def procedure_chat(session_id: str, request: Request, db=Depends(get_db)):
 
     client = Anthropic()
 
+    chat_max = min(CHAT_MAX_TOKENS, 4096)
+
     def generate():
         full_response = []
         with client.messages.stream(
             model=CHAT_MODEL,
-            max_tokens=CHAT_MAX_TOKENS,
-            system=system_prompt,
+            max_tokens=chat_max,
+            system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
             messages=history,
         ) as stream:
             for text in stream.text_stream:
@@ -1001,15 +1003,17 @@ Attachments start with ## Attachment N - [Title] and get a new page automaticall
 
     client = Anthropic()
 
+    gen_system = PROCEDURE_SYSTEM_PROMPT.format(
+        style_config=style_config,
+        template_config=template_config,
+    )
+
     def generate():
         full_response = []
         with client.messages.stream(
             model=CHAT_MODEL,
             max_tokens=CHAT_MAX_TOKENS,
-            system=PROCEDURE_SYSTEM_PROMPT.format(
-                style_config=style_config,
-                template_config=template_config,
-            ),
+            system=[{"type": "text", "text": gen_system, "cache_control": {"type": "ephemeral"}}],
             messages=history,
         ) as stream:
             for text in stream.text_stream:
