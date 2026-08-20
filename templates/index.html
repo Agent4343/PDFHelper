@@ -1912,7 +1912,7 @@ dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover
 dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
 dz.addEventListener('drop',e=>{
   e.preventDefault();dz.classList.remove('dragover');
-  var allowedExts=['.pdf','.docx','.doc','.js','.html','.htm','.css','.md','.txt','.json','.xml','.yaml','.yml','.py','.ts','.tsx','.jsx','.sql','.sh','.toml','.ini','.cfg','.jpg','.jpeg','.png','.tiff','.tif','.bmp','.webp','.xlsx','.xls','.csv'];
+  var allowedExts=['.pdf','.docx','.doc','.pptx','.js','.html','.htm','.css','.md','.txt','.json','.xml','.yaml','.yml','.py','.ts','.tsx','.jsx','.sql','.sh','.toml','.ini','.cfg','.jpg','.jpeg','.png','.tiff','.tif','.bmp','.webp','.xlsx','.xls','.csv'];
   selectedFiles=[...e.dataTransfer.files].filter(f=>allowedExts.some(ext=>f.name.toLowerCase().endsWith(ext)));
   showFileNames();
 });
