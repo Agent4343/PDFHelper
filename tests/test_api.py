@@ -102,12 +102,12 @@ async def test_setup_creates_admin(client):
 
 @pytest.mark.anyio
 async def test_setup_already_done(client, auth_headers):
-    """POST /setup when an admin already exists returns 403."""
+    """POST /setup when an admin already exists returns 404 (hidden)."""
     r = await client.post(
         "/setup",
         json={"username": "anotheradmin", "password": "password1234"},
     )
-    assert r.status_code == 403
+    assert r.status_code == 404
 
 
 @pytest.mark.anyio
