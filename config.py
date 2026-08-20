@@ -25,7 +25,11 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 AUTO_CLEANUP_HOURS = int(os.getenv("AUTO_CLEANUP_HOURS", "72"))
 
-JWT_SECRET = os.getenv("JWT_SECRET", "").strip() or secrets.token_hex(32)
+_jwt_env = os.getenv("JWT_SECRET", "").strip()
+if not _jwt_env and IS_PRODUCTION:
+    import warnings
+    warnings.warn("JWT_SECRET not set — sessions will not survive restarts. Set it in Railway env vars.")
+JWT_SECRET = _jwt_env or secrets.token_hex(32)
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "24"))
 ALLOW_REGISTRATION = os.getenv("ALLOW_REGISTRATION", "false").lower() == "true"
