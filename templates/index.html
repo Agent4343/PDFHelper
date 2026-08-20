@@ -67,6 +67,34 @@ transition:all .15s}
 .btn-primary:hover{background:#2563eb}
 .btn-danger{background:var(--red);color:#fff}
 .btn-danger:hover{background:#dc2626}
+/* Landing / Login page */
+.landing-page{display:flex;min-height:100vh;min-height:100dvh}
+.landing-left{flex:1;display:flex;align-items:center;justify-content:center;padding:2rem}
+.landing-right{flex:1;background:var(--card);display:flex;align-items:center;justify-content:center;padding:2rem;border-left:1px solid var(--border)}
+.landing-hero{max-width:480px}
+.landing-hero h1{font-size:2.2rem;font-weight:800;margin-bottom:0.5rem}
+.landing-hero h1 span{color:var(--accent)}
+.landing-hero .tagline{color:var(--muted);font-size:1.1rem;margin-bottom:2rem;line-height:1.5}
+.landing-features{list-style:none;padding:0}
+.landing-features li{display:flex;align-items:flex-start;gap:0.75rem;margin-bottom:1.25rem;font-size:0.95rem}
+.landing-features li .feat-icon{flex-shrink:0;width:36px;height:36px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.1rem}
+.landing-form{max-width:380px;width:100%}
+.landing-form h2{font-size:1.5rem;font-weight:700;margin-bottom:0.25rem}
+.landing-form .form-subtitle{color:var(--muted);font-size:0.9rem;margin-bottom:1.5rem}
+.landing-form .field{margin-bottom:1rem}
+.landing-form .field label{font-size:0.85rem;font-weight:600;margin-bottom:0.4rem}
+.landing-form .field input{padding:0.7rem 0.85rem;font-size:0.95rem}
+.landing-form .btn-primary{width:100%;padding:0.75rem;font-size:1rem;margin-top:0.5rem}
+.landing-form .form-footer{text-align:center;margin-top:1rem;font-size:0.85rem;color:var(--muted)}
+.landing-form .form-footer a{color:var(--accent);cursor:pointer;text-decoration:none;font-weight:600}
+.landing-form .form-status{margin-top:0.75rem;font-size:0.85rem;text-align:center}
+.landing-form .form-status.error{color:var(--red)}
+.landing-form .form-status.success{color:var(--green)}
+@media(max-width:800px){
+  .landing-page{flex-direction:column}
+  .landing-right{border-left:none;border-top:1px solid var(--border)}
+  .landing-hero h1{font-size:1.6rem}
+}
 .btn-secondary{background:var(--border);color:var(--text)}
 .btn-secondary:hover{background:#475569}
 .btn:disabled{opacity:0.5;cursor:not-allowed}
@@ -536,7 +564,65 @@ padding:8px 16px;z-index:10000;transition:top 0.2s}
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
-<div class="app">
+
+<!-- Landing / Login Page -->
+<div class="landing-page" id="landing-page">
+  <div class="landing-left">
+    <div class="landing-hero">
+      <h1>PDF<span>Helper</span></h1>
+      <p class="tagline">AI-powered document management for upstream oil &amp; gas operations. Upload, search, analyze, and build compliant procedures — all in one place.</p>
+      <ul class="landing-features">
+        <li>
+          <div class="feat-icon">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div><strong>Smart Document Upload</strong><br><span style="color:var(--muted);font-size:0.88rem">Upload PDF, DOCX, PPTX, images, spreadsheets and more with automatic text extraction and OCR.</span></div>
+        </li>
+        <li>
+          <div class="feat-icon">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <div><strong>AI-Powered Search</strong><br><span style="color:var(--muted);font-size:0.88rem">Search across all your documents with keyword and AI-driven semantic search.</span></div>
+        </li>
+        <li>
+          <div class="feat-icon">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </div>
+          <div><strong>Procedure Builder</strong><br><span style="color:var(--muted);font-size:0.88rem">Build compliant procedures guided by AI, following PPA AP-907-005 and OIMS 6.1 standards.</span></div>
+        </li>
+        <li>
+          <div class="feat-icon">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
+          </div>
+          <div><strong>AI Chat &amp; Agents</strong><br><span style="color:var(--muted);font-size:0.88rem">Chat with your documents, generate reports, and run multi-step AI agent workflows.</span></div>
+        </li>
+      </ul>
+    </div>
+  </div>
+  <div class="landing-right">
+    <div class="landing-form" id="landing-form">
+      <h2 id="landing-form-title">Sign In</h2>
+      <p class="form-subtitle" id="landing-form-subtitle">Enter your credentials to access PDFHelper.</p>
+      <div class="field">
+        <label for="landing-username">Username</label>
+        <input type="text" id="landing-username" placeholder="Enter your username" autocomplete="username">
+      </div>
+      <div class="field">
+        <label for="landing-password">Password</label>
+        <input type="password" id="landing-password" placeholder="Enter your password" autocomplete="current-password">
+      </div>
+      <div class="field" id="landing-confirm-field" style="display:none">
+        <label for="landing-password2">Confirm Password</label>
+        <input type="password" id="landing-password2" placeholder="Re-enter password" autocomplete="new-password">
+      </div>
+      <button class="btn btn-primary" id="landing-submit-btn" onclick="landingSubmit()">Sign In</button>
+      <div class="form-status" id="landing-status"></div>
+      <div class="form-footer" id="landing-footer"></div>
+    </div>
+  </div>
+</div>
+
+<div class="app" id="app-container" style="display:none">
 <button class="hamburger" id="hamburger-btn" onclick="toggleMobileSidebar()">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
 </button>
@@ -1561,6 +1647,84 @@ let authToken = null;
   });}
 })();
 
+/* Landing page */
+var landingMode='login';
+function showLanding(mode){
+  landingMode=mode||'login';
+  var lp=document.getElementById('landing-page');
+  lp.style.display='flex';
+  document.getElementById('app-container').style.display='none';
+  var title=document.getElementById('landing-form-title');
+  var subtitle=document.getElementById('landing-form-subtitle');
+  var btn=document.getElementById('landing-submit-btn');
+  var confirm=document.getElementById('landing-confirm-field');
+  var footer=document.getElementById('landing-footer');
+  var status=document.getElementById('landing-status');
+  status.textContent='';status.className='form-status';
+  if(mode==='setup'){
+    title.textContent='Create Admin Account';
+    subtitle.textContent='Set up your admin account to get started.';
+    btn.textContent='Create Account';
+    confirm.style.display='';
+    footer.innerHTML='';
+  } else {
+    title.textContent='Sign In';
+    subtitle.textContent='Enter your credentials to access PDFHelper.';
+    btn.textContent='Sign In';
+    confirm.style.display='none';
+    footer.innerHTML='';
+  }
+}
+function enterApp(username){
+  document.getElementById('landing-page').style.display='none';
+  document.getElementById('app-container').style.display='';
+  document.getElementById('auth-bar').style.display='';
+  showLoggedIn(username);
+  apiConnected=true;
+}
+async function landingSubmit(){
+  var u=document.getElementById('landing-username').value.trim();
+  var p=document.getElementById('landing-password').value;
+  var status=document.getElementById('landing-status');
+  if(!u||!p){status.textContent='Enter a username and password';status.className='form-status error';return;}
+  if(landingMode==='setup'){
+    var p2=document.getElementById('landing-password2').value;
+    if(u.length<3){status.textContent='Username must be at least 3 characters';status.className='form-status error';return;}
+    if(p.length<8){status.textContent='Password must be at least 8 characters';status.className='form-status error';return;}
+    if(p!==p2){status.textContent='Passwords do not match';status.className='form-status error';return;}
+    status.textContent='Creating account...';status.className='form-status';
+    try{
+      var r=await fetch(API+'/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+      if(r.ok){
+        var d=await r.json();
+        authToken=d.token;
+        localStorage.setItem('pdfhelper_jwt',d.token);
+        localStorage.setItem('pdfhelper_username',d.username);
+        enterApp(d.username);
+        toast('Admin account created — welcome, '+d.username+'!');
+      } else {
+        var d=await r.json().catch(function(){return{};});
+        status.textContent=detailStr(d.detail)||'Setup failed';status.className='form-status error';
+      }
+    }catch(e){status.textContent='Cannot reach server';status.className='form-status error';}
+  } else {
+    status.textContent='Signing in...';status.className='form-status';
+    try{
+      var r=await fetch(API+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+      if(r.ok){
+        var d=await r.json();
+        authToken=d.token;
+        localStorage.setItem('pdfhelper_jwt',d.token);
+        localStorage.setItem('pdfhelper_username',d.username);
+        enterApp(d.username);
+        toast('Signed in as '+d.username);
+      } else {
+        var d=await r.json().catch(function(){return{};});
+        status.textContent=detailStr(d.detail)||'Invalid username or password';status.className='form-status error';
+      }
+    }catch(e){status.textContent='Cannot reach server';status.className='form-status error';}
+  }
+}
 function getKey(){ return document.getElementById('apikey').value.trim(); }
 function saveKey(){ const k=getKey(); if(k) localStorage.setItem('pdfhelper_apikey',k); }
 function showApiKeyMode(){
@@ -1674,103 +1838,62 @@ function doLogout(){
   localStorage.removeItem('pdfhelper_apikey');
   var wb=document.getElementById('wipe-btn');
   if(wb) wb.style.display='none';
-  showLoginMode();
-  setAuthStatus('Logged out','disconnected');
+  showLanding('login');
   toast('Logged out');
 }
 async function loadKey(){
-  var bar=document.getElementById('auth-bar');
   // Check if first-run setup is needed
   try{
     var sr=await fetch(API+'/setup-needed');
     if(sr.ok){
       var sd=await sr.json();
       if(sd.setup_needed){
-        document.getElementById('setup-overlay').style.display='flex';
+        showLanding('setup');
         return;
       }
     }
   }catch(e){}
-  try{
-    var controller=new AbortController();
-    var timer=setTimeout(function(){controller.abort();},8000);
-    var hr=await fetch(API+'/health',{signal:controller.signal});
-    clearTimeout(timer);
-    if(hr.ok){
-      var hd=await hr.json();
-      if(!hd.api_key_required){
-        // No API key needed — but if a user account exists, validate the saved JWT
-        var savedJwt=localStorage.getItem('pdfhelper_jwt');
-        if(savedJwt){
-          try{
-            var mr=await fetch(API+'/me',{headers:{'Authorization':'Bearer '+savedJwt}});
-            if(mr.ok){
-              var md=await mr.json();
-              authToken=savedJwt;
-              bar.style.display='';
-              showLoggedIn(md.username||localStorage.getItem('pdfhelper_username')||'user');
-              apiConnected=true;
-              return;
-            }
-          }catch(e){}
-          // JWT is invalid/expired — clear it
-          localStorage.removeItem('pdfhelper_jwt');
-          localStorage.removeItem('pdfhelper_username');
-        }
-        // Check if users exist — if so, show login form
-        if(hd.has_users){
-          bar.style.display='';
-          showLoginMode();
-          return;
-        }
-        apiConnected=true;
-        return;
-      }
-    }
-  }catch(e){}
-  // Auth IS required — show the bar
-  bar.style.display='';
   // Try saved JWT first
   var savedJwt=localStorage.getItem('pdfhelper_jwt');
   if(savedJwt){
     try{
-      var controller2=new AbortController();
-      var timer2=setTimeout(function(){controller2.abort();},8000);
-      var r=await fetch(API+'/me',{headers:{'Authorization':'Bearer '+savedJwt},signal:controller2.signal});
-      clearTimeout(timer2);
+      var controller=new AbortController();
+      var timer=setTimeout(function(){controller.abort();},8000);
+      var r=await fetch(API+'/me',{headers:{'Authorization':'Bearer '+savedJwt},signal:controller.signal});
+      clearTimeout(timer);
       if(r.ok){
         var d=await r.json();
         authToken=savedJwt;
-        apiConnected=true;
-        showLoggedIn(d.username||'user');
+        enterApp(d.username||localStorage.getItem('pdfhelper_username')||'user');
         return;
       }
-      localStorage.removeItem('pdfhelper_jwt');
-      localStorage.removeItem('pdfhelper_username');
     }catch(e){}
+    localStorage.removeItem('pdfhelper_jwt');
+    localStorage.removeItem('pdfhelper_username');
   }
   // Try saved API key
   var savedKey=localStorage.getItem('pdfhelper_apikey');
   if(savedKey){
-    document.getElementById('apikey').value=savedKey;
-    showApiKeyMode();
     try{
-      var controller3=new AbortController();
-      var timer3=setTimeout(function(){controller3.abort();},8000);
-      var r2=await fetch(API+'/verify-key',{headers:{'X-API-Key':savedKey},signal:controller3.signal});
-      clearTimeout(timer3);
+      var controller2=new AbortController();
+      var timer2=setTimeout(function(){controller2.abort();},8000);
+      var r2=await fetch(API+'/verify-key',{headers:{'X-API-Key':savedKey},signal:controller2.signal});
+      clearTimeout(timer2);
       if(r2.ok){
+        document.getElementById('apikey').value=savedKey;
+        document.getElementById('landing-page').style.display='none';
+        document.getElementById('app-container').style.display='';
+        document.getElementById('auth-bar').style.display='';
+        showApiKeyMode();
         apiConnected=true;
         setApiStatus('Connected','connected');
         return;
       }
-      localStorage.removeItem('pdfhelper_apikey');
-      document.getElementById('apikey').value='';
-      setApiStatus('Saved API key expired — enter a new one','disconnected');
-    }catch(e){
-      setApiStatus('Cannot reach server — retrying...','disconnected');
-    }
+    }catch(e){}
+    localStorage.removeItem('pdfhelper_apikey');
   }
+  // No valid auth — show landing page
+  showLanding('login');
 }
 function headers(json){
   const h = {};
@@ -2367,6 +2490,12 @@ function esc(s){if(!s)return'';const d=document.createElement('div');d.textConte
 
 /* ---- Theme initialization ---- */
 (function(){var t=localStorage.getItem('pdfhelper-theme');if(t==='light'){document.documentElement.setAttribute('data-theme','light');}updateThemeButton(t||'dark');})();
+
+/* ---- Landing page Enter key ---- */
+['landing-username','landing-password','landing-password2'].forEach(function(id){
+  var el=document.getElementById(id);
+  if(el) el.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();landingSubmit();}});
+});
 
 /* ---- Load saved API key on startup ---- */
 loadKey().then(function(){
