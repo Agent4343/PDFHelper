@@ -636,13 +636,32 @@ async def attach_file_to_procedure(
             extracted = "\n".join(pages)
         except Exception:
             raise HTTPException(status_code=400, detail="Failed to parse PDF file")
+    elif lower.endswith(".pptx"):
+        try:
+            from pptx import Presentation
+            import io as _io
+            prs = Presentation(_io.BytesIO(file_bytes))
+            slides = []
+            for i, slide in enumerate(prs.slides, 1):
+                texts = []
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        texts.append(shape.text_frame.text)
+                    if shape.has_table:
+                        for row in shape.table.rows:
+                            row_text = "\t".join(cell.text for cell in row.cells)
+                            texts.append(row_text)
+                slides.append(f"--- Slide {i} ---\n" + "\n".join(texts))
+            extracted = "\n\n".join(slides)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Failed to parse .pptx file")
     elif lower.endswith(".txt") or lower.endswith(".csv"):
         try:
             extracted = file_bytes.decode("utf-8", errors="replace")
         except Exception:
             raise HTTPException(status_code=400, detail="Failed to read text file")
     else:
-        raise HTTPException(status_code=400, detail="Supported formats: .docx, .pdf, .txt, .csv")
+        raise HTTPException(status_code=400, detail="Supported formats: .docx, .pdf, .pptx, .txt, .csv")
 
     truncated = extracted[:10000]
     now = datetime.now(timezone.utc)
