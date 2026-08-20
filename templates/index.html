@@ -1215,7 +1215,7 @@ padding:8px 16px;z-index:10000;transition:top 0.2s}
             <input type="text" id="proc-input" placeholder="Answer the agent's questions..." style="flex:1;padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text)" onkeydown="if(event.key==='Enter')sendProcMessage()">
             <label class="btn" style="cursor:pointer;font-size:0.82rem;padding:0.4rem 0.6rem;background:var(--card);border:1px solid var(--border)" title="Attach reference file">
               +File
-              <input type="file" accept=".pdf,.docx,.txt,.csv" style="display:none" onchange="attachProcFile(this)">
+              <input type="file" accept=".pdf,.docx,.pptx,.txt,.csv" style="display:none" onchange="attachProcFile(this)">
             </label>
             <button class="btn btn-primary" onclick="sendProcMessage()">Send</button>
           </div>
