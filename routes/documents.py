@@ -66,6 +66,7 @@ from helpers import (
     _extract_text_file,
     _extract_word_text,
     _extract_spreadsheet_text,
+    _extract_presentation_text,
     _decrypt_and_load,
     _extract_image_base64,
     _detect_image_media_type,
@@ -112,6 +113,8 @@ async def upload_pdfs(
             pages = _extract_spreadsheet_text(raw_content, clean_name)
         elif file_type == "word":
             pages = _extract_word_text(raw_content)
+        elif file_type == "presentation":
+            pages = _extract_presentation_text(raw_content)
         elif file_type == "text":
             pages = _extract_text_file(raw_content, clean_name)
         elif file_type == "image":

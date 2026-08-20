@@ -24,6 +24,7 @@ PDF_MAGIC_BYTES = b"%PDF-"
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"}
 ALLOWED_SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".csv"}
 ALLOWED_WORD_EXTENSIONS = {".docx", ".doc"}
+ALLOWED_PRESENTATION_EXTENSIONS = {".pptx"}
 ALLOWED_TEXT_EXTENSIONS = {
     ".js", ".html", ".htm", ".css", ".md", ".txt", ".json", ".xml",
     ".yaml", ".yml", ".py", ".ts", ".tsx", ".jsx", ".sql", ".sh",
@@ -79,6 +80,10 @@ def _is_spreadsheet_file(filename: str) -> bool:
 
 def _is_word_file(filename: str) -> bool:
     return any(filename.lower().endswith(ext) for ext in ALLOWED_WORD_EXTENSIONS)
+
+
+def _is_presentation_file(filename: str) -> bool:
+    return any(filename.lower().endswith(ext) for ext in ALLOWED_PRESENTATION_EXTENSIONS)
 
 
 def _is_text_file(filename: str) -> bool:
@@ -180,6 +185,32 @@ def _extract_word_text(content: bytes) -> list[dict]:
         pages.append({"page": len(pages) + 1, "text": chunk})
 
     return pages
+
+
+def _extract_presentation_text(content: bytes) -> list[dict]:
+    from pptx import Presentation
+
+    try:
+        prs = Presentation(io.BytesIO(content))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read PowerPoint file. Only .pptx format is supported.")
+
+    pages = []
+    for i, slide in enumerate(prs.slides, 1):
+        texts = []
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                texts.append(shape.text_frame.text)
+            if shape.has_table:
+                rows = []
+                for row in shape.table.rows:
+                    row_text = " | ".join(cell.text for cell in row.cells)
+                    rows.append(row_text)
+                if rows:
+                    texts.append("[TABLE]\n" + "\n".join(rows) + "\n[/TABLE]")
+        pages.append({"page": i, "text": "\n".join(texts) if texts else "(Empty slide)"})
+
+    return pages or [{"page": 1, "text": "(Empty presentation)"}]
 
 
 def _extract_spreadsheet_text(content: bytes, filename: str) -> list[dict]:
@@ -295,9 +326,10 @@ def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, str]:
     is_image = _is_image_file(clean_name)
     is_spreadsheet = _is_spreadsheet_file(clean_name)
     is_word = _is_word_file(clean_name)
+    is_presentation = _is_presentation_file(clean_name)
     is_text = _is_text_file(clean_name)
 
-    if not clean_name.lower().endswith(".pdf") and not is_image and not is_spreadsheet and not is_word and not is_text:
+    if not clean_name.lower().endswith(".pdf") and not is_image and not is_spreadsheet and not is_word and not is_presentation and not is_text:
         raise HTTPException(status_code=400,
                             detail=f"Unsupported file type: {clean_name}")
 
@@ -311,6 +343,8 @@ def validate_upload(file: UploadFile, content: bytes) -> tuple[str, bytes, str]:
         return clean_name, content, "spreadsheet"
     elif is_word:
         return clean_name, content, "word"
+    elif is_presentation:
+        return clean_name, content, "presentation"
     elif is_text:
         return clean_name, content, "text"
     elif is_image:
