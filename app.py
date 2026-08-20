@@ -274,7 +274,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return response
 
 
-app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
+_rate_limit = 10000 if ENVIRONMENT == "development" else 60
+app.add_middleware(RateLimitMiddleware, max_requests=_rate_limit, window_seconds=60)
 
 # ---------------------------------------------------------------------------
 # Root UI
