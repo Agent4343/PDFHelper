@@ -734,9 +734,14 @@ Check these categories:
 ## Recommendations
 Numbered list of specific improvements."""
 
+    compliance_system = (
+        "You are a compliance auditor for upstream oil and gas procedures. "
+        "You check against PPA AP-907-005, OIMS 6.1, and CTE Playbook Rev. 9 standards."
+    )
     response = client.messages.create(
         model=CHAT_MODEL,
         max_tokens=4096,
+        system=[{"type": "text", "text": compliance_system, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": analysis_prompt}],
     )
 
@@ -881,28 +886,31 @@ async def procedure_chat(session_id: str, request: Request, db=Depends(get_db)):
     if session.gathered_data:
         gathered = _safe_decrypt(session.gathered_data) or ""
         if gathered:
-            source_context = f"\n\n--- EXISTING PROCEDURE (to update/reference) ---\n{gathered[:12000]}\n--- END ---"
+            source_context = f"--- EXISTING PROCEDURE (to update/reference) ---\n{gathered[:12000]}\n--- END ---"
     elif session.source_doc_id:
         doc = db.query(DBDocument).filter(DBDocument.id == session.source_doc_id).first()
         if doc:
             pages = _load_stored_text(doc)
             if pages:
                 text = _stored_text_to_structured(pages)
-                source_context = f"\n\n--- EXISTING PROCEDURE (to update) ---\n{text[:12000]}\n--- END ---"
+                source_context = f"--- EXISTING PROCEDURE (to update) ---\n{text[:12000]}\n--- END ---"
 
     system_prompt = PROCEDURE_SYSTEM_PROMPT.format(
         style_config=style_config,
         template_config=template_config,
     )
-    if source_context:
-        system_prompt += source_context
 
-    history = []
+    all_messages = []
     for m in session.messages:
         content = _safe_decrypt(m.content) or ""
         if not content:
             continue
-        history.append({"role": m.role, "content": content})
+        all_messages.append({"role": m.role, "content": content})
+
+    history = all_messages[-20:] if len(all_messages) > 20 else all_messages
+
+    if source_context and history and history[0]["role"] == "assistant":
+        history.insert(0, {"role": "user", "content": source_context})
 
     client = Anthropic()
 
@@ -955,66 +963,32 @@ async def generate_procedure(session_id: str, request: Request, db=Depends(get_d
     if session.template_config:
         template_config = f"Template structure:\n{_safe_decrypt(session.template_config) or ''}"
 
-    history = []
+    all_messages = []
     for m in session.messages:
         content = _safe_decrypt(m.content) or ""
         if not content:
             continue
-        history.append({"role": m.role, "content": content})
+        all_messages.append({"role": m.role, "content": content})
+
+    history = all_messages[-30:] if len(all_messages) > 30 else all_messages
 
     is_update = bool(session.gathered_data or session.source_doc_id)
     alteration_section = ""
     if is_update:
-        alteration_section = """
-If this is an update to an existing procedure, include a "Summary of Alterations" section at the end listing what changed:
-## Summary of Alterations
-| Rev | Date | Description of Change | Author |
-| --- | --- | --- | --- |
-(List each change made in this revision)
-"""
+        alteration_section = (
+            '\nInclude a "Summary of Alterations" section at the end:\n'
+            "## Summary of Alterations\n"
+            "| Rev | Date | Description of Change | Author |\n"
+        )
 
-    generation_prompt = f"""Based on all the information gathered in this conversation, generate the complete procedure document now.
-
-OUTPUT FORMAT RULES:
-- Use # for main sections (e.g., # 1. PURPOSE AND SCOPE)
-- Use ## for subsections (e.g., ## 4.1. Equipment Lineup)
-- Use ### for sub-subsections
-- Action verbs in UPPERCASE: OPEN, CLOSE, VERIFY, CHECK, RECORD, PERFORM, etc.
-- Conditional terms in UPPERCASE: IF, THEN, WHEN, AND, OR, NOT, WHILE
-- Component positions in UPPERCASE: OPEN, CLOSED, ON, OFF, AUTO
-- Component names in Title Case: Amine Discharge Valve
-- Warnings as: WARNING: [text]
-- Cautions as: CAUTION: [text]
-- Notes as: NOTE: [text]
-- Place warnings/cautions/notes BEFORE the step they apply to
-- Tables as markdown tables with | pipes |
-- Action step tables with these exact 4 columns:
-| Step | Action / Remarks | Who | Check |
-| --- | --- | --- | --- |
-| 1 | OPEN inlet valve XX-XXX-001 | Ops Tech | ☐ |
-
-Use these EXACT section headings:
-# 1. PURPOSE AND SCOPE
-## 1.1. Purpose
-## 1.2. Scope
-# 2. PRECAUTIONS AND LIMITATIONS
-## 2.1. Precautions
-## 2.2. Limitations
-# 3. PREREQUISITES
-## 3.1. Personal Protective Equipment, PPE
-## 3.2. Materials
-## 3.3. Special Tools and Equipment
-## 3.4. Other Prerequisites
-# 4. INSTRUCTIONS
-## 4.1. [First instruction section]
-(each subsection gets its own step table)
-# 5. REFERENCES AND COMMITMENT
-## 5.1. Performance References
-## 5.2. Commitments References
-## 5.3. Developmental References
-{alteration_section}
-Every action step must start with an uppercase bold action verb and contain only one action.
-Attachments start with ## Attachment N - [Title] and get a new page automatically."""
+    generation_prompt = (
+        "Based on all the information gathered in this conversation, "
+        "generate the complete procedure document now. "
+        "Use the section headings and formatting rules from the system prompt. "
+        "Use markdown: # for sections, ## for subsections, | pipes | for tables. "
+        f"{alteration_section}"
+        "Every action step must start with an uppercase bold action verb and contain only one action."
+    )
 
     history.append({"role": "user", "content": generation_prompt})
 
