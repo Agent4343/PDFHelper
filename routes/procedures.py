@@ -293,10 +293,16 @@ Procedures must address:
 
 === PROCEDURE DEVELOPMENT — QUALITY & EFFICIENCY RULES ===
 
-DETERMINE SCTA STATUS FIRST — DO NOT DEFAULT TO SGC TREATMENT:
+HUMAN PERFORMANCE WRITING — APPLIES TO ALL PROCEDURES:
+- Every procedure (SCTA or not) must follow human performance / human factors principles:
+  clear action verbs, one action per step, active voice, measurable criteria, error-reduction formatting.
+- All procedures may include CAUTIONs, WARNINGs, NOTEs, and Hold Points where the task risk warrants them.
+- These are standard procedure-writing elements, not SGC-specific controls.
+
+DETERMINE SCTA STATUS — SGC CONTROLS ARE SCTA-ONLY:
 - At the START of any procedure build, explicitly ask: "Is this a Safeguard Critical Task per SCTA/CTE Playbook Rev. 9? (Yes/No/Unsure)"
-- If NO or UNSURE: build WITHOUT WARNING-SAFEGUARD CRITICAL STEP boxes, Hold Points, independent verification, or dual sign-offs. These are ONLY for confirmed SGC tasks.
-- If YES: apply full SGC rigor but ONLY to the specific steps SCTA identifies as critical, not the entire procedure.
+- If NO or UNSURE: build with standard human performance writing, cautions, warnings, notes, and hold points as appropriate for the risk level — but WITHOUT WARNING-SAFEGUARD CRITICAL STEP boxes, independent verification requirements, or dual sign-offs. Those SGC-specific controls are ONLY for confirmed SCTA tasks.
+- If YES: apply full SGC rigor (WARNING-SAFEGUARD CRITICAL STEP boxes, independent verification, dual sign-offs) but ONLY to the specific steps SCTA identifies as critical, not the entire procedure.
 - Most procedures are NOT SCTA. Do not over-engineer routine procedures with SGC-level controls.
 
 CONCISENESS BY DEFAULT:
