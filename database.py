@@ -275,6 +275,8 @@ class DBProcedureSession(Base):
     source_doc_id = Column(String, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
     facility = Column(String, nullable=True)
     category = Column(String, nullable=True)
+    is_scta = Column(String, nullable=True)
+    proc_type = Column(String, nullable=True)
     status = Column(String, nullable=False, default="gathering")
     gathered_data = Column(Text, nullable=True)
     style_config = Column(Text, nullable=True)
