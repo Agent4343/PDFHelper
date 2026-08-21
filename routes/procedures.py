@@ -38,6 +38,27 @@ FACILITY_PRESETS = {
 router = APIRouter(dependencies=[Depends(verify_auth)])
 
 
+def _build_scta_config(session) -> str:
+    parts = []
+    if session.proc_type:
+        parts.append(f"PROCEDURE TYPE: {session.proc_type}")
+    if session.is_scta == "yes":
+        parts.append(
+            "SCTA/SGC CONTROLS — THIS IS A CONFIRMED SCTA PROCEDURE:\n"
+            "- Apply full SGC rigor: WARNING-SAFEGUARD CRITICAL STEP boxes, independent verification, dual sign-offs.\n"
+            "- Apply SGC controls ONLY to the specific steps SCTA identifies as critical, not the entire procedure.\n"
+            "- Include After Action Review (AAR) requirements per CTE Playbook Rev. 9."
+        )
+    else:
+        parts.append(
+            "STANDARD PROCEDURE (NOT SCTA):\n"
+            "- This is NOT a Safeguard Critical Task. Do NOT include WARNING-SAFEGUARD CRITICAL STEP boxes, "
+            "independent verification requirements, or dual sign-offs.\n"
+            "- DO include standard cautions, warnings, notes, and hold points where the task risk warrants them."
+        )
+    return "\n\n".join(parts)
+
+
 def _extract_docx_structured(file_bytes: bytes) -> str:
     """Extract structured text from a .docx file preserving headings, tables, notes."""
     from docx import Document as DocxDocument
@@ -299,11 +320,7 @@ HUMAN PERFORMANCE WRITING — APPLIES TO ALL PROCEDURES:
 - All procedures may include CAUTIONs, WARNINGs, NOTEs, and Hold Points where the task risk warrants them.
 - These are standard procedure-writing elements, not SGC-specific controls.
 
-DETERMINE SCTA STATUS — SGC CONTROLS ARE SCTA-ONLY:
-- At the START of any procedure build, explicitly ask: "Is this a Safeguard Critical Task per SCTA/CTE Playbook Rev. 9? (Yes/No/Unsure)"
-- If NO or UNSURE: build with standard human performance writing, cautions, warnings, notes, and hold points as appropriate for the risk level — but WITHOUT WARNING-SAFEGUARD CRITICAL STEP boxes, independent verification requirements, or dual sign-offs. Those SGC-specific controls are ONLY for confirmed SCTA tasks.
-- If YES: apply full SGC rigor (WARNING-SAFEGUARD CRITICAL STEP boxes, independent verification, dual sign-offs) but ONLY to the specific steps SCTA identifies as critical, not the entire procedure.
-- Most procedures are NOT SCTA. Do not over-engineer routine procedures with SGC-level controls.
+{scta_config}
 
 CONCISENESS BY DEFAULT:
 - Draft every step in its MOST CONCISE compliant form on the FIRST pass.
@@ -400,6 +417,8 @@ async def list_procedures(
                 "status": s.status,
                 "facility": s.facility,
                 "category": s.category,
+                "is_scta": s.is_scta or "no",
+                "proc_type": s.proc_type,
                 "created_at": s.created_at.isoformat(),
                 "updated_at": s.updated_at.isoformat(),
             }
@@ -418,6 +437,8 @@ async def create_procedure(request: Request, db=Depends(get_db)):
     facility = body.get("facility", "").strip() or None
     craft = body.get("craft", "").strip() or None
     category = body.get("category", "").strip() or None
+    proc_type = body.get("proc_type", "").strip() or None
+    is_scta = body.get("is_scta", "no").strip() or "no"
 
     if source_doc_id:
         doc = db.query(DBDocument).filter(DBDocument.id == source_doc_id).first()
@@ -432,12 +453,25 @@ async def create_procedure(request: Request, db=Depends(get_db)):
         source_doc_id=source_doc_id,
         facility=facility,
         category=category,
+        is_scta=is_scta,
+        proc_type=proc_type,
         status="gathering",
         created_at=now,
         updated_at=now,
     )
     db.add(session)
     db.commit()
+
+    scta_label = "**SCTA/SGC**" if is_scta == "yes" else "standard"
+    type_label = f" — **{proc_type}**" if proc_type else ""
+    selections = []
+    if facility:
+        selections.append(f"**{facility}**")
+    if craft:
+        selections.append(f"**{craft}**")
+    if category:
+        selections.append(f"**{category}**")
+    sel_str = ", ".join(selections) if selections else ""
 
     if mode == "update" and source_doc_id:
         initial_msg = (
@@ -449,30 +483,22 @@ async def create_procedure(request: Request, db=Depends(get_db)):
     elif source_doc_id:
         initial_msg = (
             "I can see you've attached a reference document. I'll use it as a starting "
-            "point. Let me begin gathering the information needed for the procedure.\n\n"
-            "What is the procedure title and designation number?"
+            f"point ({scta_label} procedure{type_label}).\n\n"
+            "What specific task or equipment does this procedure cover? "
+            "Describe the scope and I'll start building it out."
         )
     else:
-        if facility and craft:
+        if sel_str:
             initial_msg = (
-                f"I'm ready to help you write a new procedure for **{facility}** ({craft}). "
-                "I'll guide you through each section to build a complete document "
-                "that meets PPA AP-907-005 and OIMS 6.1 standards.\n\n"
-                "What is the procedure title and designation number?"
-            )
-        elif facility:
-            initial_msg = (
-                f"I'm ready to help you write a new procedure for **{facility}**. "
-                "I'll guide you through each section.\n\n"
-                "What craft/discipline is this for and what is the procedure title?"
+                f"Ready to build a {scta_label} procedure for {sel_str}{type_label}.\n\n"
+                "What specific task or equipment does this procedure cover? "
+                "Describe the scope and I'll start building it out."
             )
         else:
             initial_msg = (
-                "I'm ready to help you write a new procedure. I'll guide you through "
-                "each section, asking the right questions to build a complete document "
-                "that meets PPA AP-907-005 and OIMS 6.1 standards.\n\n"
-                "Let's start — what facility and craft/discipline is this for? "
-                "(e.g., Facility: Hebron, Craft: Operations)"
+                "I'm ready to help you write a new procedure. "
+                "Please select a facility, craft, and category above, then describe "
+                "the specific task or equipment this procedure covers."
             )
 
     assistant_msg = DBProcedureMessage(
@@ -634,6 +660,54 @@ async def delete_procedure(session_id: str, db=Depends(get_db)):
     return {"detail": "Procedure session deleted"}
 
 
+@router.post("/procedures/{session_id}/clone")
+async def clone_procedure(session_id: str, request: Request, db=Depends(get_db)):
+    source = db.query(DBProcedureSession).filter(DBProcedureSession.id == session_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Procedure session not found")
+
+    now = datetime.now(timezone.utc)
+    new_id = str(uuid.uuid4())
+    original_title = _safe_decrypt(source.title) or "Untitled"
+    clone = DBProcedureSession(
+        id=new_id,
+        user_id=getattr(request.state, "user_id", None),
+        title=_encrypt_text(f"{original_title} (Copy)"),
+        facility=source.facility,
+        category=source.category,
+        is_scta=source.is_scta,
+        proc_type=source.proc_type,
+        style_config=source.style_config,
+        template_config=source.template_config,
+        gathered_data=source.output_content or source.gathered_data,
+        status="gathering",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(clone)
+
+    initial_msg = (
+        f"This procedure was cloned from **{original_title}**. "
+        "The previous version's content is loaded as reference. "
+        "What changes do you want to make?"
+    )
+    msg = DBProcedureMessage(
+        id=str(uuid.uuid4()),
+        session_id=new_id,
+        role="assistant",
+        content=_encrypt_text(initial_msg),
+        created_at=now,
+    )
+    db.add(msg)
+    db.commit()
+
+    return {
+        "id": new_id,
+        "title": f"{original_title} (Copy)",
+        "status": "gathering",
+    }
+
+
 # --- 7. Status workflow ---
 VALID_TRANSITIONS = {
     "gathering": ["drafting", "complete"],
@@ -783,13 +857,15 @@ Provide your analysis in this exact format:
 For each finding, use this format:
 - [PASS] or [FAIL] or [WARN] Category: Description
 
+This procedure is {"SCTA / SGC" if session.is_scta == "yes" else "a STANDARD (non-SCTA) procedure"}.
+
 Check these categories:
 1. STRUCTURE: Required sections present (Purpose, Scope, Precautions, Prerequisites, Instructions, References)
 2. ACTION STEPS: Action verbs uppercase bold, one action per step, active voice
 3. EMPHASIS: IF/WHEN/THEN uppercase underlined bold, component positions uppercase
 4. NOTES/CAUTIONS/WARNINGS: Placed before steps, correct sequence, passive voice
 5. PREREQUISITES: PPE, materials, tools, other prerequisites defined
-6. SAFEGUARD CRITICAL: SGC steps identified, hold points defined, IV method specified
+6. SAFEGUARD CRITICAL: {"SGC steps identified, hold points defined, IV method specified" if session.is_scta == "yes" else "N/A — this is not an SCTA procedure, skip SGC-specific checks"}
 7. VOCABULARY: No ambiguous words (ensure, appropriate, proper), SHALL/SHOULD/MAY used correctly
 8. STEP NUMBERING: Up to 4 levels, consistent format
 9. ABBREVIATIONS: Spelled out on first use
@@ -959,9 +1035,12 @@ async def procedure_chat(session_id: str, request: Request, db=Depends(get_db)):
                 text = _stored_text_to_structured(pages)
                 source_context = f"--- EXISTING PROCEDURE (to update) ---\n{text[:12000]}\n--- END ---"
 
+    scta_config = _build_scta_config(session)
+
     system_prompt = PROCEDURE_SYSTEM_PROMPT.format(
         style_config=style_config,
         template_config=template_config,
+        scta_config=scta_config,
     )
 
     all_messages = []
@@ -1058,9 +1137,12 @@ async def generate_procedure(session_id: str, request: Request, db=Depends(get_d
 
     client = Anthropic()
 
+    scta_config = _build_scta_config(session)
+
     gen_system = PROCEDURE_SYSTEM_PROMPT.format(
         style_config=style_config,
         template_config=template_config,
+        scta_config=scta_config,
     )
 
     def generate():
@@ -1785,4 +1867,35 @@ async def download_procedure(session_id: str, db=Depends(get_db)):
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{safe_title}.docx"'},
+    )
+
+
+@router.post("/procedures/bulk-export")
+async def bulk_export_procedures(request: Request, db=Depends(get_db)):
+    body = await request.json()
+    session_ids = body.get("session_ids", [])
+    if not session_ids:
+        raise HTTPException(status_code=400, detail="No procedures selected")
+    if len(session_ids) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 procedures per export")
+
+    import io
+    import zipfile
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for sid in session_ids:
+            session = db.query(DBProcedureSession).filter(DBProcedureSession.id == sid).first()
+            if not session or not session.output_content:
+                continue
+            content = _safe_decrypt(session.output_content) or ""
+            title = _safe_decrypt(session.title) or "Procedure"
+            safe_name = "".join(c for c in title if c.isalnum() or c in " -_")[:50].strip() or "procedure"
+            zf.writestr(f"{safe_name}.md", content)
+
+    zip_buf.seek(0)
+    return Response(
+        content=zip_buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="procedures_export.zip"'},
     )

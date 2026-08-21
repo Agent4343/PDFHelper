@@ -1175,13 +1175,20 @@ padding:8px 16px;z-index:10000;transition:top 0.2s}
           <select id="proc-craft" style="padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);min-width:130px">
             <option value="">Craft...</option>
           </select>
-          <select id="proc-category" style="padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);min-width:130px">
+          <select id="proc-category" style="padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);min-width:130px" onchange="onCategoryChange()">
             <option value="">Category...</option>
             <option value="Operations">Operations</option>
             <option value="Maintenance">Maintenance</option>
             <option value="Safety">Safety</option>
             <option value="Emergency">Emergency</option>
             <option value="Commissioning">Commissioning</option>
+          </select>
+          <select id="proc-type" style="padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);min-width:150px">
+            <option value="">Procedure type...</option>
+          </select>
+          <select id="proc-scta" style="padding:0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);min-width:130px">
+            <option value="no">Standard Procedure</option>
+            <option value="yes">SCTA / SGC</option>
           </select>
         </div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.5rem">
@@ -1228,6 +1235,10 @@ padding:8px 16px;z-index:10000;transition:top 0.2s}
             <span id="logo-status" style="font-size:0.75rem;color:var(--muted);margin-left:0.3rem"></span>
           </div>
         </div>
+      </div>
+      <div id="proc-bulk-actions" style="display:none;margin-bottom:0.5rem;display:flex;gap:0.5rem;align-items:center">
+        <button class="btn" onclick="bulkExportProcs()" style="font-size:0.8rem;background:var(--accent);color:#fff">Export Selected</button>
+        <span id="proc-select-count" style="font-size:0.8rem;color:var(--muted)"></span>
       </div>
       <div id="proc-sessions-list" style="margin-bottom:1rem"></div>
       <div id="proc-chat-area" style="display:none">
@@ -4366,6 +4377,23 @@ function onFacilityChange(){
     });
   }
 }
+var procTypesByCategory={
+  Operations:['Startup','Shutdown','Normal Operations','Abnormal Operations','Valve Lineup','Chemical Injection','Well Operations'],
+  Maintenance:['Isolation','Equipment Repair','Preventive Maintenance','Calibration','Inspection','Lubrication'],
+  Safety:['Hot Work','Confined Space Entry','Working at Heights','Lock-Out/Tag-Out','Excavation','Energy Isolation'],
+  Emergency:['Emergency Response','Evacuation','Spill Response','Fire Response','Rescue'],
+  Commissioning:['Pre-commissioning','Commissioning','Decommissioning','Functional Testing']
+};
+function onCategoryChange(){
+  var cat=document.getElementById('proc-category').value;
+  var sel=document.getElementById('proc-type');
+  sel.innerHTML='<option value="">Procedure type...</option>';
+  if(cat&&procTypesByCategory[cat]){
+    procTypesByCategory[cat].forEach(function(t){
+      sel.innerHTML+='<option value="'+t+'">'+esc(t)+'</option>';
+    });
+  }
+}
 function loadProcSessions(){
   var fac=document.getElementById('proc-filter-facility').value;
   var cat=document.getElementById('proc-filter-category').value;
@@ -4381,9 +4409,12 @@ function loadProcSessions(){
       var badges='';
       if(s.facility) badges+='<span style="font-size:0.7rem;padding:1px 6px;border-radius:8px;background:var(--accent);color:#fff;margin-right:4px">'+esc(s.facility)+'</span>';
       if(s.category) badges+='<span style="font-size:0.7rem;padding:1px 6px;border-radius:8px;background:var(--green);color:#fff;margin-right:4px">'+esc(s.category)+'</span>';
+      if(s.proc_type) badges+='<span style="font-size:0.7rem;padding:1px 6px;border-radius:8px;background:var(--orange);color:#fff;margin-right:4px">'+esc(s.proc_type)+'</span>';
+      if(s.is_scta==='yes') badges+='<span style="font-size:0.7rem;padding:1px 6px;border-radius:8px;background:var(--red);color:#fff;margin-right:4px">SCTA</span>';
       var statusColor=s.status==='approved'?'var(--green)':s.status==='review'?'var(--orange)':s.status==='complete'?'var(--accent)':'var(--muted)';
-      return '<div class="card" style="margin-bottom:0.5rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="openProcSession(\''+s.id+'\')"><div><strong>'+esc(s.title)+'</strong><br>'+badges+'<span style="font-size:0.75rem;color:'+statusColor+'">'+s.status+'</span><span style="font-size:0.75rem;color:var(--muted)"> — '+new Date(s.created_at).toLocaleDateString()+'</span></div><button class="btn" style="font-size:0.75rem;background:var(--red);padding:2px 8px" onclick="event.stopPropagation();deleteProcSession(\''+s.id+'\')">Delete</button></div>';
+      return '<div class="card" style="margin-bottom:0.5rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="openProcSession(\''+s.id+'\')"><div style="display:flex;align-items:center;gap:0.5rem"><input type="checkbox" class="proc-select-cb" value="'+s.id+'" onclick="event.stopPropagation();updateBulkActions()" style="cursor:pointer"><div><strong>'+esc(s.title)+'</strong><br>'+badges+'<span style="font-size:0.75rem;color:'+statusColor+'">'+s.status+'</span><span style="font-size:0.75rem;color:var(--muted)"> — '+new Date(s.created_at).toLocaleDateString()+'</span></div></div><div style="display:flex;gap:0.3rem"><button class="btn" style="font-size:0.75rem;padding:2px 8px" onclick="event.stopPropagation();cloneProcedure(\''+s.id+'\')">Clone</button><button class="btn" style="font-size:0.75rem;background:var(--red);padding:2px 8px" onclick="event.stopPropagation();deleteProcSession(\''+s.id+'\')">Delete</button></div></div>';
     }).join('');
+    updateBulkActions();
   }).catch(function(){});
 }
 function loadProcDocs(){
@@ -4401,6 +4432,8 @@ async function startProcedure(mode){
   var facility=document.getElementById('proc-facility').value;
   var craft=document.getElementById('proc-craft').value;
   var category=document.getElementById('proc-category').value;
+  var procType=document.getElementById('proc-type').value;
+  var isScta=document.getElementById('proc-scta').value;
   if(mode==='update'&&!sourceId){toast('Select a document to update','error');return;}
   try{
     var body={title:title||(mode==='update'?'Update Procedure':'New Procedure'),mode:mode||'new'};
@@ -4408,6 +4441,8 @@ async function startProcedure(mode){
     if(facility) body.facility=facility;
     if(craft) body.craft=craft;
     if(category) body.category=category;
+    if(procType) body.proc_type=procType;
+    body.is_scta=isScta;
     var r=await fetch(API+'/procedures',{method:'POST',headers:headers(true),body:JSON.stringify(body)});
     if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(detailStr(d.detail)||'Failed');}
     var data=await r.json();
@@ -4635,6 +4670,43 @@ async function deleteProcSession(id){
     if(!r.ok) throw new Error('Delete failed');
     loadProcSessions();
     if(currentProcId===id) closeProcChat();
+  }catch(e){toast(e.message,'error');}
+}
+async function cloneProcedure(id){
+  try{
+    var r=await fetch(API+'/procedures/'+id+'/clone',{method:'POST',headers:headers()});
+    if(!r.ok) throw new Error('Clone failed');
+    var data=await r.json();
+    toast('Procedure cloned','success');
+    loadProcSessions();
+    openProcSession(data.id);
+  }catch(e){toast(e.message,'error');}
+}
+function updateBulkActions(){
+  var cbs=document.querySelectorAll('.proc-select-cb:checked');
+  var bar=document.getElementById('proc-bulk-actions');
+  var cnt=document.getElementById('proc-select-count');
+  if(cbs.length>0){
+    bar.style.display='flex';
+    cnt.textContent=cbs.length+' selected';
+  }else{
+    bar.style.display='none';
+  }
+}
+async function bulkExportProcs(){
+  var cbs=document.querySelectorAll('.proc-select-cb:checked');
+  var ids=Array.from(cbs).map(function(cb){return cb.value;});
+  if(!ids.length){toast('Select procedures to export','error');return;}
+  try{
+    var r=await fetch(API+'/procedures/bulk-export',{method:'POST',headers:headers(true),body:JSON.stringify({session_ids:ids})});
+    if(!r.ok) throw new Error('Export failed');
+    var blob=await r.blob();
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.download='procedures_export.zip';
+    document.body.appendChild(a);a.click();a.remove();
+    URL.revokeObjectURL(url);
+    toast('Export downloaded','success');
   }catch(e){toast(e.message,'error');}
 }
 
