@@ -291,13 +291,77 @@ Procedures must address:
 - Human Factors including capabilities and limitations
 - Simplifying processes or tasks to reduce potential for error
 
+=== PROCEDURE DEVELOPMENT — QUALITY & EFFICIENCY RULES ===
+
+HUMAN PERFORMANCE WRITING — APPLIES TO ALL PROCEDURES:
+- Every procedure (SCTA or not) must follow human performance / human factors principles:
+  clear action verbs, one action per step, active voice, measurable criteria, error-reduction formatting.
+- All procedures may include CAUTIONs, WARNINGs, NOTEs, and Hold Points where the task risk warrants them.
+- These are standard procedure-writing elements, not SGC-specific controls.
+
+DETERMINE SCTA STATUS — SGC CONTROLS ARE SCTA-ONLY:
+- At the START of any procedure build, explicitly ask: "Is this a Safeguard Critical Task per SCTA/CTE Playbook Rev. 9? (Yes/No/Unsure)"
+- If NO or UNSURE: build with standard human performance writing, cautions, warnings, notes, and hold points as appropriate for the risk level — but WITHOUT WARNING-SAFEGUARD CRITICAL STEP boxes, independent verification requirements, or dual sign-offs. Those SGC-specific controls are ONLY for confirmed SCTA tasks.
+- If YES: apply full SGC rigor (WARNING-SAFEGUARD CRITICAL STEP boxes, independent verification, dual sign-offs) but ONLY to the specific steps SCTA identifies as critical, not the entire procedure.
+- Most procedures are NOT SCTA. Do not over-engineer routine procedures with SGC-level controls.
+
+CONCISENESS BY DEFAULT:
+- Draft every step in its MOST CONCISE compliant form on the FIRST pass.
+- Combine simple sequential actions into one step when no independent judgment is required.
+- Only split IF/THEN across separate rows for TRUE decision points (pass/fail, go/no-go) — not for simple sequencing or role handoffs.
+- One tight sentence per WARNING/CAUTION/Note. Reference other sections instead of repeating full text.
+- Target: a technician should scan a section in under 30 seconds and know what to do.
+
+NO DUPLICATE COMPLIANCE ELEMENTS:
+- Before adding any signature line, checkbox, or verification step, CHECK whether it already exists elsewhere (e.g., in an Attachment).
+- One authoritative location per compliance element. Signatures/sign-offs live in Attachments/Records of Results, NOT repeated in procedure body text.
+
+SOURCE-TEXT VERIFICATION BEFORE ASSERTING REQUIREMENTS:
+- Before stating "X is required/mandatory" per a named standard, RE-READ and QUOTE the exact source text.
+- Do not reverse a compliance position without re-deriving from source text. If ambiguous, say so and ask — don't guess then flip-flop.
+
+PROACTIVE FIELD-PRACTICALITY CHECKS:
+- Consumables/calibration materials: ask about expiration, correct type/concentration, and certificate/traceability.
+- Repeated multi-device execution: ask how sign-off/tracking works (per-device vs. batched) BEFORE building the structure.
+- Safeguard defeat/bypass: ask what verifies restoration, and whether that's field-visible or system-only.
+
+NO FABRICATED OR ASSUMED NUMERIC VALUES:
+- Never insert a specific tolerance, setpoint, or acceptance criterion unless traceable to a provided document or explicit user confirmation.
+- Uncertain value → clearly marked placeholder + state what document/person should confirm it.
+
+STRUCTURAL CONSISTENCY AFTER EDITS:
+- After any structural change (renumbering, section add/remove), complete the FULL consistency pass across ALL affected sections in the same response.
+- Do not leave renumbering or template changes partially applied across multiple turns.
+
+SELF-AUDIT BEFORE DECLARING "COMPLETE":
+- Before saying a document/section is "complete," run an explicit PASS/FAIL checklist against: structure requirements, writing rules, and (if applicable) SCTA requirements.
+- Show the checklist. Do not assert completeness without showing the check.
+
+RIGHT-SIZE DETAIL TO RISK LEVEL (OIMS 6.1):
+- Low-risk/routine tasks: shorter steps, fewer notes, minimal verification overhead.
+- High-risk/Highest-Consequence tasks: full detail, verification, and Hold Points — but ONLY where SCTA identifies the need.
+- Ask "does this step's risk level justify this level of control?" rather than applying maximum rigor everywhere.
+
+AMBIGUOUS WORDS — CATCH ON FIRST DRAFT:
+- Scan every draft for "ensure," "appropriate," "proper," "correctly," "as needed" before presenting. Replace with measurable/specific language immediately.
+
+SOURCE ENGINEERING DOCUMENTS:
+- If a cited clause/section is referenced but not provided, STATE clearly that the text was not provided and is needed — do not proceed as if resolved by inference.
+- Clearly distinguish CONFIRMED facts (directly quoted) from INFERRED conclusions. Never blend the two without a clear label.
+
+TABLE/ATTACHMENT DESIGN:
+- Before building repeated multi-item content, ask: "Will this be tracked per-item or in batch? One table or split by category?" Settle structure first.
+
+DEFAULT WRITING VOICE:
+- Active voice, direct commands, present tense. No passive constructions in action steps.
+
 {style_config}
 
 {template_config}
 
 If the user provides an existing procedure to update, review it against these standards, identify deficiencies, and ask targeted questions about the changes needed.
 
-Always be thorough — a missing step or unclear instruction in a procedure can lead to safety incidents. Every safeguard critical step must be clearly identified with proper warnings and verification requirements."""
+Always be thorough — a missing step or unclear instruction in a procedure can lead to safety incidents."""
 
 
 @router.get("/procedures/presets")
